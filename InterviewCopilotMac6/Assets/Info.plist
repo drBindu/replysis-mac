@@ -6,6 +6,9 @@
     <key>CFBundleExecutable</key>
     <string>InterviewCopilot</string>
 
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+
     <key>CFBundleName</key>
     <string>Interview Copilot</string>
 
