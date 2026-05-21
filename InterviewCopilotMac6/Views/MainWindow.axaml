@@ -1,0 +1,486 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="InterviewCopilotMac6.Views.MainWindow"
+        Title="Interview Copilot"
+        Width="1120" Height="740"
+        TransparencyLevelHint="Transparent"
+        Background="Transparent"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome"
+        ExtendClientAreaTitleBarHeightHint="-1"
+        KeyDown="Window_KeyDown">
+
+  <Window.Styles>
+
+    <Style Selector="Button.GreenBtn">
+      <Setter Property="Background" Value="#1a6b3a"/>
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="FontFamily" Value="SF Pro Display, Segoe UI, sans-serif"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="CornerRadius" Value="10"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="Button.GreenBtn:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#22c55e"/>
+    </Style>
+
+    <Style Selector="Button.RedBtn">
+      <Setter Property="Background" Value="#991b1b"/>
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="FontFamily" Value="SF Pro Display, Segoe UI, sans-serif"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="CornerRadius" Value="10"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="Button.RedBtn:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#ef4444"/>
+    </Style>
+
+    <Style Selector="Button.GhostBtn">
+      <Setter Property="Background" Value="#1A1F2E"/>
+      <Setter Property="Foreground" Value="#94A3B8"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="BorderBrush" Value="#33FFFFFF"/>
+      <Setter Property="FontFamily" Value="SF Pro Display, Segoe UI, sans-serif"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="CornerRadius" Value="8"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="Button.GhostBtn:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#2D3748"/>
+    </Style>
+
+    <Style Selector="Button.BlueBtn">
+      <Setter Property="Background" Value="#1E3A5F"/>
+      <Setter Property="Foreground" Value="#38BDF8"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="BorderBrush" Value="#2255AA"/>
+      <Setter Property="FontFamily" Value="SF Pro Display, Segoe UI, sans-serif"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="CornerRadius" Value="8"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="Button.BlueBtn:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#1e4a7a"/>
+    </Style>
+
+    <Style Selector="Button.MicBtn">
+      <Setter Property="Background" Value="#1a1f2e"/>
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="BorderThickness" Value="2"/>
+      <Setter Property="BorderBrush" Value="#ef4444"/>
+      <Setter Property="Width" Value="52"/>
+      <Setter Property="Height" Value="52"/>
+      <Setter Property="CornerRadius" Value="26"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="Button.MicBtn:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#2d3748"/>
+    </Style>
+
+    <Style Selector="Button.ArrowBtn">
+      <Setter Property="Background" Value="#1A1F2E"/>
+      <Setter Property="Foreground" Value="#94A3B8"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="FontSize" Value="16"/>
+      <Setter Property="Width" Value="22"/>
+      <Setter Property="CornerRadius" Value="6"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="Button.ArrowBtn:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#2D3748"/>
+    </Style>
+
+  </Window.Styles>
+
+  <Border x:Name="MainAppBorder" Background="#B3080C14" CornerRadius="14"
+          BorderBrush="#55FFFFFF" BorderThickness="1"
+          PointerPressed="Border_PointerPressed">
+    <Grid>
+
+      <!-- NORMAL MODE -->
+      <Grid x:Name="NormalModeGrid">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="68"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- HEADER -->
+        <Border Grid.Row="0" Background="#CC0D1117" CornerRadius="14,14,0,0"
+                BorderBrush="#33FFFFFF" BorderThickness="0,0,0,1">
+          <Grid Margin="16,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- LEFT: Logo -->
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+              <Border Background="#1E3A5F" CornerRadius="8" Width="32" Height="32" Margin="0,0,10,0">
+                <TextBlock Text="IC" Foreground="#38BDF8" FontWeight="Bold" FontSize="13"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Border>
+              <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="Interview Copilot" Foreground="White" FontSize="14" FontWeight="Bold"/>
+                <TextBlock Text="by CoopilotX" Foreground="#3d4d5f" FontSize="9"/>
+              </StackPanel>
+            </StackPanel>
+
+            <!-- CENTER: Mic + Status + Record -->
+            <StackPanel Grid.Column="1" Orientation="Horizontal"
+                        HorizontalAlignment="Center" VerticalAlignment="Center">
+              <Button x:Name="MicBtn" Classes="MicBtn" Click="MicBtn_Click" Margin="0,0,16,0">
+                <TextBlock Text="🎤" FontSize="20"/>
+              </Button>
+              <StackPanel VerticalAlignment="Center" Margin="0,0,20,0">
+                <StackPanel Orientation="Horizontal">
+                  <Ellipse x:Name="MicIndicator" Width="9" Height="9" Fill="#ef4444" Margin="0,0,8,0"/>
+                  <TextBlock x:Name="MicIndicatorText" Text="READY" Foreground="White"
+                             FontWeight="Bold" FontSize="12"/>
+                </StackPanel>
+              </StackPanel>
+              <Border x:Name="RecordingBadge" Background="#14532d" CornerRadius="8"
+                      Padding="10,5" Margin="0,0,0,0"
+                      IsVisible="False" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal">
+                  <Ellipse Width="7" Height="7" Fill="#4ade80" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                  <TextBlock Text="● REC" Foreground="#4ade80" FontSize="11" FontWeight="Bold"/>
+                </StackPanel>
+              </Border>
+            </StackPanel>
+
+            <!-- RIGHT: Credits + Profile + Buttons -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+
+              <!-- Credits Badge -->
+              <Border x:Name="CreditsBadge" Background="#0f2a1a" CornerRadius="8"
+                      Padding="10,6" Margin="0,0,8,0" VerticalAlignment="Center"
+                      BorderBrush="#1a6b3a" BorderThickness="1" Cursor="Hand"
+                      PointerPressed="CreditsBadge_Click"
+                      ToolTip.Tip="Credits · Click to refresh">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <TextBlock x:Name="CreditsIcon" Text="⚡" FontSize="11"
+                             Margin="0,0,5,0" VerticalAlignment="Center"/>
+                  <StackPanel VerticalAlignment="Center">
+                    <TextBlock x:Name="CreditsLabel" Text="Sign in"
+                               Foreground="#4ade80" FontSize="11" FontWeight="Bold"/>
+                    <TextBlock x:Name="CreditsPlanLabel" Text=""
+                               Foreground="#3d4d5f" FontSize="9" IsVisible="False"/>
+                  </StackPanel>
+                </StackPanel>
+              </Border>
+
+              <!-- Profile Badge (visible when logged in) -->
+              <Border x:Name="ProfileBadge" CornerRadius="8" Padding="8,5"
+                      Margin="0,0,8,0" VerticalAlignment="Center"
+                      Background="#0f1a2e" BorderBrush="#1e3a5f" BorderThickness="1"
+                      Cursor="Hand" IsVisible="False"
+                      PointerPressed="ProfileBadge_Click"
+                      ToolTip.Tip="Your account · Click to sign out">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <Border Width="26" Height="26" CornerRadius="13"
+                          Background="#1e3a5f" Margin="0,0,7,0">
+                    <TextBlock x:Name="AvatarInitials" Text="?"
+                               Foreground="#38BDF8" FontSize="10"
+                               FontWeight="Bold"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"/>
+                  </Border>
+                  <StackPanel VerticalAlignment="Center">
+                    <TextBlock x:Name="ProfileNameLabel" Text=""
+                               Foreground="White" FontSize="11" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="ProfilePlanLabel" Text="free plan"
+                               Foreground="#3d4d5f" FontSize="9"/>
+                  </StackPanel>
+                </StackPanel>
+              </Border>
+
+              <!-- Sign In button (visible when NOT logged in) -->
+              <Button x:Name="SignInHeaderBtn" Content="⚡  Sign In"
+                      Click="SignInHeaderBtn_Click"
+                      Classes="BlueBtn"
+                      Padding="12,6" Margin="0,0,8,0"
+                      IsVisible="True"/>
+
+              <!-- My Sessions (visible when logged in) -->
+              <Button x:Name="SessionsBtn"
+                      Content="📋 My Sessions"
+                      Classes="GhostBtn"
+                      Click="SessionsBtn_Click"
+                      Padding="12,6" Margin="0,0,8,0"
+                      IsVisible="False"
+                      ToolTip.Tip="View your past interview recordings"/>
+
+              <!-- Screen Analyze button (F8 / F9) -->
+              <Button x:Name="ScreenAnalyzeBtn" Classes="GhostBtn"
+                      Click="ScreenAnalyzeBtn_Click"
+                      Padding="12,6" Margin="0,0,8,0"
+                      ToolTip.Tip="Analyze screen and get an immediate AI answer (F8 / F9)">
+                <StackPanel Orientation="Horizontal" Spacing="5">
+                  <TextBlock x:Name="AnalyzeIcon" Text="🔍" FontSize="13"/>
+                  <TextBlock x:Name="AnalyzeLabel" Text="Analyze Screen  F9" FontSize="12"/>
+                </StackPanel>
+              </Button>
+
+              <!-- Camera Mode -->
+              <Button Content="📷 Camera Mode" Classes="BlueBtn"
+                      Click="CameraMode_Click" Padding="12,6" Margin="0,0,8,0"/>
+
+              <!-- Settings -->
+              <Button Content="⚙" Classes="GhostBtn"
+                      Click="SettingsBtn_Click" Padding="10,6" Margin="0,0,8,0"
+                      ToolTip.Tip="Settings"/>
+
+              <!-- Session Timer (visible while session is active) -->
+              <Border x:Name="SessionTimerBadge" Background="#0D1B2E" CornerRadius="8"
+                      Padding="10,6" Margin="0,0,8,0" VerticalAlignment="Center"
+                      BorderBrush="#1e3a5f" BorderThickness="1"
+                      IsVisible="False" ToolTip.Tip="Session duration">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <TextBlock Text="⏱" FontSize="10" Margin="0,0,5,0"
+                             VerticalAlignment="Center" Foreground="#38BDF8"/>
+                  <TextBlock x:Name="SessionTimerLabel" Text="0:00"
+                             Foreground="#60a5fa" FontSize="11"
+                             FontWeight="Bold" FontFamily="SF Mono, Menlo, monospace"/>
+                </StackPanel>
+              </Border>
+
+              <!-- Minimize -->
+              <Button Content="–" Foreground="#555" Background="Transparent"
+                      BorderThickness="0" Click="MinimizeBtn_Click"
+                      FontSize="18" ToolTip.Tip="Minimize" Cursor="Hand"
+                      Padding="6,0" Margin="0,0,4,0"/>
+
+              <!-- Close -->
+              <Button Content="✕" Foreground="#666666" Background="Transparent"
+                      BorderThickness="0" Click="CloseBtn_Click"/>
+            </StackPanel>
+          </Grid>
+        </Border>
+
+        <!-- BODY -->
+        <Grid Grid.Row="1" Margin="20,16">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="270"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+
+          <!-- Resume Panel -->
+          <Grid x:Name="ResumePanel" Grid.Column="0">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="*"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Resume header -->
+            <Grid Grid.Row="0" Margin="0,0,0,6">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock Grid.Column="0" Text="📄 RESUME" Foreground="#2A4A6A" FontSize="9"
+                         FontWeight="Bold" VerticalAlignment="Center"/>
+              <TextBlock Grid.Column="1" Text="optional — better answers with it"
+                         Foreground="#1a2a3a" FontSize="8"
+                         HorizontalAlignment="Right" VerticalAlignment="Center" FontStyle="Italic"/>
+            </Grid>
+
+            <!-- TextBox with placeholder watermark -->
+            <Border Grid.Row="1" Background="#CC0D1117" CornerRadius="12"
+                    BorderBrush="#22FFFFFF" BorderThickness="1">
+              <Grid>
+                <TextBox x:Name="ResumeTextBox" TextWrapping="Wrap" AcceptsReturn="True"
+                         Background="Transparent" Foreground="#CBD5E1"
+                         BorderThickness="0" Padding="14"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         TextChanged="ResumeTextBox_TextChanged"/>
+                <TextBlock x:Name="ResumeWatermark"
+                           Foreground="#1e3040" FontSize="12" TextWrapping="Wrap"
+                           Margin="14,14,14,14" VerticalAlignment="Top"
+                           IsHitTestVisible="False" FontStyle="Italic">
+                  Paste your resume here&#x0a;&#x0a;Without it the AI gives generic answers.&#x0a;With it, answers are tailored to your exact experience, companies and skills.
+                </TextBlock>
+              </Grid>
+            </Border>
+
+            <!-- Save path -->
+            <Border Grid.Row="2" Margin="0,8,0,0" Background="#CC0D1117"
+                    CornerRadius="10" Padding="10">
+              <TextBlock x:Name="SavePathLabel" Foreground="#2a3a4a"
+                         FontSize="9" TextWrapping="Wrap"/>
+            </Border>
+          </Grid>
+
+          <!-- Toggle Button -->
+          <Button x:Name="ResumeToggleBtn" Grid.Column="1" Content="◀"
+                  Classes="ArrowBtn" Click="ResumeToggleBtn_Click"
+                  VerticalAlignment="Center" Margin="0,0,10,0"/>
+
+          <!-- Right Panel -->
+          <Grid Grid.Column="2">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="1*"/>
+              <RowDefinition Height="2*"/>
+            </Grid.RowDefinitions>
+
+            <!-- Transcript Box -->
+            <Border Grid.Row="0" Background="#CC0D1117" CornerRadius="12"
+                    BorderBrush="#22FFFFFF" BorderThickness="1"
+                    Padding="20,16" Margin="0,0,0,12">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto"/>
+                  <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <!-- Hotkey bar + section label -->
+                <Grid Grid.Row="0" Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="INTERVIEWER" Foreground="#2A4A6A" FontSize="9"
+                             FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                  <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Border Background="#0D1B2E" CornerRadius="5" Padding="8,3" Margin="0,0,6,0">
+                      <TextBlock Text="SPACE · listen → answer" Foreground="#38BDF8"
+                                 FontSize="9" FontWeight="SemiBold"/>
+                    </Border>
+                    <Border Background="#0D2E0D" CornerRadius="5" Padding="8,3" Margin="0,0,6,0">
+                      <TextBlock Text="F8 · all screens" Foreground="#4ade80"
+                                 FontSize="9" FontWeight="SemiBold"/>
+                    </Border>
+                    <Border Background="#0D2E0D" CornerRadius="5" Padding="8,3" Margin="0,0,6,0">
+                      <TextBlock Text="F9 · primary" Foreground="#86efac"
+                                 FontSize="9" FontWeight="SemiBold"/>
+                    </Border>
+                    <Border Background="#1a0f2e" CornerRadius="5" Padding="8,3">
+                      <TextBlock Text="F12 · debug" Foreground="#a78bfa"
+                                 FontSize="9" FontWeight="SemiBold"/>
+                    </Border>
+                  </StackPanel>
+                </Grid>
+
+                <!-- Transcript + watermark hint -->
+                <Grid Grid.Row="1">
+                  <ScrollViewer x:Name="TranscriptScroll">
+                    <TextBlock x:Name="TranscriptTextBlock" Foreground="White"
+                               FontSize="15" TextWrapping="Wrap"/>
+                  </ScrollViewer>
+                  <TextBlock x:Name="TranscriptHint"
+                             Text="🎤  SPACE — listen then answer&#x0a;🔍  F8 — analyze all screens&#x0a;🖥  F9 — analyze primary screen"
+                             Foreground="#1e3040" FontSize="13" FontWeight="SemiBold"
+                             TextWrapping="Wrap" TextAlignment="Center"
+                             VerticalAlignment="Center" HorizontalAlignment="Center"
+                             IsHitTestVisible="False" IsVisible="True"/>
+                </Grid>
+              </Grid>
+            </Border>
+
+            <!-- AI Answer Box -->
+            <Border Grid.Row="1" Background="#CC080F1E" CornerRadius="12"
+                    BorderBrush="#441E3A8A" BorderThickness="1" Padding="20,16">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto"/>
+                  <RowDefinition Height="Auto"/>
+                  <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <!-- ACTION TOOLBAR -->
+                <Grid Grid.Row="0" Margin="0,0,0,10">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <Border Grid.Column="0" Background="#0a0f1e" CornerRadius="6" Padding="8,4"
+                          VerticalAlignment="Center">
+                    <TextBlock Text="🤖  AI Answer" Foreground="#38BDF8"
+                               FontSize="9" FontWeight="Bold"/>
+                  </Border>
+                  <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Button x:Name="CopyAnswerBtn" Content="📋 Copy"
+                            Click="CopyAnswerBtn_Click"
+                            Classes="GhostBtn"
+                            Padding="10,5" Margin="0,0,6,0"
+                            ToolTip.Tip="Copy answer to clipboard"/>
+                    <Button x:Name="ClearAnswerBtn" Content="✕ Clear"
+                            Click="ClearAnswerBtn_Click"
+                            Classes="GhostBtn"
+                            Padding="10,5" Margin="0,0,6,0"
+                            ToolTip.Tip="Clear current transcript and answer"/>
+                    <Button x:Name="NewSessionBtn" Content="＋ New Session"
+                            Click="NewSessionBtn_Click"
+                            Classes="GreenBtn"
+                            Padding="10,5"
+                            ToolTip.Tip="Start a fresh interview session"/>
+                  </StackPanel>
+                </Grid>
+
+                <!-- THINKING INDICATOR -->
+                <StackPanel x:Name="ThinkingPanel" Grid.Row="1" Orientation="Horizontal"
+                            IsVisible="False" Margin="0,0,0,10">
+                  <TextBlock x:Name="ThinkingLabel" Text="Thinking..."
+                             Foreground="#38BDF8" FontSize="12" FontStyle="Italic"
+                             VerticalAlignment="Center"/>
+                  <TextBlock x:Name="ThinkingHintLabel"
+                             Text=" · F8 all screens  ·  F9 primary"
+                             Foreground="#334466" FontSize="11"
+                             VerticalAlignment="Center" Margin="12,0,0,0"/>
+                </StackPanel>
+
+                <!-- ANSWER -->
+                <ScrollViewer Grid.Row="2">
+                  <TextBox x:Name="AiAnswerBox"
+                           Text="Ready — press SPACE to start listening, then SPACE again to get your answer."
+                           Background="Transparent" Foreground="#E2E8F0"
+                           BorderThickness="0" FontSize="15"
+                           TextWrapping="Wrap" IsReadOnly="True"/>
+                </ScrollViewer>
+              </Grid>
+            </Border>
+          </Grid>
+        </Grid>
+      </Grid>
+
+      <!-- CAMERA MODE BAR -->
+      <Grid x:Name="CameraModeGrid" IsVisible="False" VerticalAlignment="Top" Height="110">
+        <Border Background="#E6080C14" CornerRadius="0,0,14,14"
+                BorderBrush="#55FFFFFF" BorderThickness="0,0,0,1">
+          <Grid Margin="20,10">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Button Grid.Column="0" Classes="MicBtn" Click="MicBtn_Click" Width="40" Height="40"/>
+            <ScrollViewer Grid.Column="1" Margin="20,0">
+              <TextBlock x:Name="CamAnswerBox" Text="Ready..." Foreground="White"
+                         FontSize="18" FontWeight="Bold"
+                         TextWrapping="Wrap" TextAlignment="Center"/>
+            </ScrollViewer>
+            <Button Grid.Column="2" Content="Exit" Classes="GhostBtn"
+                    Click="ExitCameraMode_Click" Padding="10,5"/>
+          </Grid>
+        </Border>
+      </Grid>
+
+      <!-- INTRO LAYER -->
+      <Border x:Name="IntroLayer" Background="#070609" ZIndex="10">
+        <TextBlock Text="Loading..." Foreground="White" FontSize="24"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+      </Border>
+
+    </Grid>
+  </Border>
+</Window>

@@ -1,0 +1,140 @@
+<Window x:Class="InterviewCopilotMac6.Views.AnswerWindow"
+        xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Camera Overlay"
+        Height="560" Width="560"
+        MinHeight="560" MinWidth="560"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome"
+        ExtendClientAreaTitleBarHeightHint="-1"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        CanResize="False"
+        SystemDecorations="None"
+        TransparencyLevelHint="Transparent"
+        Focusable="True"
+        KeyDown="Window_KeyDown">
+
+    <Grid>
+        <Border x:Name="MainBorder"
+                BorderBrush="#66FFFFFF"
+                BorderThickness="1.5"
+                CornerRadius="18"
+                Opacity="0">
+
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                    <GradientStop Color="#F0030712" Offset="0"/>
+                    <GradientStop Color="#F0050F1E" Offset="1"/>
+                </LinearGradientBrush>
+            </Border.Background>
+
+            <Grid Margin="18,12,18,12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="8"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="8"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- HEADER -->
+                <DockPanel Grid.Row="0">
+
+                    <StackPanel Orientation="Horizontal"
+                                DockPanel.Dock="Left"
+                                VerticalAlignment="Center">
+                        <Ellipse x:Name="MiniMicIndicator"
+                                 Width="9" Height="9"
+                                 Fill="#EF4444"
+                                 Margin="0,0,7,0"/>
+                        <TextBlock x:Name="MicStatusLabel"
+                                   Text="READY"
+                                   Foreground="White"
+                                   FontSize="10"
+                                   FontWeight="Bold"
+                                   VerticalAlignment="Center"
+                                   Opacity="0.9"/>
+                    </StackPanel>
+
+                    <!-- Close button — NOT focusable so space never triggers it -->
+                    <Button DockPanel.Dock="Right"
+                            x:Name="CloseButton"
+                            Content="✕"
+                            Foreground="#888888"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            HorizontalAlignment="Right"
+                            FontSize="13"
+                            Padding="6,2"
+                            Cursor="Hand"
+                            Focusable="False"/>
+
+                    <TextBlock DockPanel.Dock="Left"
+                               Text="Interview Copilot"
+                               Foreground="#33FFFFFF"
+                               FontSize="10"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Margin="12,0,0,0"/>
+                </DockPanel>
+
+                <!-- DIVIDER -->
+                <Border Grid.Row="1"
+                        Height="1"
+                        VerticalAlignment="Center"
+                        Background="#22FFFFFF"
+                        Margin="0,2,0,2"/>
+
+                <!-- AI ANSWER -->
+                <ScrollViewer Grid.Row="2"
+                              VerticalScrollBarVisibility="Hidden"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <TextBlock x:Name="AnswerTextBlock"
+                               Text="Press SPACE to start listening..."
+                               Foreground="White"
+                               FontSize="18"
+                               FontWeight="SemiBold"
+                               TextWrapping="Wrap"
+                               TextAlignment="Left"
+                               VerticalAlignment="Top"
+                               LineHeight="28"
+                               MaxWidth="522"
+                               Padding="0,4,0,0"/>
+                </ScrollViewer>
+
+                <!-- INTERVIEWER STRIP -->
+                <Border Grid.Row="4"
+                        Background="#1AFFFFFF"
+                        CornerRadius="10"
+                        BorderBrush="#2AFFFFFF"
+                        BorderThickness="1"
+                        Padding="12,7">
+                    <DockPanel>
+                        <Border DockPanel.Dock="Left"
+                                Background="#0D2540"
+                                CornerRadius="4"
+                                Padding="7,3"
+                                Margin="0,0,10,0"
+                                VerticalAlignment="Center">
+                            <TextBlock Text="INTERVIEWER"
+                                       Foreground="#38BDF8"
+                                       FontWeight="Bold"
+                                       FontSize="9"/>
+                        </Border>
+                        <TextBlock x:Name="QuestionTextBlock"
+                                   Text="Waiting for audio..."
+                                   Foreground="#CBD5E1"
+                                   FontSize="13"
+                                   TextWrapping="Wrap"
+                                   VerticalAlignment="Center"
+                                   FontStyle="Italic"
+                                   MaxWidth="420"/>
+                    </DockPanel>
+                </Border>
+
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

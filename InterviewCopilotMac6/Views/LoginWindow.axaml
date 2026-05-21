@@ -1,0 +1,185 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="InterviewCopilotMac6.Views.LoginWindow"
+        Title="CoopilotX — Sign In"
+        Height="560" Width="440"
+        WindowStartupLocation="CenterScreen"
+        Background="Transparent"
+        CanResize="False"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome"
+        ExtendClientAreaTitleBarHeightHint="-1"
+        SystemDecorations="None"
+        TransparencyLevelHint="Transparent">
+
+  <Window.Styles>
+
+    <Style Selector="TextBox.AuthInput">
+      <Setter Property="Background" Value="#161b22"/>
+      <Setter Property="Foreground" Value="#e6edf3"/>
+      <Setter Property="BorderBrush" Value="#30363d"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="Height" Value="42"/>
+      <Setter Property="Padding" Value="14,11"/>
+      <Setter Property="CornerRadius" Value="8"/>
+      <Setter Property="CaretBrush" Value="#38BDF8"/>
+    </Style>
+
+    <Style Selector="Button.LinkBtn">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="#38BDF8"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="Padding" Value="0"/>
+    </Style>
+
+  </Window.Styles>
+
+  <Border Background="#0d1117" CornerRadius="16"
+          BorderBrush="#21262d" BorderThickness="1"
+          PointerPressed="TitleBar_PointerPressed">
+
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+      </Grid.RowDefinitions>
+
+      <!-- TITLE BAR / DRAG -->
+      <Border Grid.Row="0" Background="Transparent" Padding="0,12,16,0">
+        <DockPanel>
+          <Button DockPanel.Dock="Right" Content="✕"
+                  Click="CloseBtn_Click"
+                  Background="Transparent" BorderThickness="0"
+                  Foreground="#6b7280" FontSize="16" Cursor="Hand" Padding="6,2"/>
+        </DockPanel>
+      </Border>
+
+      <!-- MAIN CONTENT -->
+      <StackPanel Grid.Row="1" Margin="40,0,40,40">
+
+        <!-- LOGO + BRAND -->
+        <StackPanel HorizontalAlignment="Center" Margin="0,0,0,32">
+          <Border CornerRadius="16" Width="64" Height="64"
+                  HorizontalAlignment="Center" Margin="0,0,0,14"
+                  Background="#1e3a5f">
+            <TextBlock Text="CX" Foreground="#38BDF8" FontSize="22"
+                       FontWeight="Black"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+          <TextBlock Text="CoopilotX" Foreground="White" FontSize="22"
+                     FontWeight="Bold" HorizontalAlignment="Center"/>
+          <TextBlock Text="Interview Copilot" Foreground="#4b5563" FontSize="12"
+                     HorizontalAlignment="Center" Margin="0,2,0,0"/>
+        </StackPanel>
+
+        <!-- ERROR BANNER -->
+        <Border x:Name="ErrorBanner" Background="#2a0a0a" CornerRadius="8"
+                Padding="12,10" Margin="0,0,0,14" IsVisible="False"
+                BorderBrush="#6b1a1a" BorderThickness="1">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="⚠" Foreground="#ef4444" FontSize="13"
+                       Margin="0,0,8,0" VerticalAlignment="Center"/>
+            <TextBlock x:Name="ErrorText" Foreground="#ef4444" FontSize="12"
+                       TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+
+        <!-- SUCCESS BANNER -->
+        <Border x:Name="SuccessBanner" Background="#0f2a1a" CornerRadius="8"
+                Padding="12,10" Margin="0,0,0,14" IsVisible="False"
+                BorderBrush="#1a6b3a" BorderThickness="1">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="✓" Foreground="#4ade80" FontSize="13"
+                       Margin="0,0,8,0" VerticalAlignment="Center"/>
+            <TextBlock x:Name="SuccessText" Foreground="#4ade80" FontSize="12"/>
+          </StackPanel>
+        </Border>
+
+        <!-- EMAIL LABEL -->
+        <TextBlock Text="EMAIL" Foreground="#6b7280" FontSize="10"
+                   FontWeight="Bold" Margin="0,0,0,6"/>
+
+        <!-- EMAIL INPUT -->
+        <Border x:Name="EmailBorder" Background="#161b22" CornerRadius="8"
+                BorderBrush="#30363d" BorderThickness="1" Margin="0,0,0,14">
+          <TextBox x:Name="EmailBox" Classes="AuthInput"
+                   Background="Transparent"
+                   BorderThickness="0"
+                   GotFocus="EmailBox_GotFocus"
+                   LostFocus="EmailBox_LostFocus"
+                   KeyDown="Input_KeyDown"/>
+        </Border>
+
+        <!-- PASSWORD LABEL -->
+        <TextBlock Text="PASSWORD" Foreground="#6b7280" FontSize="10"
+                   FontWeight="Bold" Margin="0,0,0,6"/>
+
+        <!-- PASSWORD INPUT -->
+        <Border x:Name="PasswordBorder" Background="#161b22" CornerRadius="8"
+                BorderBrush="#30363d" BorderThickness="1" Margin="0,0,0,6">
+          <TextBox x:Name="PasswordBox" Classes="AuthInput"
+                   PasswordChar="•"
+                   Background="Transparent"
+                   BorderThickness="0"
+                   GotFocus="PasswordBox_GotFocus"
+                   LostFocus="PasswordBox_LostFocus"
+                   KeyDown="Input_KeyDown"/>
+        </Border>
+
+        <!-- FORGOT PASSWORD -->
+        <Button x:Name="ForgotLink" Classes="LinkBtn"
+                Content="Forgot password?"
+                Click="ForgotLink_Click"
+                HorizontalAlignment="Right" Margin="0,6,0,22"/>
+
+        <!-- SIGN IN BUTTON -->
+        <Button x:Name="SignInBtn" Click="SignInBtn_Click"
+                Height="44" Cursor="Hand" Margin="0,0,0,16"
+                HorizontalAlignment="Stretch">
+          <Button.Template>
+            <ControlTemplate TargetType="Button">
+              <Border x:Name="Bd" CornerRadius="8" Background="#1d6ae5">
+                <Grid>
+                  <TextBlock x:Name="BtnText" Text="Sign In"
+                             Foreground="White" FontSize="14"
+                             FontWeight="SemiBold"
+                             HorizontalAlignment="Center"
+                             VerticalAlignment="Center"/>
+                  <TextBlock x:Name="LoadingText" Text="Signing in..."
+                             Foreground="White" FontSize="13"
+                             HorizontalAlignment="Center"
+                             VerticalAlignment="Center"
+                             IsVisible="False"/>
+                </Grid>
+              </Border>
+            </ControlTemplate>
+          </Button.Template>
+        </Button>
+
+        <!-- DIVIDER -->
+        <Grid Margin="0,0,0,16">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition/>
+          </Grid.ColumnDefinitions>
+          <Border Grid.Column="0" Height="1" Background="#21262d" VerticalAlignment="Center"/>
+          <TextBlock Grid.Column="1" Text="or" Foreground="#4b5563"
+                     FontSize="11" Margin="12,0"/>
+          <Border Grid.Column="2" Height="1" Background="#21262d" VerticalAlignment="Center"/>
+        </Grid>
+
+        <!-- REGISTER LINK -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+          <TextBlock Text="Don't have an account? " Foreground="#6b7280" FontSize="12"/>
+          <Button Classes="LinkBtn" Content="Create one at coopilotxai.com"
+                  Click="RegisterLink_Click" FontSize="12"/>
+        </StackPanel>
+
+      </StackPanel>
+    </Grid>
+  </Border>
+</Window>

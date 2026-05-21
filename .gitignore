@@ -1,0 +1,9 @@
+bin/
+obj/
+publish/
+dist/
+*.user
+.DS_Store
+__MACOSX/
+*.pkg
+*.zip
