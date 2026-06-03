@@ -100,29 +100,37 @@ jobs:
         run: |
           IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.+)"/\1/')
           echo "Signing with: $IDENTITY"
+
+          # Remove non-signable files
           find InterviewCopilot.app/Contents/MacOS -name "*.pdb" -delete
           find InterviewCopilot.app/Contents/MacOS -name "*.xml" -delete
+
+          # Move script/config files to Resources
           find InterviewCopilot.app/Contents/MacOS -name "*.py" -exec mv {} InterviewCopilot.app/Contents/Resources/ \;
           find InterviewCopilot.app/Contents/MacOS -name "*.sh" -exec mv {} InterviewCopilot.app/Contents/Resources/ \;
           find InterviewCopilot.app/Contents/MacOS -name "*.json" -exec mv {} InterviewCopilot.app/Contents/Resources/ \;
+
+          # Sign dylibs
           find InterviewCopilot.app/Contents/MacOS -name "*.dylib" | while read f; do
             codesign --force --options runtime --sign "$IDENTITY" "$f"
           done
+
+          # Sign .dll files
           find InterviewCopilot.app/Contents/MacOS -name "*.dll" | while read f; do
             codesign --force --options runtime --sign "$IDENTITY" "$f" 2>/dev/null || true
           done
-          for exe in ScreenOCR SystemAudioCapture; do
-            [ -f "InterviewCopilot.app/Contents/MacOS/$exe" ] && \
-              codesign --force --options runtime --sign "$IDENTITY" "InterviewCopilot.app/Contents/MacOS/$exe"
+
+          # Sign ALL native executables (catches createdump and any other binaries)
+          find InterviewCopilot.app/Contents/MacOS -type f ! -name "*.dylib" ! -name "*.dll" ! -name "*.py" ! -name "*.sh" ! -name "*.json" ! -name "*.xml" ! -name "*.pdb" | while read f; do
+            codesign --force --options runtime --entitlements entitlements.plist --sign "$IDENTITY" "$f" 2>/dev/null || true
           done
-          codesign --force --options runtime \
-            --entitlements entitlements.plist \
-            --sign "$IDENTITY" \
-            "InterviewCopilot.app/Contents/MacOS/InterviewCopilot"
+
+          # Sign the whole .app bundle
           codesign --force --options runtime \
             --entitlements entitlements.plist \
             --sign "$IDENTITY" \
             "InterviewCopilot.app"
+
           codesign --verify --verbose=2 "InterviewCopilot.app"
           spctl --assess --verbose=2 "InterviewCopilot.app" || true
 
@@ -162,6 +170,7 @@ jobs:
               --password "$APPLE_APP_PASSWORD" \
               --team-id "$APPLE_TEAM_ID" || true
           fi
+          echo "$SUBMIT_OUT" | grep -q "status: Accepted" || (echo "Notarization rejected by Apple!" && exit 1)
 
       - name: Staple notarization ticket
         run: |
