@@ -149,7 +149,7 @@ jobs:
           mv "InterviewCopilot-raw.dmg" "InterviewCopilot-mac.dmg"
           echo "DMG size: $(du -sh InterviewCopilot-mac.dmg | cut -f1)"
 
-              - name: Notarize .dmg
+        - name: Notarize .dmg
           env:
             APPLE_ID: ${{ secrets.APPLE_ID }}
             APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
