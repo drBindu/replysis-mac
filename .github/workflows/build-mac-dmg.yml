@@ -110,6 +110,11 @@ jobs:
           IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.+)"/\1/')
           echo "Signing with: $IDENTITY"
 
+          # Move non-signable files to Resources
+          find InterviewCopilot.app/Contents/MacOS -name "*.py" -exec mv {} InterviewCopilot.app/Contents/Resources/ \;
+          find InterviewCopilot.app/Contents/MacOS -name "*.sh" -exec mv {} InterviewCopilot.app/Contents/Resources/ \;
+          find InterviewCopilot.app/Contents/MacOS -name "*.json" -exec mv {} InterviewCopilot.app/Contents/Resources/ \;
+
           # Sign dylibs first
           find InterviewCopilot.app/Contents/MacOS -name "*.dylib" | while read f; do
             codesign --force --options runtime --sign "$IDENTITY" "$f"
