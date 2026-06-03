@@ -110,7 +110,11 @@ jobs:
           IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.+)"/\1/')
           echo "Signing with: $IDENTITY"
 
-          # Move non-signable files to Resources
+          # Remove debug/non-signable files
+          find InterviewCopilot.app/Contents/MacOS -name "*.pdb" -delete
+          find InterviewCopilot.app/Contents/MacOS -name "*.xml" -delete
+
+          # Move script/config files to Resources
           find InterviewCopilot.app/Contents/MacOS -name "*.py" -exec mv {} InterviewCopilot.app/Contents/Resources/ \;
           find InterviewCopilot.app/Contents/MacOS -name "*.sh" -exec mv {} InterviewCopilot.app/Contents/Resources/ \;
           find InterviewCopilot.app/Contents/MacOS -name "*.json" -exec mv {} InterviewCopilot.app/Contents/Resources/ \;
