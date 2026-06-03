@@ -169,18 +169,25 @@ jobs:
 
           echo "DMG size: $(du -sh InterviewCopilot-mac.dmg | cut -f1)"
 
-      - name: Notarize .dmg
+            - name: Notarize .dmg
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          xcrun notarytool submit "InterviewCopilot-mac.dmg" \
+          SUBMIT_OUT=$(xcrun notarytool submit "InterviewCopilot-mac.dmg" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
             --wait \
-            --timeout 30m
+            --timeout 30m 2>&1)
+          echo "$SUBMIT_OUT"
+          SUBMISSION_ID=$(echo "$SUBMIT_OUT" | grep "id:" | head -1 | awk '{print $2}')
+          echo "Submission ID: $SUBMISSION_ID"
+          xcrun notarytool log "$SUBMISSION_ID" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" || true
 
       - name: Staple notarization ticket
         run: |
