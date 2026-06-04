@@ -85,16 +85,3 @@ jobs:
 
           echo "PKG size: $(du -sh InterviewCopilot-mac.pkg | cut -f1)"
 
-      - name: Upload .pkg to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: Interview Copilot v1.0.${{ github.run_number }}
-          body: |
-            ## Install
-            1. Download **InterviewCopilot-mac.pkg**
-            2. Double-click to install
-            3. Open **Interview Copilot** from your Applications folder
-          files: InterviewCopilot-mac.pkg
-          draft: false
-          prerelease: false
