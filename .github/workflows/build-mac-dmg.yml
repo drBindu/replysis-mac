@@ -151,51 +151,17 @@ jobs:
 
       - name: Notarize .dmg
         env:
-            APPLE_ID: ${{ secrets.APPLE_ID }}
-            APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-            APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         timeout-minutes: 120
         run: |
-            # Submit without --wait to avoid timeout issues
-            SUBMIT_OUT=$(xcrun notarytool submit "InterviewCopilot-mac.dmg" \
-              --apple-id "$APPLE_ID" \
-              --password "$APPLE_APP_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" \
-              2>&1)
-            echo "$SUBMIT_OUT"
-            SUBMISSION_ID=$(echo "$SUBMIT_OUT" | grep "id:" | head -1 | awk '{print $2}')
-            echo "Submission ID: $SUBMISSION_ID"
-            if [ -z "$SUBMISSION_ID" ]; then
-              echo "ERROR: Failed to get submission ID"
-              exit 1
-            fi
-            # Poll every 60s for up to 90 minutes
-            MAX_WAIT=90
-            WAITED=0
-            STATUS=""
-            while [ $WAITED -lt $MAX_WAIT ]; do
-              sleep 60
-              WAITED=$((WAITED + 1))
-              INFO=$(xcrun notarytool info "$SUBMISSION_ID" \
-                --apple-id "$APPLE_ID" \
-                --password "$APPLE_APP_PASSWORD" \
-                --team-id "$APPLE_TEAM_ID" 2>&1)
-              echo "[$WAITED min] $INFO"
-              STATUS=$(echo "$INFO" | grep "  status:" | awk '{print $2}')
-              echo "Status: $STATUS"
-              if [ "$STATUS" = "Accepted" ] || [ "$STATUS" = "Invalid" ]; then
-                break
-              fi
-            done
-            if [ "$STATUS" != "Accepted" ]; then
-              xcrun notarytool log "$SUBMISSION_ID" \
-                --apple-id "$APPLE_ID" \
-                --password "$APPLE_APP_PASSWORD" \
-                --team-id "$APPLE_TEAM_ID" || true
-              echo "Notarization failed or timed out. Status: $STATUS"
-              exit 1
-            fi
-            echo "Notarization accepted!"
+          xcrun notarytool submit "InterviewCopilot-mac.dmg" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          echo "Notarization accepted!"
       - name: Staple notarization ticket
         run: |
           xcrun stapler staple "InterviewCopilot-mac.dmg"
