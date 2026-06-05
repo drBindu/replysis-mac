@@ -174,7 +174,7 @@ jobs:
           tag_name: v1.0.${{ github.run_number }}
           name: Interview Copilot v1.0.${{ github.run_number }}
           body: |
-            ## Install on macOS - zero warnings
+            ## Install on macOS - zero warnings ✓
             1. Download **InterviewCopilot-mac.dmg**
             2. Open it - drag **Interview Copilot** into Applications
             3. Launch from Applications
