@@ -90,3 +90,82 @@ jobs:
             <true/>
             <key>com.apple.security.cs.disable-library-validation</key>
             <true/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Sign .app
+        run: |
+          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.+)"/\1/')
+          echo "Signing with: $IDENTITY"
+          find InterviewCopilot.app/Contents/MacOS -name "*.pdb" -delete
+          find InterviewCopilot.app/Contents/MacOS -name "*.xml" -delete
+          find InterviewCopilot.app/Contents/MacOS -name "*.py" -exec mv {} InterviewCopilot.app/Contents/Resources/ \;
+          find InterviewCopilot.app/Contents/MacOS -name "*.sh" -exec mv {} InterviewCopilot.app/Contents/Resources/ \;
+          find InterviewCopilot.app/Contents/MacOS -name "*.json" -exec mv {} InterviewCopilot.app/Contents/Resources/ \;
+          find InterviewCopilot.app/Contents/MacOS -name "*.dylib" | while read f; do
+            codesign --force --options runtime --sign "$IDENTITY" "$f"
+          done
+          find InterviewCopilot.app/Contents/MacOS -name "*.dll" | while read f; do
+            codesign --force --options runtime --sign "$IDENTITY" "$f" 2>/dev/null || true
+          done
+          find InterviewCopilot.app/Contents/MacOS -type f ! -name "*.dylib" ! -name "*.dll" ! -name "*.py" ! -name "*.sh" ! -name "*.json" ! -name "*.xml" ! -name "*.pdb" | while read f; do
+            codesign --force --options runtime --entitlements entitlements.plist --sign "$IDENTITY" "$f" 2>/dev/null || true
+          done
+          codesign --force --options runtime \
+            --entitlements entitlements.plist \
+            --sign "$IDENTITY" \
+            "InterviewCopilot.app"
+          codesign --verify --verbose=2 "InterviewCopilot.app"
+          spctl --assess --verbose=2 "InterviewCopilot.app" || true
+
+      - name: Create .dmg
+        run: |
+          mkdir -p dmg_contents
+          cp -R "InterviewCopilot.app" dmg_contents/
+          ln -s /Applications dmg_contents/Applications
+          hdiutil create \
+            -volname "Interview Copilot" \
+            -srcfolder dmg_contents \
+            -ov -format UDBZ \
+            "InterviewCopilot-raw.dmg"
+          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.+)"/\1/')
+          codesign --force --sign "$IDENTITY" "InterviewCopilot-raw.dmg"
+          mv "InterviewCopilot-raw.dmg" "InterviewCopilot-mac.dmg"
+          echo "DMG size: $(du -sh InterviewCopilot-mac.dmg | cut -f1)"
+
+      - name: Notarize .dmg
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        timeout-minutes: 120
+        run: |
+          xcrun notarytool submit "InterviewCopilot-mac.dmg" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          echo "Notarization accepted!"
+
+      - name: Staple notarization ticket
+        run: |
+          xcrun stapler staple "InterviewCopilot-mac.dmg"
+          xcrun stapler validate "InterviewCopilot-mac.dmg"
+          echo "Notarization stapled OK"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Interview Copilot v1.0.${{ github.run_number }}
+          body: |
+            ## Install on macOS - zero warnings ✓
+            1. Download **InterviewCopilot-mac.dmg**
+            2. Open it - drag **Interview Copilot** into Applications
+            3. Launch from Applications
+
+            Signed and notarized by Apple. No security prompts.
+          files: InterviewCopilot-mac.dmg
+          draft: false
+          prerelease: false
