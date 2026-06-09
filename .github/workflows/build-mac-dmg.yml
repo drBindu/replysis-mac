@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
@@ -38,6 +40,18 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
+      - name: Set version number
+        id: version
+        run: echo "VERSION=1.0.${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+      - name: Update Info.plist version
+        run: |
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.VERSION }}" \
+            InterviewCopilotMac6/Assets/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" \
+            InterviewCopilotMac6/Assets/Info.plist
+          echo "Info.plist updated to ${{ steps.version.outputs.VERSION }}"
+
       - name: Restore dependencies
         run: dotnet restore InterviewCopilotMac6/InterviewCopilotMac6.csproj
 
@@ -47,6 +61,7 @@ jobs:
             -r osx-arm64 \
             --self-contained true \
             -c Release \
+            -p:Version=${{ steps.version.outputs.VERSION }} \
             -o publish/arm64
 
       - name: Build speechmatics_engine binary (bundles Python + pyaudio + deps)
@@ -133,7 +148,13 @@ jobs:
           codesign --verify --verbose=2 "InterviewCopilot.app"
           spctl --assess --verbose=2 "InterviewCopilot.app" || true
 
-      - name: Create .dmg
+      - name: Create .zip for auto-updates (NetSparkle)
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "InterviewCopilot.app" "InterviewCopilot-update.zip"
+          echo "Update zip size: $(du -sh InterviewCopilot-update.zip | cut -f1)"
+
+      - name: Create .dmg for first-time installs
         run: |
           mkdir -p dmg_contents
           cp -R "InterviewCopilot.app" dmg_contents/
@@ -168,18 +189,81 @@ jobs:
           xcrun stapler validate "InterviewCopilot-mac.dmg"
           echo "Notarization stapled OK"
 
+      - name: Sign update .zip and generate appcast.xml
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          DOWNLOAD_URL="https://github.com/moto123a/interview-copilot-mac/releases/download/v${VERSION}/InterviewCopilot-update.zip"
+          FILE_SIZE=$(stat -f%z "InterviewCopilot-update.zip")
+          PUB_DATE=$(date -u +"%a, %d %b %Y %H:%M:%S +0000")
+
+          # Sign the zip with Ed25519 using the private key from secrets
+          pip3 install cryptography --quiet
+          SIGNATURE=$(python3 - <<'PYEOF'
+import base64, os, sys
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+pk = Ed25519PrivateKey.from_private_bytes(
+    base64.b64decode(os.environ["SPARKLE_PRIVATE_KEY"])
+)
+with open("InterviewCopilot-update.zip", "rb") as f:
+    data = f.read()
+print(base64.b64encode(pk.sign(data)).decode())
+PYEOF
+          )
+
+          echo "Signature: $SIGNATURE"
+
+          # Write appcast.xml
+          cat > appcast.xml << EOF
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>CoopilotX Interview Copilot</title>
+    <link>https://coopilotxai.com</link>
+    <description>Most recent update for Interview Copilot</description>
+    <item>
+      <title>Interview Copilot ${VERSION}</title>
+      <sparkle:version>${VERSION}</sparkle:version>
+      <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
+      <pubDate>${PUB_DATE}</pubDate>
+      <enclosure
+        url="${DOWNLOAD_URL}"
+        sparkle:version="${VERSION}"
+        sparkle:shortVersionString="${VERSION}"
+        sparkle:edSignature="${SIGNATURE}"
+        length="${FILE_SIZE}"
+        type="application/zip"/>
+    </item>
+  </channel>
+</rss>
+EOF
+          echo "appcast.xml written for version ${VERSION}"
+          cat appcast.xml
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: Interview Copilot v1.0.${{ github.run_number }}
+          tag_name: v${{ steps.version.outputs.VERSION }}
+          name: Interview Copilot v${{ steps.version.outputs.VERSION }}
           body: |
-            ## Install on macOS - zero warnings ✓
-            1. Download **InterviewCopilot-mac.dmg**
-            2. Open it - drag **Interview Copilot** into Applications
-            3. Launch from Applications
+            ## Install on macOS ✓
+            **First time?** Download **InterviewCopilot-mac.dmg** → drag to Applications.
+            **Already installed?** The app will notify you automatically — just click "Update Now".
 
             Signed and notarized by Apple. No security prompts.
-          files: InterviewCopilot-mac.dmg
+          files: |
+            InterviewCopilot-mac.dmg
+            InterviewCopilot-update.zip
           draft: false
           prerelease: false
+
+      - name: Commit appcast.xml back to repo
+        run: |
+          git config user.name  "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add appcast.xml
+          git diff --staged --quiet || \
+            git commit -m "chore: update appcast to v${{ steps.version.outputs.VERSION }} [skip ci]"
+          git push
