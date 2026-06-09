@@ -1,7 +1,7 @@
 """
 Removes solid background, smooths edges, centres owl on transparent canvas.
 """
-from PIL import Image, ImageDraw, ImageFilter, ImageChops
+from PIL import Image, ImageDraw, ImageFilter, ImageChops, ImageEnhance
 import collections
 
 SRC       = "InterviewCopilotMac6/Assets/AppIcon.png"
@@ -33,18 +33,27 @@ while queue:
                 visited.add((nx, ny))
                 queue.append((nx, ny))
 
-# ── 2. Smooth edges using alpha channel blur ─────────────────────────────────
+# ── 2. Boost colour — darker, bolder teal/blue ──────────────────────────────
+rgb  = img.convert("RGB")
+rgb  = ImageEnhance.Color(rgb).enhance(1.8)       # richer saturation
+rgb  = ImageEnhance.Contrast(rgb).enhance(1.3)    # darker shadows
+rgb  = ImageEnhance.Brightness(rgb).enhance(0.85) # slightly darker overall
+r2, g2, b2 = rgb.split()
+_, _, _, a_orig = img.split()
+img  = Image.merge("RGBA", (r2, g2, b2, a_orig))
+
+# ── 4. Smooth edges using alpha channel blur ─────────────────────────────────
 r_ch, g_ch, b_ch, a_ch = img.split()
 # Blur the alpha channel slightly then re-threshold for clean anti-aliased edges
 a_blurred = a_ch.filter(ImageFilter.GaussianBlur(radius=1.5))
 img = Image.merge("RGBA", (r_ch, g_ch, b_ch, a_blurred))
 
-# ── 3. Crop tight to owl bounding box ────────────────────────────────────────
+# ── 5. Crop tight to owl bounding box ────────────────────────────────────────
 bbox = img.getbbox()
 if bbox:
     img = img.crop(bbox)
 
-# ── 4. Centre owl at 76% size on transparent canvas ──────────────────────────
+# ── 6. Centre owl at 76% size on transparent canvas ──────────────────────────
 PADDING  = 0.12
 canvas   = Image.new("RGBA", (w, h), (0, 0, 0, 0))
 art_w    = int(w * (1 - 2 * PADDING))
