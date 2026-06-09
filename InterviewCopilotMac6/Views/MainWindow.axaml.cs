@@ -240,6 +240,7 @@ namespace InterviewCopilotMac6.Views
             ProfileBadge.IsVisible    = true;
             SignInHeaderBtn.IsVisible = false;
             SessionsBtn.IsVisible     = true;
+            CreditsBadge.IsVisible    = true;
             AvatarInitials.Text       = UserSession.Initials;
             ProfileNameLabel.Text     = UserSession.Name.Split(' ')[0];
             ProfilePlanLabel.Text     = $"{UserSession.Plan} plan";
@@ -254,11 +255,8 @@ namespace InterviewCopilotMac6.Views
             ProfileBadge.IsVisible    = false;
             SignInHeaderBtn.IsVisible = true;
             SessionsBtn.IsVisible     = false;
-            CreditsLabel.Text         = "Sign in";
-            CreditsLabel.Foreground   = new SolidColorBrush(Color.Parse("#6b7280"));
+            CreditsBadge.IsVisible    = false;
             CreditsPlanLabel.IsVisible = false;
-            CreditsIcon.Text          = "⚡";
-            SetCreditsBadgeStyle("#1a1f2e", "#33FFFFFF");
 
             if (isRecording) EndSession();
         }

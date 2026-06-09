@@ -158,10 +158,11 @@
             <!-- RIGHT: Credits + Profile + Buttons -->
             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
 
-              <!-- Credits Badge -->
+              <!-- Credits Badge (hidden when logged out) -->
               <Border x:Name="CreditsBadge" Background="#0f2a1a" CornerRadius="8"
                       Padding="10,6" Margin="0,0,8,0" VerticalAlignment="Center"
                       BorderBrush="#1a6b3a" BorderThickness="1" Cursor="Hand"
+                      IsVisible="False"
                       PointerPressed="CreditsBadge_Click"
                       ToolTip.Tip="Credits · Click to refresh">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
