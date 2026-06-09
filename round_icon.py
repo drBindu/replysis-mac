@@ -4,14 +4,14 @@ Removes dark navy background cleanly, applies ocean blue colour boost.
 from PIL import Image, ImageFilter, ImageEnhance
 import collections
 
-SRC            = "InterviewCopilotMac6/Assets/AppIcon.png"
-TOLERANCE      = 12   # flood-fill: removes pixels close to (0,12,50) background
-EDGE_FRINGE    = 35   # second-pass: removes residual dark fringe at owl boundary
+SRC         = "InterviewCopilotMac6/Assets/AppIcon.png"
+TOLERANCE   = 12   # flood-fill tolerance against bg (0,12,50)
+EDGE_FRINGE = 35   # edge-only fringe pass tolerance
 
 def color_distance(c1, c2):
     return sum((a - b) ** 2 for a, b in zip(c1[:3], c2[:3])) ** 0.5
 
-# ── 1. Load, sample real background colour from top-centre ───────────────────
+# ── 1. Load, sample background from top-centre ───────────────────────────────
 img      = Image.open(SRC).convert("RGBA")
 w, h     = img.size
 pixels   = img.load()
@@ -80,7 +80,7 @@ if blobs:
                 a_arr[x, y] = 0
     img = Image.merge("RGBA", (r_ch, g_ch, b_ch, a_ch))
 
-# ── 4. Edge fringe removal — 3 passes removes dark anti-alias fringe ──────────
+# ── 4. Edge fringe removal — 3 passes strips dark anti-alias boundary ─────────
 def remove_edge_fringe(im, tol):
     px = im.load()
     iw, ih = im.size
@@ -100,12 +100,7 @@ img = remove_edge_fringe(img, EDGE_FRINGE)
 img = remove_edge_fringe(img, EDGE_FRINGE)
 img = remove_edge_fringe(img, EDGE_FRINGE)
 
-# ── 5. Smooth alpha edges ─────────────────────────────────────────────────────
-r_ch, g_ch, b_ch, a_ch = img.split()
-a_ch = a_ch.filter(ImageFilter.GaussianBlur(radius=1.5))
-img  = Image.merge("RGBA", (r_ch, g_ch, b_ch, a_ch))
-
-# ── 6. Ocean blue colour boost ────────────────────────────────────────────────
+# ── 5. Ocean blue colour boost ────────────────────────────────────────────────
 r_ch, g_ch, b_ch, a_ch = img.split()
 r_ch = r_ch.point(lambda p: min(255, int(p * 0.3)))
 g_ch = g_ch.point(lambda p: min(255, int(p * 0.7)))
@@ -116,7 +111,21 @@ rgb  = ImageEnhance.Contrast(rgb).enhance(1.8)
 r2, g2, b2 = rgb.split()
 img = Image.merge("RGBA", (r2, g2, b2, a_ch))
 
-# ── 7. Crop to bounding box, centre with 12% padding ─────────────────────────
+# ── 6. Remove dark semi-transparent halo pixels left by anti-aliasing ─────────
+px = img.load()
+for y in range(h):
+    for x in range(w):
+        r, g, b, a = px[x, y]
+        if 0 < a < 220 and r + g + b < 90:
+            px[x, y] = (0, 0, 0, 0)
+
+# ── 7. Light alpha smooth ─────────────────────────────────────────────────────
+r_ch, g_ch, b_ch, a_ch = img.split()
+a_ch = a_ch.filter(ImageFilter.GaussianBlur(radius=0.8))
+a_ch = a_ch.point(lambda p: 0 if p < 30 else p)
+img  = Image.merge("RGBA", (r_ch, g_ch, b_ch, a_ch))
+
+# ── 8. Crop to bounding box, centre with 12% padding ─────────────────────────
 bbox = img.getbbox()
 if bbox:
     img = img.crop(bbox)
