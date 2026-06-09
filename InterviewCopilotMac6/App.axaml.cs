@@ -6,6 +6,7 @@ using Avalonia.Threading;
 using InterviewCopilotMac6.ViewModels;
 using InterviewCopilotMac6.Views;
 using NetSparkleUpdater;
+using NetSparkleUpdater.Enums;
 using NetSparkleUpdater.SignatureVerifiers;
 using System;
 
@@ -54,7 +55,6 @@ public partial class App : Application
                 new Ed25519Checker(SecurityMode.Strict, SparklePublicKey))
             {
                 RelaunchAfterUpdate = true,
-                ShowsUIOnMainThread = true,
             };
 
             var info = await Sparkle.CheckForUpdatesQuietly();

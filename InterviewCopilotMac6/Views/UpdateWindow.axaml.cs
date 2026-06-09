@@ -25,8 +25,8 @@ namespace InterviewCopilotMac6.Views
             // Version labels
             string current = Assembly.GetEntryAssembly()?
                 .GetName().Version?.ToString(3) ?? "current";
-            string newVer  = item.Version ?? item.AppVersionInstalled ?? "new version";
-            string appName = item.AppName?.Length > 0 ? item.AppName : "Interview Copilot";
+            string newVer  = item.Version ?? "new version";
+            string appName = "Interview Copilot";
 
             TitleText.Text    = $"{appName} {newVer} is here!";
             SubtitleText.Text = $"You have {current} — {newVer} is ready.";
@@ -95,7 +95,7 @@ namespace InterviewCopilotMac6.Views
         {
             Dispatcher.UIThread.Post(() =>
             {
-                int pct           = (int)Math.Round(args.ProgressPercentage);
+                int pct           = (int)Math.Round((double)args.ProgressPercentage);
                 ProgressBar.Value = pct;
                 PctText.Text      = $"{pct}%";
                 StatusText.Text   = "Downloading update…";
@@ -116,7 +116,7 @@ namespace InterviewCopilotMac6.Views
             });
         }
 
-        private void OnDownloadError(AppCastItem item, string path, Exception ex)
+        private void OnDownloadError(AppCastItem item, string? path, Exception ex)
         {
             Dispatcher.UIThread.Post(() => ShowError($"Download error: {ex.Message}"));
         }
