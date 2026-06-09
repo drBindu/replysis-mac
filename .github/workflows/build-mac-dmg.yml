@@ -197,7 +197,9 @@ jobs:
           export DOWNLOAD_URL="https://github.com/moto123a/interview-copilot-mac/releases/download/v${VERSION}/InterviewCopilot-update.zip"
           export FILE_SIZE=$(stat -f%z "InterviewCopilot-update.zip")
           export PUB_DATE=$(date -u +"%a, %d %b %Y %H:%M:%S +0000")
-          pip3 install cryptography --quiet
+          python3 -m venv /tmp/sign-venv
+          source /tmp/sign-venv/bin/activate
+          pip install cryptography --quiet
           python3 sign_sparkle.py
 
       - name: Upload to GitHub Release
