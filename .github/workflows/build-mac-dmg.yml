@@ -52,7 +52,7 @@ jobs:
       - name: Build speechmatics_engine binary (bundles Python + pyaudio + deps)
         run: |
           brew install portaudio
-          pip3 install pyaudio numpy speechmatics pyinstaller
+          pip3 install pyaudio numpy speechmatics pyinstaller --break-system-packages
           cd InterviewCopilotMac6
           pyinstaller --onefile --name speechmatics_engine speechmatics_engine.py
           echo "Engine binary size: $(du -sh dist/speechmatics_engine | cut -f1)"
