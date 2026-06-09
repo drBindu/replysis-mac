@@ -192,44 +192,13 @@ jobs:
       - name: Sign update .zip and generate appcast.xml
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          DOWNLOAD_URL="https://github.com/moto123a/interview-copilot-mac/releases/download/v${VERSION}/InterviewCopilot-update.zip"
-          FILE_SIZE=$(stat -f%z "InterviewCopilot-update.zip")
-          PUB_DATE=$(date -u +"%a, %d %b %Y %H:%M:%S +0000")
-
-          # Sign the zip with Ed25519 using the private key from secrets
+          export DOWNLOAD_URL="https://github.com/moto123a/interview-copilot-mac/releases/download/v${VERSION}/InterviewCopilot-update.zip"
+          export FILE_SIZE=$(stat -f%z "InterviewCopilot-update.zip")
+          export PUB_DATE=$(date -u +"%a, %d %b %Y %H:%M:%S +0000")
           pip3 install cryptography --quiet
-          SIGNATURE=$(python3 sign_sparkle.py)
-
-          echo "Signature: $SIGNATURE"
-
-          # Write appcast.xml
-          cat > appcast.xml << EOF
-<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
-  <channel>
-    <title>CoopilotX Interview Copilot</title>
-    <link>https://coopilotxai.com</link>
-    <description>Most recent update for Interview Copilot</description>
-    <item>
-      <title>Interview Copilot ${VERSION}</title>
-      <sparkle:version>${VERSION}</sparkle:version>
-      <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
-      <pubDate>${PUB_DATE}</pubDate>
-      <enclosure
-        url="${DOWNLOAD_URL}"
-        sparkle:version="${VERSION}"
-        sparkle:shortVersionString="${VERSION}"
-        sparkle:edSignature="${SIGNATURE}"
-        length="${FILE_SIZE}"
-        type="application/zip"/>
-    </item>
-  </channel>
-</rss>
-EOF
-          echo "appcast.xml written for version ${VERSION}"
-          cat appcast.xml
+          python3 sign_sparkle.py
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
