@@ -25,6 +25,9 @@ public partial class App : Application
 
     internal static SparkleUpdater? Sparkle;
 
+    // Prevent multiple update dialogs from stacking
+    private static bool _updateDialogShowing = false;
+
     // ────────────────────────────────────────────────────────────
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
@@ -41,16 +44,27 @@ public partial class App : Application
 
         base.OnFrameworkInitializationCompleted();
 
-        // Start silent update check after the UI is visible
-        Dispatcher.UIThread.Post(StartUpdateCheckAsync, DispatcherPriority.Background);
+        // First check: 5 s after launch so the main window is fully visible
+        DispatcherTimer.RunOnce(
+            () => _ = StartUpdateCheckAsync(),
+            TimeSpan.FromSeconds(5));
+
+        // Periodic check: every 4 hours while the app is running
+        var periodicTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromHours(4)
+        };
+        periodicTimer.Tick += async (_, _) => await StartUpdateCheckAsync();
+        periodicTimer.Start();
     }
 
     // ── Silent background update check ──────────────────────────
-    private static async void StartUpdateCheckAsync()
+    private static async System.Threading.Tasks.Task StartUpdateCheckAsync()
     {
         try
         {
-            Sparkle = new SparkleUpdater(
+            // Initialise once; reuse on periodic ticks
+            Sparkle ??= new SparkleUpdater(
                 AppcastUrl,
                 new Ed25519Checker(SecurityMode.Strict, SparklePublicKey))
             {
@@ -60,14 +74,27 @@ public partial class App : Application
             var info = await Sparkle.CheckForUpdatesQuietly();
             if (info?.Updates == null || info.Updates.Count == 0) return;
 
-            // Update found — show our custom dialog on the UI thread
+            // Don't stack dialogs if one is already open
+            if (_updateDialogShowing) return;
+
             var update = info.Updates[0];
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
+                _updateDialogShowing = true;
                 var win    = new UpdateWindow(Sparkle, update);
                 var parent = GetMainWindow();
-                if (parent != null) win.ShowDialog(parent);
-                else                win.Show();
+
+                win.Closed += (_, _) => _updateDialogShowing = false;
+
+                // Use Show() — ShowDialog requires await and can silently fail
+                if (parent != null)
+                {
+                    win.ShowDialog(parent);
+                }
+                else
+                {
+                    win.Show();
+                }
             });
         }
         catch (Exception ex)
