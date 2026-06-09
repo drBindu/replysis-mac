@@ -53,7 +53,7 @@ jobs:
         run: |
           brew install portaudio
           pip3 install pyaudio numpy speechmatics pyinstaller
-          cd InterviewCopilotMac6/InterviewCopilotMac6
+          cd InterviewCopilotMac6
           pyinstaller --onefile --name speechmatics_engine speechmatics_engine.py
           echo "Engine binary size: $(du -sh dist/speechmatics_engine | cut -f1)"
 
@@ -78,7 +78,7 @@ jobs:
           cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
           cp publish/arm64/* "$APP/Contents/MacOS/" 2>/dev/null || true
           # Copy bundled engine binary (includes Python + pyaudio + all deps)
-          cp InterviewCopilotMac6/InterviewCopilotMac6/dist/speechmatics_engine "$APP/Contents/MacOS/speechmatics_engine"
+          cp InterviewCopilotMac6/dist/speechmatics_engine "$APP/Contents/MacOS/speechmatics_engine"
           chmod +x "$APP/Contents/MacOS/speechmatics_engine"
           echo "Engine binary copied: $(du -sh "$APP/Contents/MacOS/speechmatics_engine" | cut -f1)"
           if [ -f "$APP/Contents/MacOS/InterviewCopilotMac6" ]; then
