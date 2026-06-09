@@ -88,16 +88,21 @@ jobs:
           mkdir -p "$APP/Contents/Resources"
           cp InterviewCopilotMac6/Assets/Info.plist "$APP/Contents/Info.plist"
           mkdir -p AppIcon.iconset
-          sips -z 16   16   InterviewCopilotMac6/Assets/AppIcon.png --out AppIcon.iconset/icon_16x16.png
-          sips -z 32   32   InterviewCopilotMac6/Assets/AppIcon.png --out AppIcon.iconset/icon_16x16@2x.png
-          sips -z 32   32   InterviewCopilotMac6/Assets/AppIcon.png --out AppIcon.iconset/icon_32x32.png
-          sips -z 64   64   InterviewCopilotMac6/Assets/AppIcon.png --out AppIcon.iconset/icon_32x32@2x.png
-          sips -z 128  128  InterviewCopilotMac6/Assets/AppIcon.png --out AppIcon.iconset/icon_128x128.png
-          sips -z 256  256  InterviewCopilotMac6/Assets/AppIcon.png --out AppIcon.iconset/icon_128x128@2x.png
-          sips -z 256  256  InterviewCopilotMac6/Assets/AppIcon.png --out AppIcon.iconset/icon_256x256.png
-          sips -z 512  512  InterviewCopilotMac6/Assets/AppIcon.png --out AppIcon.iconset/icon_256x256@2x.png
-          sips -z 512  512  InterviewCopilotMac6/Assets/AppIcon.png --out AppIcon.iconset/icon_512x512.png
-          sips -z 1024 1024 InterviewCopilotMac6/Assets/AppIcon.png --out AppIcon.iconset/icon_512x512@2x.png
+          source /tmp/icon-venv/bin/activate
+          python3 - << 'PYEOF'
+from PIL import Image
+sizes = {
+    "icon_16x16.png": 16, "icon_16x16@2x.png": 32,
+    "icon_32x32.png": 32, "icon_32x32@2x.png": 64,
+    "icon_128x128.png": 128, "icon_128x128@2x.png": 256,
+    "icon_256x256.png": 256, "icon_256x256@2x.png": 512,
+    "icon_512x512.png": 512, "icon_512x512@2x.png": 1024,
+}
+img = Image.open("InterviewCopilotMac6/Assets/AppIcon.png").convert("RGBA")
+for name, size in sizes.items():
+    img.resize((size, size), Image.LANCZOS).save(f"AppIcon.iconset/{name}", "PNG")
+    print(f"  {name}: {size}x{size}")
+PYEOF
           iconutil -c icns AppIcon.iconset -o AppIcon.icns
           cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
           cp publish/arm64/* "$APP/Contents/MacOS/" 2>/dev/null || true
