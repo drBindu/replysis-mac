@@ -1,8 +1,8 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="InterviewCopilotMac6.Views.LoginWindow"
-        Title="CoopilotX — Sign In"
-        Height="560" Width="440"
+        Title="Interview Copilot — Sign In"
+        Height="600" Width="420"
         WindowStartupLocation="CenterScreen"
         Background="Transparent"
         CanResize="False"
@@ -13,117 +13,113 @@
         TransparencyLevelHint="Transparent">
 
   <Window.Styles>
-
     <Style Selector="TextBox.AuthInput">
-      <Setter Property="Background" Value="#161b22"/>
-      <Setter Property="Foreground" Value="#e6edf3"/>
-      <Setter Property="BorderBrush" Value="#30363d"/>
-      <Setter Property="BorderThickness" Value="1"/>
-      <Setter Property="FontSize" Value="13"/>
-      <Setter Property="Height" Value="42"/>
-      <Setter Property="Padding" Value="14,11"/>
-      <Setter Property="CornerRadius" Value="8"/>
-      <Setter Property="CaretBrush" Value="#38BDF8"/>
-    </Style>
-
-    <Style Selector="Button.LinkBtn">
-      <Setter Property="Background" Value="Transparent"/>
-      <Setter Property="Foreground" Value="#38BDF8"/>
+      <Setter Property="Background"      Value="Transparent"/>
+      <Setter Property="Foreground"      Value="#e6edf3"/>
       <Setter Property="BorderThickness" Value="0"/>
-      <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="FontSize" Value="11"/>
-      <Setter Property="Padding" Value="0"/>
+      <Setter Property="FontSize"        Value="14"/>
+      <Setter Property="Height"          Value="44"/>
+      <Setter Property="Padding"         Value="14,11"/>
+      <Setter Property="CaretBrush"      Value="#60A5FA"/>
     </Style>
-
+    <Style Selector="Button.LinkBtn">
+      <Setter Property="Background"     Value="Transparent"/>
+      <Setter Property="Foreground"     Value="#60A5FA"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Cursor"         Value="Hand"/>
+      <Setter Property="FontSize"       Value="12"/>
+      <Setter Property="Padding"        Value="0"/>
+    </Style>
+    <Style Selector="Button.LinkBtn:pointerover /template/ ContentPresenter">
+      <Setter Property="Foreground" Value="#93C5FD"/>
+    </Style>
   </Window.Styles>
 
-  <Border Background="#0d1117" CornerRadius="16"
-          BorderBrush="#21262d" BorderThickness="1"
+  <!-- Outer shadow / drag area -->
+  <Border Background="#0d1117" CornerRadius="18"
+          BorderBrush="#30363d" BorderThickness="1"
           PointerPressed="TitleBar_PointerPressed">
-
     <Grid>
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto"/>
         <RowDefinition Height="*"/>
       </Grid.RowDefinitions>
 
-      <!-- TITLE BAR / DRAG -->
-      <Border Grid.Row="0" Background="Transparent" Padding="0,12,16,0">
+      <!-- ── TITLE BAR ── -->
+      <Border Grid.Row="0" Background="Transparent" Padding="14,12,14,0">
         <DockPanel>
-          <Button DockPanel.Dock="Right" Content="✕"
+          <Button DockPanel.Dock="Right"
                   Click="CloseBtn_Click"
                   Background="Transparent" BorderThickness="0"
-                  Foreground="#6b7280" FontSize="16" Cursor="Hand" Padding="6,2"/>
+                  Foreground="#6b7280" FontSize="15"
+                  Cursor="Hand" Padding="6,2"
+                  ToolTip.Tip="Close">✕</Button>
         </DockPanel>
       </Border>
 
-      <!-- MAIN CONTENT -->
-      <StackPanel Grid.Row="1" Margin="40,0,40,40">
+      <!-- ── MAIN CONTENT ── -->
+      <StackPanel Grid.Row="1" Margin="36,0,36,36">
 
-        <!-- LOGO + BRAND -->
-        <StackPanel HorizontalAlignment="Center" Margin="0,0,0,32">
-          <Border CornerRadius="16" Width="64" Height="64"
+        <!-- APP ICON + BRAND -->
+        <StackPanel HorizontalAlignment="Center" Margin="0,4,0,28">
+          <Border CornerRadius="20" Width="72" Height="72"
                   HorizontalAlignment="Center" Margin="0,0,0,14"
-                  Background="#1e3a5f">
-            <TextBlock Text="CX" Foreground="#38BDF8" FontSize="22"
-                       FontWeight="Black"
-                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                  ClipToBounds="True">
+            <Image Source="avares://InterviewCopilotMac6/Assets/AppIcon.png"
+                   Stretch="UniformToFill"/>
           </Border>
-          <TextBlock Text="CoopilotX" Foreground="White" FontSize="22"
-                     FontWeight="Bold" HorizontalAlignment="Center"/>
-          <TextBlock Text="Interview Copilot" Foreground="#4b5563" FontSize="12"
-                     HorizontalAlignment="Center" Margin="0,2,0,0"/>
+          <TextBlock Text="Interview Copilot" Foreground="White"
+                     FontSize="20" FontWeight="Bold"
+                     HorizontalAlignment="Center"/>
+          <TextBlock Text="by CoopilotX" Foreground="#4b5563"
+                     FontSize="12" HorizontalAlignment="Center"
+                     Margin="0,3,0,0"/>
         </StackPanel>
 
         <!-- ERROR BANNER -->
-        <Border x:Name="ErrorBanner" Background="#2a0a0a" CornerRadius="8"
+        <Border x:Name="ErrorBanner" Background="#1f0a0a" CornerRadius="10"
                 Padding="12,10" Margin="0,0,0,14" IsVisible="False"
                 BorderBrush="#6b1a1a" BorderThickness="1">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="⚠" Foreground="#ef4444" FontSize="13"
-                       Margin="0,0,8,0" VerticalAlignment="Center"/>
-            <TextBlock x:Name="ErrorText" Foreground="#ef4444" FontSize="12"
-                       TextWrapping="Wrap"/>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="⚠" Foreground="#f87171" FontSize="13"
+                       VerticalAlignment="Center"/>
+            <TextBlock x:Name="ErrorText" Foreground="#fca5a5" FontSize="12"
+                       TextWrapping="Wrap" VerticalAlignment="Center"/>
           </StackPanel>
         </Border>
 
         <!-- SUCCESS BANNER -->
-        <Border x:Name="SuccessBanner" Background="#0f2a1a" CornerRadius="8"
+        <Border x:Name="SuccessBanner" Background="#0a1f12" CornerRadius="10"
                 Padding="12,10" Margin="0,0,0,14" IsVisible="False"
-                BorderBrush="#1a6b3a" BorderThickness="1">
-          <StackPanel Orientation="Horizontal">
+                BorderBrush="#166534" BorderThickness="1">
+          <StackPanel Orientation="Horizontal" Spacing="8">
             <TextBlock Text="✓" Foreground="#4ade80" FontSize="13"
-                       Margin="0,0,8,0" VerticalAlignment="Center"/>
-            <TextBlock x:Name="SuccessText" Foreground="#4ade80" FontSize="12"/>
+                       VerticalAlignment="Center"/>
+            <TextBlock x:Name="SuccessText" Foreground="#86efac" FontSize="12"
+                       TextWrapping="Wrap" VerticalAlignment="Center"/>
           </StackPanel>
         </Border>
 
-        <!-- EMAIL LABEL -->
+        <!-- EMAIL -->
         <TextBlock Text="EMAIL" Foreground="#6b7280" FontSize="10"
-                   FontWeight="Bold" Margin="0,0,0,6"/>
-
-        <!-- EMAIL INPUT -->
-        <Border x:Name="EmailBorder" Background="#161b22" CornerRadius="8"
-                BorderBrush="#30363d" BorderThickness="1" Margin="0,0,0,14">
+                   FontWeight="Bold" LetterSpacing="1" Margin="0,0,0,6"/>
+        <Border x:Name="EmailBorder" CornerRadius="10"
+                Background="#161b22" BorderBrush="#30363d" BorderThickness="1"
+                Margin="0,0,0,16">
           <TextBox x:Name="EmailBox" Classes="AuthInput"
-                   Background="Transparent"
-                   BorderThickness="0"
                    GotFocus="EmailBox_GotFocus"
                    LostFocus="EmailBox_LostFocus"
                    KeyDown="Input_KeyDown"/>
         </Border>
 
-        <!-- PASSWORD LABEL -->
+        <!-- PASSWORD -->
         <TextBlock Text="PASSWORD" Foreground="#6b7280" FontSize="10"
-                   FontWeight="Bold" Margin="0,0,0,6"/>
-
-        <!-- PASSWORD INPUT -->
-        <Border x:Name="PasswordBorder" Background="#161b22" CornerRadius="8"
-                BorderBrush="#30363d" BorderThickness="1" Margin="0,0,0,6">
+                   FontWeight="Bold" LetterSpacing="1" Margin="0,0,0,6"/>
+        <Border x:Name="PasswordBorder" CornerRadius="10"
+                Background="#161b22" BorderBrush="#30363d" BorderThickness="1"
+                Margin="0,0,0,4">
           <TextBox x:Name="PasswordBox" Classes="AuthInput"
                    PasswordChar="•"
-                   Background="Transparent"
-                   BorderThickness="0"
                    GotFocus="PasswordBox_GotFocus"
                    LostFocus="PasswordBox_LostFocus"
                    KeyDown="Input_KeyDown"/>
@@ -133,23 +129,25 @@
         <Button x:Name="ForgotLink" Classes="LinkBtn"
                 Content="Forgot password?"
                 Click="ForgotLink_Click"
-                HorizontalAlignment="Right" Margin="0,6,0,22"/>
+                HorizontalAlignment="Right"
+                Margin="0,6,0,20"/>
 
         <!-- SIGN IN BUTTON -->
         <Button x:Name="SignInBtn" Click="SignInBtn_Click"
-                Height="44" Cursor="Hand" Margin="0,0,0,16"
+                Height="46" Cursor="Hand" Margin="0,0,0,18"
                 HorizontalAlignment="Stretch">
           <Button.Template>
             <ControlTemplate TargetType="Button">
-              <Border x:Name="Bd" CornerRadius="8" Background="#1d6ae5">
+              <Border x:Name="Bd" CornerRadius="10"
+                      Background="#2563EB">
                 <Grid>
                   <TextBlock x:Name="BtnText" Text="Sign In"
                              Foreground="White" FontSize="14"
                              FontWeight="SemiBold"
                              HorizontalAlignment="Center"
                              VerticalAlignment="Center"/>
-                  <TextBlock x:Name="LoadingText" Text="Signing in..."
-                             Foreground="White" FontSize="13"
+                  <TextBlock x:Name="LoadingText" Text="Signing in…"
+                             Foreground="#93C5FD" FontSize="13"
                              HorizontalAlignment="Center"
                              VerticalAlignment="Center"
                              IsVisible="False"/>
@@ -160,23 +158,35 @@
         </Button>
 
         <!-- DIVIDER -->
-        <Grid Margin="0,0,0,16">
+        <Grid Margin="0,0,0,18">
           <Grid.ColumnDefinitions>
             <ColumnDefinition/>
             <ColumnDefinition Width="Auto"/>
             <ColumnDefinition/>
           </Grid.ColumnDefinitions>
-          <Border Grid.Column="0" Height="1" Background="#21262d" VerticalAlignment="Center"/>
+          <Border Grid.Column="0" Height="1" Background="#21262d"
+                  VerticalAlignment="Center"/>
           <TextBlock Grid.Column="1" Text="or" Foreground="#4b5563"
                      FontSize="11" Margin="12,0"/>
-          <Border Grid.Column="2" Height="1" Background="#21262d" VerticalAlignment="Center"/>
+          <Border Grid.Column="2" Height="1" Background="#21262d"
+                  VerticalAlignment="Center"/>
         </Grid>
 
-        <!-- REGISTER LINK -->
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-          <TextBlock Text="Don't have an account? " Foreground="#6b7280" FontSize="12"/>
-          <Button Classes="LinkBtn" Content="Create one at coopilotxai.com"
-                  Click="RegisterLink_Click" FontSize="12"/>
+        <!-- CREATE ACCOUNT -->
+        <StackPanel HorizontalAlignment="Center" Spacing="6">
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+            <TextBlock Text="Don't have an account? " Foreground="#6b7280"
+                       FontSize="12" VerticalAlignment="Center"/>
+            <Button Classes="LinkBtn"
+                    Content="Sign up at coopilotxai.com"
+                    Click="RegisterLink_Click"
+                    FontSize="12"/>
+          </StackPanel>
+          <TextBlock Text="Signed up with Google? Use 'Forgot Password' to set a password."
+                     Foreground="#4b5563" FontSize="11"
+                     HorizontalAlignment="Center"
+                     TextWrapping="Wrap"
+                     TextAlignment="Center"/>
         </StackPanel>
 
       </StackPanel>

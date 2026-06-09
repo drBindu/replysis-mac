@@ -29,12 +29,8 @@ namespace InterviewCopilotMac6.Views
 
             this.Opened += (s, e) =>
             {
+                // Start blank — never pre-fill another user's email
                 EmailBox.Focus();
-
-                // Pre-fill email if saved
-                string saved = SettingsWindow.GetCoopilotEmail();
-                if (!string.IsNullOrEmpty(saved))
-                    EmailBox.Text = saved;
             };
         }
 
@@ -95,13 +91,13 @@ namespace InterviewCopilotMac6.Views
                         string code = err.TryGetProperty("message", out var m) ? m.GetString() ?? "" : "";
                         errMsg = code switch
                         {
-                            "EMAIL_NOT_FOUND"             => "No account found with this email.",
-                            "INVALID_PASSWORD"            => "Incorrect password. Please try again.",
-                            "INVALID_EMAIL"               => "Invalid email address.",
-                            "USER_DISABLED"               => "This account has been disabled.",
-                            "TOO_MANY_ATTEMPTS_TRY_LATER" => "Too many attempts. Try again later.",
-                            "INVALID_LOGIN_CREDENTIALS"   => "Incorrect email or password.",
-                            _ => $"Login failed: {code}"
+                            "EMAIL_NOT_FOUND"             => "No account found with this email. Please sign up first.",
+                            "INVALID_PASSWORD"            => "Incorrect password. Use 'Forgot Password' to reset it.",
+                            "INVALID_EMAIL"               => "Invalid email address. Please check and try again.",
+                            "USER_DISABLED"               => "This account has been disabled. Contact support.",
+                            "TOO_MANY_ATTEMPTS_TRY_LATER" => "Too many failed attempts. Please wait a few minutes.",
+                            "INVALID_LOGIN_CREDENTIALS"   => "Wrong email or password. If you signed up with Google on coopilotxai.com, click 'Forgot Password' to set a password for the app.",
+                            _ => $"Sign in failed: {code}"
                         };
                     }
                     ShowError(errMsg);
@@ -166,7 +162,7 @@ namespace InterviewCopilotMac6.Views
                 using var res = await _http.SendAsync(request);
 
                 if (res.IsSuccessStatusCode)
-                    ShowSuccess($"Password reset email sent to {email}");
+                    ShowSuccess($"Password reset email sent to {email}. Check your inbox and spam folder.");
                 else
                     ShowError("Could not send reset email. Check your email address.");
             }
@@ -188,7 +184,7 @@ namespace InterviewCopilotMac6.Views
             try
             {
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
-                    "https://coopilotxai.com/signup") { UseShellExecute = true });
+                    "https://coopilotxai.com") { UseShellExecute = true });
             }
             catch { }
         }
