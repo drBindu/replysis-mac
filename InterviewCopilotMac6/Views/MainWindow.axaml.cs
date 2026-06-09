@@ -391,6 +391,9 @@ namespace InterviewCopilotMac6.Views
         {
             string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             string known = Path.Combine(home, "InterviewCopilot");
+            // Check Contents/Resources — build workflow moves .py files there during signing
+            string resourcesDir = Path.GetFullPath(Path.Combine(startDir, "..", "Resources"));
+            if (File.Exists(Path.Combine(resourcesDir, "speechmatics_engine.py"))) return resourcesDir;
             if (File.Exists(Path.Combine(known, "speechmatics_engine.py"))) return known;
             if (File.Exists(Path.Combine(startDir, "speechmatics_engine.py"))) return startDir;
             string? dir = startDir;
