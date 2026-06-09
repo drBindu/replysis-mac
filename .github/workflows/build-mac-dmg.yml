@@ -18,6 +18,13 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Round app icon corners (macOS standard)
+        run: |
+          python3 -m venv /tmp/icon-venv
+          source /tmp/icon-venv/bin/activate
+          pip install Pillow --quiet
+          python3 round_icon.py
+
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
         with:
