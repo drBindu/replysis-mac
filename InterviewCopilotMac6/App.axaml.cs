@@ -44,10 +44,10 @@ public partial class App : Application
 
         base.OnFrameworkInitializationCompleted();
 
-        // First check: 5 s after launch so the main window is fully visible
+        // First check: immediately after launch
         DispatcherTimer.RunOnce(
             () => _ = StartUpdateCheckAsync(),
-            TimeSpan.FromSeconds(5));
+            TimeSpan.FromSeconds(1));
 
         // Periodic check: every 4 hours while the app is running
         var periodicTimer = new DispatcherTimer
