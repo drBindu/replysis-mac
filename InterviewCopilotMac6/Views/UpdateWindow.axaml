@@ -15,51 +15,45 @@
 
   <Window.Styles>
     <Style Selector="Button.Outline">
-      <Setter Property="Background"  Value="#1e2433"/>
-      <Setter Property="Foreground"  Value="#8b949e"/>
-      <Setter Property="BorderBrush" Value="#30363d"/>
+      <Setter Property="Background"   Value="#1e2433"/>
+      <Setter Property="Foreground"   Value="#8b949e"/>
+      <Setter Property="BorderBrush"  Value="#30363d"/>
       <Setter Property="BorderThickness" Value="1"/>
       <Setter Property="CornerRadius" Value="8"/>
-      <Setter Property="Height"      Value="40"/>
-      <Setter Property="FontSize"    Value="13"/>
-      <Setter Property="Cursor"      Value="Hand"/>
+      <Setter Property="Height"       Value="40"/>
+      <Setter Property="FontSize"     Value="13"/>
+      <Setter Property="Cursor"       Value="Hand"/>
       <Setter Property="HorizontalContentAlignment" Value="Center"/>
     </Style>
     <Style Selector="Button.Outline:pointerover /template/ ContentPresenter">
       <Setter Property="Background" Value="#252d3d"/>
     </Style>
     <Style Selector="Button.Primary">
-      <Setter Property="Background"  Value="#1a3a6b"/>
-      <Setter Property="Foreground"  Value="#38BDF8"/>
-      <Setter Property="BorderBrush" Value="#1e5799"/>
+      <Setter Property="Background"   Value="#1a3a6b"/>
+      <Setter Property="Foreground"   Value="#38BDF8"/>
+      <Setter Property="BorderBrush"  Value="#1e5799"/>
       <Setter Property="BorderThickness" Value="1"/>
       <Setter Property="CornerRadius" Value="8"/>
-      <Setter Property="Height"      Value="40"/>
-      <Setter Property="FontSize"    Value="13"/>
-      <Setter Property="FontWeight"  Value="SemiBold"/>
-      <Setter Property="Cursor"      Value="Hand"/>
+      <Setter Property="Height"       Value="40"/>
+      <Setter Property="FontSize"     Value="13"/>
+      <Setter Property="FontWeight"   Value="SemiBold"/>
+      <Setter Property="Cursor"       Value="Hand"/>
       <Setter Property="HorizontalContentAlignment" Value="Center"/>
     </Style>
     <Style Selector="Button.Primary:pointerover /template/ ContentPresenter">
       <Setter Property="Background" Value="#1d4585"/>
     </Style>
-    <Style Selector="Button.Primary:disabled /template/ ContentPresenter">
-      <Setter Property="Background" Value="#111b2e"/>
-      <Setter Property="Foreground" Value="#4a6080"/>
-    </Style>
   </Window.Styles>
 
-  <!-- Outer rounded card -->
   <Border Background="#0d1117"
           CornerRadius="16"
           BorderBrush="#21262d"
           BorderThickness="1"
-          Margin="0"
           PointerPressed="TitleBar_PointerPressed">
 
     <StackPanel Margin="28,24,28,28">
 
-      <!-- ── Title bar ── -->
+      <!-- Title bar -->
       <DockPanel Margin="0,0,0,20">
         <Button DockPanel.Dock="Right"
                 Content="✕"
@@ -70,15 +64,15 @@
                 FontSize="15"
                 Cursor="Hand"
                 Padding="6,2"/>
-        <TextBlock Text="Software Update"
-                   Foreground="#8b949e"
-                   FontSize="11"
-                   FontWeight="SemiBold"
-                   LetterSpacing="1"
+        <TextBlock Text="SOFTWARE UPDATE"
+                   Foreground="#6b7280"
+                   FontSize="10"
+                   FontWeight="Bold"
+                   LetterSpacing="2"
                    VerticalAlignment="Center"/>
       </DockPanel>
 
-      <!-- ── Icon + version info ── -->
+      <!-- Icon + version info -->
       <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
         <Border Background="#0f1f40"
                 CornerRadius="12"
@@ -93,7 +87,6 @@
         </Border>
         <StackPanel VerticalAlignment="Center">
           <TextBlock x:Name="TitleText"
-                     Text="New version available"
                      FontSize="16"
                      FontWeight="SemiBold"
                      Foreground="#e6edf3"/>
@@ -104,10 +97,10 @@
         </StackPanel>
       </StackPanel>
 
-      <!-- ── Divider ── -->
+      <!-- Divider -->
       <Border Background="#21262d" Height="1" Margin="0,0,0,16"/>
 
-      <!-- ── What's new ── -->
+      <!-- What's new -->
       <TextBlock Text="WHAT'S NEW"
                  FontSize="10"
                  FontWeight="Bold"
@@ -125,8 +118,8 @@
                    LineHeight="18"/>
       </Border>
 
-      <!-- ── Download progress (hidden until download starts) ── -->
-      <StackPanel x:Name="ProgressPanel" IsVisible="False" Margin="0,0,0,20">
+      <!-- Download progress (hidden until download starts) -->
+      <StackPanel x:Name="ProgressPanel" IsVisible="False" Margin="0,0,0,12">
         <DockPanel Margin="0,0,0,6">
           <TextBlock x:Name="StatusText"
                      Foreground="#8b949e"
@@ -144,12 +137,18 @@
                      CornerRadius="2"
                      Background="#21262d"
                      Foreground="#38BDF8"
-                     Minimum="0"
-                     Maximum="100"
-                     Value="0"/>
+                     Minimum="0" Maximum="100" Value="0"/>
       </StackPanel>
 
-      <!-- ── Error label (hidden unless error) ── -->
+      <!-- Auto-restart note (shown during download) -->
+      <TextBlock x:Name="NoteText"
+                 IsVisible="False"
+                 Foreground="#6b7280"
+                 FontSize="11"
+                 HorizontalAlignment="Center"
+                 Margin="0,0,0,16"/>
+
+      <!-- Error banner -->
       <Border x:Name="ErrorPanel"
               IsVisible="False"
               Background="#2d1818"
@@ -164,7 +163,7 @@
                    TextWrapping="Wrap"/>
       </Border>
 
-      <!-- ── Action buttons ── -->
+      <!-- Action buttons -->
       <Grid ColumnDefinitions="*,12,*">
         <Button Grid.Column="0"
                 x:Name="LaterBtn"
