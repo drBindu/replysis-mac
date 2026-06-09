@@ -121,16 +121,6 @@
 
           <Border Height="1" Background="#1e232d" Margin="0,4,0,16"/>
 
-          <TextBlock Text="SPEECHMATICS API KEY" Classes="SectionLabel"/>
-          <TextBox x:Name="SpeechmaticsKeyBox" Classes="DarkInput"/>
-          <TextBlock Text="For real-time speech-to-text. Get from speechmatics.com"
-                     Classes="HintLabel" Margin="4,2,0,16"/>
-
-          <TextBlock Text="BACKEND URL (fallback key fetch)" Classes="SectionLabel"/>
-          <TextBox x:Name="BackendUrlBox" Classes="DarkInput"/>
-          <TextBlock Text="Optional: Fetches Speechmatics key from your deployed backend"
-                     Classes="HintLabel" Margin="4,2,0,16"/>
-
           <!-- COOPILOTX ACCOUNT -->
           <Border Background="#0a1628" CornerRadius="10" Padding="14,12" Margin="0,0,0,12"
                   BorderBrush="#1e3a5f" BorderThickness="1">

@@ -49,8 +49,6 @@ namespace InterviewCopilotMac6.Views
             var cfg = LoadConfig();
             ModelCombo.SelectedIndex = Math.Clamp(cfg.ModelIndex, 0, ModelIds.Length - 1);
             ApiKeyBox.Text = cfg.ApiKey ?? "";
-            SpeechmaticsKeyBox.Text = cfg.SpeechmaticsKey ?? "";
-            BackendUrlBox.Text = cfg.BackendUrl ?? "";
             CoopilotEmailBox.Text = cfg.CoopilotEmail ?? "";
             TempSlider.Value = cfg.Temperature;
             TempLabel.Text = cfg.Temperature.ToString("F1");
@@ -136,8 +134,6 @@ namespace InterviewCopilotMac6.Views
             {
                 ModelIndex = ModelCombo.SelectedIndex >= 0 ? ModelCombo.SelectedIndex : 0,
                 ApiKey = ApiKeyBox.Text?.Trim() ?? "",
-                SpeechmaticsKey = SpeechmaticsKeyBox.Text?.Trim() ?? "",
-                BackendUrl = BackendUrlBox.Text?.Trim() ?? "",
                 CoopilotEmail = CoopilotEmailBox.Text?.Trim() ?? "",
                 Temperature = Math.Round(TempSlider.Value, 1),
                 MainWindowOpacity = Math.Round(MainOpacitySlider.Value / 100.0, 2),
