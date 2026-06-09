@@ -86,13 +86,17 @@ except ImportError as e:
     exit(1)
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-key", type=str, required=True)
+parser.add_argument("-key", type=str, default=os.environ.get("SPEECHMATICS_API_KEY", ""))
 parser.add_argument("-device", type=int, default=None)
 parser.add_argument("-sysdevice", type=int, default=None)
 parser.add_argument("-max-delay", type=float, default=1.0)
 parser.add_argument("-mode", type=str, default="mic", choices=["mic", "system", "both"])
 parser.add_argument("-syscapture", type=str, default=None)
 args = parser.parse_args()
+
+if not args.key:
+    print(">>> FATAL: No Speechmatics API key. Pass -key or set SPEECHMATICS_API_KEY env var.", flush=True)
+    exit(1)
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DATA = os.path.join(

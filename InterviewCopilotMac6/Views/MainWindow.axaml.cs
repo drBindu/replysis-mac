@@ -1057,18 +1057,28 @@ namespace InterviewCopilotMac6.Views
 
                 KillAndDisposeEngine();
 
-                string pyScript = Path.Combine(scriptFolder, "speechmatics_engine.py");
-                if (!File.Exists(pyScript)) { DebugWindow.Log("ENGINE", "Not found: " + scriptFolder); return; }
-
                 string smKey = SettingsWindow.GetSpeechmaticsKey();
                 if (string.IsNullOrWhiteSpace(smKey)) { DebugWindow.Log("ENGINE", "No SM key."); return; }
 
-                string pythonPath = FindPythonPath();
-                string syscapturePath = Path.Combine(scriptFolder, "SystemAudioCapture");
+                // Prefer the bundled binary (ships with PyInstaller — no Python install needed)
+                // Fall back to python + .py script for development
+                string binaryEngine   = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "speechmatics_engine");
+                string pyScript       = Path.Combine(scriptFolder, "speechmatics_engine.py");
+                bool   hasBinary      = File.Exists(binaryEngine);
+                bool   hasScript      = File.Exists(pyScript);
+
+                if (!hasBinary && !hasScript)
+                {
+                    DebugWindow.Log("ENGINE", "Not found: " + scriptFolder);
+                    return;
+                }
+
+                string syscapturePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SystemAudioCapture");
                 bool hasSysCapture = File.Exists(syscapturePath);
 
-                DebugWindow.Log("ENGINE", $"Python  : {pythonPath}");
-                DebugWindow.Log("ENGINE", $"Script  : {pyScript}");
+                DebugWindow.Log("ENGINE", $"Mode    : {(hasBinary ? "BINARY (bundled)" : "SCRIPT (python)")}");
+                DebugWindow.Log("ENGINE", $"Binary  : {(hasBinary ? binaryEngine : "N/A")}");
+                DebugWindow.Log("ENGINE", $"Script  : {(hasScript ? pyScript : "N/A")}");
                 DebugWindow.Log("ENGINE", $"SysCap  : {(hasSysCapture ? syscapturePath : "NOT FOUND")}");
 
                 string deviceArg     = _audioDeviceId >= 0 ? $" -device {_audioDeviceId}" : "";
@@ -1077,10 +1087,22 @@ namespace InterviewCopilotMac6.Views
                 const string maxDelayArg = " -max-delay 1.0";
 
                 speechmaticsProcess = new Process();
-                speechmaticsProcess.StartInfo.FileName  = pythonPath;
-                // Pass key via env var — keeps it out of `ps aux` output
-                speechmaticsProcess.StartInfo.Arguments = $"\"{pyScript}\"{deviceArg}{modeArg}{syscaptureArg}{maxDelayArg}";
-                speechmaticsProcess.StartInfo.Environment["SPEECHMATICS_API_KEY"] = smKey;
+                if (hasBinary)
+                {
+                    // Bundled binary — pass key as env var (keeps it out of `ps aux`)
+                    speechmaticsProcess.StartInfo.FileName  = binaryEngine;
+                    speechmaticsProcess.StartInfo.Arguments = $"{deviceArg}{modeArg}{syscaptureArg}{maxDelayArg}".TrimStart();
+                    speechmaticsProcess.StartInfo.Environment["SPEECHMATICS_API_KEY"] = smKey;
+                }
+                else
+                {
+                    // Dev fallback — python + .py script
+                    string pythonPath = FindPythonPath();
+                    DebugWindow.Log("ENGINE", $"Python  : {pythonPath}");
+                    speechmaticsProcess.StartInfo.FileName  = pythonPath;
+                    speechmaticsProcess.StartInfo.Arguments = $"\"{pyScript}\"{deviceArg}{modeArg}{syscaptureArg}{maxDelayArg}";
+                    speechmaticsProcess.StartInfo.Environment["SPEECHMATICS_API_KEY"] = smKey;
+                }
                 speechmaticsProcess.StartInfo.WorkingDirectory      = scriptFolder;
                 speechmaticsProcess.StartInfo.CreateNoWindow        = true;
                 speechmaticsProcess.StartInfo.UseShellExecute       = false;
