@@ -1,24 +1,23 @@
 """
-Removes dark navy background cleanly, applies steel blue colour boost.
+Removes dark navy background cleanly, applies ocean blue colour boost.
 """
 from PIL import Image, ImageFilter, ImageEnhance
 import collections
 
-SRC       = "InterviewCopilotMac6/Assets/AppIcon.png"
-TOLERANCE = 10   # tight — only removes pixels close to (0,12,50) background
+SRC            = "InterviewCopilotMac6/Assets/AppIcon.png"
+TOLERANCE      = 12   # flood-fill: removes pixels close to (0,12,50) background
+EDGE_FRINGE    = 35   # second-pass: removes residual dark fringe at owl boundary
 
 def color_distance(c1, c2):
     return sum((a - b) ** 2 for a, b in zip(c1[:3], c2[:3])) ** 0.5
 
-# ── 1. Load and sample real background colour from top-centre ────────────────
+# ── 1. Load, sample real background colour from top-centre ───────────────────
 img      = Image.open(SRC).convert("RGBA")
 w, h     = img.size
 pixels   = img.load()
-
-# Top-centre is guaranteed background (not transparent corner)
 bg_color = pixels[w // 2, 3][:3]
 
-# ── 2. Flood-fill from edge pixels that match the background ─────────────────
+# ── 2. Flood-fill background from all 4 edges ────────────────────────────────
 visited = set()
 queue   = collections.deque()
 
@@ -45,7 +44,7 @@ while queue:
                 visited.add((nx, ny))
                 queue.append((nx, ny))
 
-# ── 3. Keep only the largest connected blob (removes stray noise) ─────────────
+# ── 3. Keep only the largest connected blob ───────────────────────────────────
 alpha = img.split()[3]
 apx   = alpha.load()
 
@@ -81,23 +80,43 @@ if blobs:
                 a_arr[x, y] = 0
     img = Image.merge("RGBA", (r_ch, g_ch, b_ch, a_ch))
 
-# ── 4. Steel blue colour boost ────────────────────────────────────────────────
+# ── 4. Edge fringe removal — 3 passes removes dark anti-alias fringe ──────────
+def remove_edge_fringe(im, tol):
+    px = im.load()
+    iw, ih = im.size
+    for y in range(ih):
+        for x in range(iw):
+            r, g, b, a = px[x, y]
+            if a > 0:
+                is_edge = any(
+                    0 <= nx < iw and 0 <= ny < ih and px[nx, ny][3] == 0
+                    for nx, ny in [(x+1,y),(x-1,y),(x,y+1),(x,y-1)]
+                )
+                if is_edge and color_distance((r, g, b), bg_color) < tol:
+                    px[x, y] = (0, 0, 0, 0)
+    return im
+
+img = remove_edge_fringe(img, EDGE_FRINGE)
+img = remove_edge_fringe(img, EDGE_FRINGE)
+img = remove_edge_fringe(img, EDGE_FRINGE)
+
+# ── 5. Smooth alpha edges ─────────────────────────────────────────────────────
 r_ch, g_ch, b_ch, a_ch = img.split()
-r_ch = r_ch.point(lambda p: min(255, int(p * 0.5)))
-g_ch = g_ch.point(lambda p: min(255, int(p * 0.9)))
-b_ch = b_ch.point(lambda p: min(255, int(p * 1.3)))
+a_ch = a_ch.filter(ImageFilter.GaussianBlur(radius=1.5))
+img  = Image.merge("RGBA", (r_ch, g_ch, b_ch, a_ch))
+
+# ── 6. Ocean blue colour boost ────────────────────────────────────────────────
+r_ch, g_ch, b_ch, a_ch = img.split()
+r_ch = r_ch.point(lambda p: min(255, int(p * 0.3)))
+g_ch = g_ch.point(lambda p: min(255, int(p * 0.7)))
+b_ch = b_ch.point(lambda p: min(255, int(p * 1.4)))
 rgb  = Image.merge("RGB", (r_ch, g_ch, b_ch))
-rgb  = ImageEnhance.Brightness(rgb).enhance(0.50)
-rgb  = ImageEnhance.Contrast(rgb).enhance(2.0)
+rgb  = ImageEnhance.Brightness(rgb).enhance(0.55)
+rgb  = ImageEnhance.Contrast(rgb).enhance(1.8)
 r2, g2, b2 = rgb.split()
 img = Image.merge("RGBA", (r2, g2, b2, a_ch))
 
-# ── 5. Smooth alpha edges ─────────────────────────────────────────────────────
-r2, g2, b2, a2 = img.split()
-a2  = a2.filter(ImageFilter.GaussianBlur(radius=1.5))
-img = Image.merge("RGBA", (r2, g2, b2, a2))
-
-# ── 6. Crop to bounding box, centre with 12% padding ─────────────────────────
+# ── 7. Crop to bounding box, centre with 12% padding ─────────────────────────
 bbox = img.getbbox()
 if bbox:
     img = img.crop(bbox)
@@ -112,4 +131,4 @@ offset_y = (h - art_h) // 2
 canvas.paste(artwork, (offset_x, offset_y), artwork)
 
 canvas.save(SRC)
-print(f"✓ Steel blue owl  ({w}×{h})")
+print(f"✓ Ocean blue owl, clean edges  ({w}×{h})")
