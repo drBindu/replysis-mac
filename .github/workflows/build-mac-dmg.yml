@@ -200,18 +200,7 @@ jobs:
 
           # Sign the zip with Ed25519 using the private key from secrets
           pip3 install cryptography --quiet
-          SIGNATURE=$(python3 - <<'PYEOF'
-import base64, os, sys
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-pk = Ed25519PrivateKey.from_private_bytes(
-    base64.b64decode(os.environ["SPARKLE_PRIVATE_KEY"])
-)
-with open("InterviewCopilot-update.zip", "rb") as f:
-    data = f.read()
-print(base64.b64encode(pk.sign(data)).decode())
-PYEOF
-          )
+          SIGNATURE=$(python3 sign_sparkle.py)
 
           echo "Signature: $SIGNATURE"
 
