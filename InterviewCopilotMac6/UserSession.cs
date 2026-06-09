@@ -34,6 +34,32 @@ namespace InterviewCopilotMac6
         public static string Plan        { get; set; } = "free";
         public static bool   IsUnlimited { get; set; } = false;
 
+        // ── Speechmatics key (fetched from backend after login, never saved to disk) ──
+        public static string SpeechmaticsKey { get; private set; } = "";
+
+        public static async Task<bool> FetchSpeechmaticsKeyAsync()
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(IdToken)) return false;
+                using var req = new HttpRequestMessage(HttpMethod.Get, "https://coopilotxai.com/api/stt/key");
+                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", IdToken);
+                using var res = await _http.SendAsync(req);
+                if (!res.IsSuccessStatusCode) return false;
+                string body = await res.Content.ReadAsStringAsync();
+                using var doc = System.Text.Json.JsonDocument.Parse(body);
+                string key = doc.RootElement.TryGetProperty("key", out var k) ? k.GetString() ?? "" : "";
+                if (string.IsNullOrEmpty(key)) return false;
+                SpeechmaticsKey = key;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[SESSION] FetchSpeechmaticsKeyAsync failed: {ex.Message}");
+                return false;
+            }
+        }
+
         // ── Avatar initials ──
         public static string Initials
         {
@@ -66,9 +92,10 @@ namespace InterviewCopilotMac6
             Email        = "";
             Name         = "";
             UserId       = "";
-            Credits      = 0;
-            Plan         = "free";
-            IsUnlimited  = false;
+            Credits         = 0;
+            Plan            = "free";
+            IsUnlimited     = false;
+            SpeechmaticsKey = "";
             _savedAt     = DateTime.MinValue;
             try { if (File.Exists(SessionPath)) File.Delete(SessionPath); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[SESSION] Delete session file failed: {ex.Message}"); }

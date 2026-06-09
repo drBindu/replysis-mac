@@ -142,8 +142,10 @@ namespace InterviewCopilotMac6.Views
                 if (sessionRestored)
                 {
                     await FetchAndDisplayCreditsAsync();
+                    await UserSession.FetchSpeechmaticsKeyAsync();
                     UpdateProfileUI();
                     StartNewSession();
+                    StartSpeechmaticsEngine();
                 }
                 else
                 {
@@ -184,9 +186,11 @@ namespace InterviewCopilotMac6.Views
             await loginWin.ShowDialog(this);
             if (loginWin.LoginSuccess)
             {
+                await UserSession.FetchSpeechmaticsKeyAsync();
                 UpdateProfileUI();
                 await FetchAndDisplayCreditsAsync();
                 StartNewSession();
+                StartSpeechmaticsEngine();
                 DebugWindow.Log("AUTH", $"Logged in: {UserSession.Email}");
             }
         }
@@ -1055,8 +1059,9 @@ namespace InterviewCopilotMac6.Views
 
                 KillAndDisposeEngine();
 
-                string smKey = SettingsWindow.GetSpeechmaticsKey();
-                if (string.IsNullOrWhiteSpace(smKey)) { DebugWindow.Log("ENGINE", "No SM key."); return; }
+                string smKey = UserSession.SpeechmaticsKey;
+                if (string.IsNullOrWhiteSpace(smKey)) smKey = SettingsWindow.GetSpeechmaticsKey();
+                if (string.IsNullOrWhiteSpace(smKey)) { DebugWindow.Log("ENGINE", "No SM key — not logged in yet."); return; }
 
                 // Prefer the bundled binary (ships with PyInstaller — no Python install needed)
                 // Fall back to python + .py script for development
