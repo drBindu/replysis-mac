@@ -52,7 +52,7 @@ public partial class App : Application
         // Periodic check: every 4 hours while the app is running
         var periodicTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromHours(4)
+            Interval = TimeSpan.FromMinutes(1)
         };
         periodicTimer.Tick += async (_, _) => await StartUpdateCheckAsync();
         periodicTimer.Start();
