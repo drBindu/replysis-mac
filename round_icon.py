@@ -33,7 +33,7 @@ canvas  = Image.new("RGB", (w, h), BG)
 canvas.paste(artwork, (pad, pad))
 
 # Bake macOS squircle rounded corners (transparent outside)
-radius = int(w * 0.22)
+radius = int(w * 0.30)
 mask   = Image.new("L", (w, h), 0)
 ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=255)
 result = Image.new("RGBA", (w, h), (0, 0, 0, 0))
