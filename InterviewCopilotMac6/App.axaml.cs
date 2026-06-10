@@ -92,10 +92,9 @@ public partial class App : Application
             if (_updateDialogShowing) return;
 
             // Parse download info from appcast
-            var urlMatch    = Regex.Match(xml, @"url=""([^""]+)""");
-            var sigMatch    = Regex.Match(xml, @"sparkle:edSignature=""([^""]+)""");
-            var lengthMatch = Regex.Match(xml, @"length=""(\d+)""");
-            var titleMatch  = Regex.Match(xml, @"<title>Interview Copilot[^<]*</title>");
+            var urlMatch   = Regex.Match(xml, @"url=""([^""]+)""");
+            var sigMatch   = Regex.Match(xml, @"sparkle:edSignature=""([^""]+)""");
+            var titleMatch = Regex.Match(xml, @"<title>Interview Copilot[^<]*</title>");
 
             var item = new AppCastItem
             {
@@ -105,8 +104,6 @@ public partial class App : Application
                                 : $"Interview Copilot {remoteVersionStr}",
                 DownloadLink = urlMatch.Success ? urlMatch.Groups[1].Value : string.Empty,
                 DownloadSignature = sigMatch.Success ? sigMatch.Groups[1].Value : string.Empty,
-                ContentLength = lengthMatch.Success
-                                && long.TryParse(lengthMatch.Groups[1].Value, out var len) ? len : 0,
             };
 
             Sparkle ??= new SparkleUpdater(
