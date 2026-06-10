@@ -45,11 +45,20 @@ namespace InterviewCopilotMac6
                 using var req = new HttpRequestMessage(HttpMethod.Get, "https://coopilotxai.com/api/stt/key");
                 req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", IdToken);
                 using var res = await _http.SendAsync(req);
-                if (!res.IsSuccessStatusCode) return false;
                 string body = await res.Content.ReadAsStringAsync();
+                if (!res.IsSuccessStatusCode)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[SESSION] /api/stt/key HTTP {(int)res.StatusCode}: {body}");
+                    Views.DebugWindow.Log("STT_KEY", $"HTTP {(int)res.StatusCode}: {body[..Math.Min(body.Length, 120)]}");
+                    return false;
+                }
                 using var doc = System.Text.Json.JsonDocument.Parse(body);
                 string key = doc.RootElement.TryGetProperty("key", out var k) ? k.GetString() ?? "" : "";
-                if (string.IsNullOrEmpty(key)) return false;
+                if (string.IsNullOrEmpty(key))
+                {
+                    Views.DebugWindow.Log("STT_KEY", $"200 OK but no 'key' field in response: {body[..Math.Min(body.Length, 120)]}");
+                    return false;
+                }
                 SpeechmaticsKey = key;
                 return true;
             }
