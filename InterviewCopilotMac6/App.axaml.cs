@@ -71,12 +71,24 @@ public partial class App : Application
         return System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.0";
     }
 
+    private static string LogPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        "Library", "Logs", "interview-copilot-update.log");
+
+    private static void Log(string msg)
+    {
+        try { File.AppendAllText(LogPath, $"[{DateTime.Now:HH:mm:ss}] {msg}\n"); } catch { }
+        System.Diagnostics.Debug.WriteLine($"[Updater] {msg}");
+    }
+
     // ── Fetch appcast manually and do version comparison ourselves ──
     private static async System.Threading.Tasks.Task StartUpdateCheckAsync()
     {
         try
         {
             var currentVersionStr = GetAppVersion();
+            Log($"installed={currentVersionStr}");
+
             if (!Version.TryParse(currentVersionStr, out var currentVersion))
                 currentVersion = new Version(1, 0, 0);
 
@@ -84,14 +96,17 @@ public partial class App : Application
             var xml = await http.GetStringAsync(AppcastUrl);
 
             var versionMatch = Regex.Match(xml, @"<sparkle:version>([^<]+)</sparkle:version>");
-            if (!versionMatch.Success) return;
+            if (!versionMatch.Success) { Log("appcast parse failed"); return; }
             var remoteVersionStr = versionMatch.Groups[1].Value.Trim();
-            if (!Version.TryParse(remoteVersionStr, out var remoteVersion)) return;
-            if (remoteVersion <= currentVersion) return;
+            Log($"remote={remoteVersionStr}");
 
-            if (_updateDialogShowing) return;
+            if (!Version.TryParse(remoteVersionStr, out var remoteVersion)) { Log("remote version parse failed"); return; }
+            if (remoteVersion <= currentVersion) { Log("no update needed"); return; }
 
-            // Parse download info from appcast
+            if (_updateDialogShowing) { Log("dialog already showing"); return; }
+
+            Log("update available — showing popup");
+
             var urlMatch   = Regex.Match(xml, @"url=""([^""]+)""");
             var sigMatch   = Regex.Match(xml, @"sparkle:edSignature=""([^""]+)""");
             var titleMatch = Regex.Match(xml, @"<title>Interview Copilot[^<]*</title>");
@@ -121,11 +136,12 @@ public partial class App : Application
                 win.Closed += (_, _) => _updateDialogShowing = false;
                 if (parent != null) win.ShowDialog(parent);
                 else                win.Show();
+                Log("popup shown");
             });
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[Updater] Check failed: {ex.Message}");
+            Log($"EXCEPTION: {ex}");
         }
     }
 
