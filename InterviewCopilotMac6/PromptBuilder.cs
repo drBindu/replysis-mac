@@ -497,18 +497,7 @@ namespace InterviewCopilotMac6
 
             sb.AppendLine("RULE 6 — BANNED OPENERS:");
             sb.AppendLine("  Never start with: Great question / Absolutely / Of course / Certainly / Sure.");
-            sb.AppendLine("  Never start with: I'd be happy to / I'm happy to / That's a great / Good question.");
             sb.AppendLine("  Start with the answer, or: Yeah so... / Honestly... / So...");
-            sb.AppendLine();
-
-            sb.AppendLine("RULE 6b — NO EM/EN DASHES:");
-            sb.AppendLine("  Do NOT use em dashes (—) or en dashes (–). Use commas or periods instead.");
-            sb.AppendLine();
-
-            sb.AppendLine("RULE 6c — NATURAL PROSE OVER BULLET POINTS:");
-            sb.AppendLine("  Write naturally and conversationally, like an experienced engineer speaking.");
-            sb.AppendLine("  Do NOT use excessive bullet points. Use prose paragraphs for explanations.");
-            sb.AppendLine("  Keep answers concise and direct. No fluff, no filler phrases.");
             sb.AppendLine();
 
             sb.AppendLine("RULE 7 — SOUND HUMAN (contractions always):");
@@ -632,6 +621,8 @@ namespace InterviewCopilotMac6
             {
                 case QuestionType.Preference:
                     return "MICRO: 1 sentence ONLY. Say the name + one short reason. " +
+                           "CORRECT: 'Java — that's what I've worked with the most.' " +
+                           "WRONG: bullets, theory, history, explanation. " +
                            "Check locked facts first. If topic was already answered, use that answer.";
 
                 case QuestionType.YesNo:
@@ -760,11 +751,9 @@ namespace InterviewCopilotMac6
                 sb.AppendLine("RULES:");
                 sb.AppendLine("  - Only mention companies, roles, and skills that appear in YOUR BACKGROUND above.");
                 sb.AppendLine("  - Never invent experience, projects, or employers not listed above.");
-                sb.AppendLine("  - Do NOT start answers with: Great question / Absolutely / Of course / Certainly / Sure / I'd be happy to / I'm happy to.");
-                sb.AppendLine("  - Do NOT use em dashes (—) or en dashes (–). Use commas or periods instead.");
+                sb.AppendLine("  - Do NOT start answers with: Great question / Absolutely / Of course / Certainly.");
                 sb.AppendLine("  - Use contractions naturally: I'm, I've, I'd, didn't, wasn't, it's.");
                 sb.AppendLine("  - Sound like a real professional in conversation, not a bot reading a document.");
-                sb.AppendLine("  - Keep answers concise and direct. No fluff or filler phrases.");
             }
             else
             {
@@ -776,10 +765,8 @@ namespace InterviewCopilotMac6
                 sb.AppendLine("    to share more detail once you know more about the role.");
                 sb.AppendLine("  - For salary: give a range like $100k-$130k base, open to discussion.");
                 sb.AppendLine("  - For visa: say you are authorized to work and can discuss details if needed.");
-                sb.AppendLine("  - Do NOT start answers with: Great question / Absolutely / Of course / Certainly / Sure / I'd be happy to / I'm happy to.");
-                sb.AppendLine("  - Do NOT use em dashes (—) or en dashes (–). Use commas or periods instead.");
+                sb.AppendLine("  - Do NOT start answers with: Great question / Absolutely / Of course / Certainly.");
                 sb.AppendLine("  - Use contractions naturally: I'm, I've, I'd, didn't, wasn't, it's.");
-                sb.AppendLine("  - Keep answers concise and direct. No fluff or filler phrases.");
             }
             sb.AppendLine();
 

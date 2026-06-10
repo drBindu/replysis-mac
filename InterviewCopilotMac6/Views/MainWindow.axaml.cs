@@ -1073,9 +1073,9 @@ namespace InterviewCopilotMac6.Views
             foreach (var f in fillers)
                 ans = ans.Replace(f, "", StringComparison.OrdinalIgnoreCase);
 
-            // Replace em/en dashes with appropriate punctuation
-            ans = ans.Replace(" — ", " - ").Replace(" – ", " - ")
-                     .Replace("—", " - ").Replace("–", "-");
+            // Strip em/en dashes — replace with commas to keep sentence flow natural
+            ans = ans.Replace(" — ", ", ").Replace(" – ", ", ")
+                     .Replace("—", ", ").Replace("–", ", ");
 
             return ans.Trim();
         }
