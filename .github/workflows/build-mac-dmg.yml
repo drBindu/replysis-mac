@@ -154,6 +154,8 @@ jobs:
 
       - name: Create .dmg for first-time installs
         run: |
+          hdiutil detach "/Volumes/Interview Copilot" 2>/dev/null || true
+          rm -f InterviewCopilot-raw.dmg
           mkdir -p dmg_contents
           cp -R "InterviewCopilot.app" dmg_contents/
           ln -s /Applications dmg_contents/Applications
