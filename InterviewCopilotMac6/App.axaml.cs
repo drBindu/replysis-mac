@@ -222,7 +222,10 @@ public partial class App : Application
                     "/bin/bash", $"-c \"nohup /bin/bash '{scriptPath}' > '{logPath}' 2>&1 &\"")
                 { UseShellExecute = false, CreateNoWindow = true })?.WaitForExit();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Log($"LaunchInstallerAndQuit failed: {ex.Message}");
+        }
 
         System.Threading.Tasks.Task.Delay(1000).ContinueWith(_ => Environment.Exit(0));
     }

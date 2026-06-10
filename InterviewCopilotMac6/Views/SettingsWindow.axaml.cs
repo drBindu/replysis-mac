@@ -64,6 +64,54 @@ namespace InterviewCopilotMac6.Views
             OverlayOpacitySlider.Value = Math.Clamp(overlayOpPct, 10, 100);
             MainOpacityLabel.Text = $"{(int)MainOpacitySlider.Value}%";
             OverlayOpacityLabel.Text = $"{(int)OverlayOpacitySlider.Value}%";
+
+            // Live API key validation feedback
+            ApiKeyBox.TextChanged += (s, e) => ValidateApiKeyLive();
+            ModelCombo.SelectionChanged += (s, e) => ValidateApiKeyLive();
+            ValidateApiKeyLive();
+        }
+
+        /// <summary>
+        /// Provides real-time coloured hint feedback on the API key format.
+        /// </summary>
+        private void ValidateApiKeyLive()
+        {
+            string key = ApiKeyBox.Text?.Trim() ?? "";
+            int modelIdx = ModelCombo.SelectedIndex;
+
+            if (string.IsNullOrEmpty(key))
+            {
+                ApiKeyHintLabel.Text = "Required — paste your API key above.";
+                ApiKeyHintLabel.Foreground = Avalonia.Media.Brush.Parse("#f59e0b");
+                return;
+            }
+
+            bool valid = modelIdx switch
+            {
+                0 or 1 or 2 => key.StartsWith("sk-", StringComparison.Ordinal),      // OpenAI
+                3            => key.StartsWith("gsk_", StringComparison.Ordinal),     // Groq
+                4            => key.StartsWith("AIza", StringComparison.Ordinal),     // Gemini
+                _            => true
+            };
+
+            string expectedFormat = modelIdx switch
+            {
+                0 or 1 or 2 => "OpenAI key should start with sk-",
+                3            => "Groq key should start with gsk_",
+                4            => "Gemini key should start with AIza",
+                _            => ""
+            };
+
+            if (valid)
+            {
+                ApiKeyHintLabel.Text = "✓ Key format looks correct.";
+                ApiKeyHintLabel.Foreground = Avalonia.Media.Brush.Parse("#4ade80");
+            }
+            else
+            {
+                ApiKeyHintLabel.Text = $"⚠ {expectedFormat}";
+                ApiKeyHintLabel.Foreground = Avalonia.Media.Brush.Parse("#ef4444");
+            }
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -106,7 +154,11 @@ namespace InterviewCopilotMac6.Views
                     AudioDeviceCombo.Items.Add("No devices — run engine first");
                 }
             }
-            catch { AudioDeviceCombo.Items.Add("Error loading devices"); }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[SETTINGS] LoadDevices failed: {ex.Message}");
+                AudioDeviceCombo.Items.Add("Error loading devices");
+            }
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -132,13 +184,22 @@ namespace InterviewCopilotMac6.Views
 
         private void SaveBtn_Click(object? sender, RoutedEventArgs e)
         {
+            string apiKey = ApiKeyBox.Text?.Trim() ?? "";
+
+            // Warn if API key is empty — don't block save, but inform user
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                UpdateStatusLabel.Text = "⚠ No API key entered — Screen Analysis won't work without one.";
+                UpdateStatusLabel.Foreground = Avalonia.Media.Brush.Parse("#f59e0b");
+            }
+
             if (AudioDeviceCombo.SelectedIndex > -1 && deviceIndices.Count > AudioDeviceCombo.SelectedIndex)
                 SelectedDeviceIndex = deviceIndices[AudioDeviceCombo.SelectedIndex];
 
             var cfg = new AppConfig
             {
                 ModelIndex = ModelCombo.SelectedIndex >= 0 ? ModelCombo.SelectedIndex : 0,
-                ApiKey = ApiKeyBox.Text?.Trim() ?? "",
+                ApiKey = apiKey,
                 CoopilotEmail = CoopilotEmailBox.Text?.Trim() ?? "",
                 Temperature = Math.Round(TempSlider.Value, 1),
                 MainWindowOpacity = Math.Round(MainOpacitySlider.Value / 100.0, 2),
@@ -224,7 +285,10 @@ namespace InterviewCopilotMac6.Views
                     return _cachedConfig;
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[SETTINGS] LoadConfig failed: {ex.Message}");
+            }
             _cachedConfig = new AppConfig();
             _cacheTime = DateTime.UtcNow;
             return _cachedConfig;

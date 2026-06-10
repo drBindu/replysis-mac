@@ -132,7 +132,7 @@
             <!-- CENTER: Mic + Status + Record -->
             <StackPanel Grid.Column="1" Orientation="Horizontal"
                         HorizontalAlignment="Center" VerticalAlignment="Center">
-              <Button x:Name="MicBtn" Classes="MicBtn" Click="MicBtn_Click" Margin="0,0,16,0">
+              <Button x:Name="MicBtn" Classes="MicBtn" Click="MicBtn_Click" Margin="0,0,16,0" Focusable="False">
                 <TextBlock Text="🎤" FontSize="20"/>
               </Button>
               <StackPanel VerticalAlignment="Center" Margin="0,0,20,0">
@@ -196,7 +196,7 @@
                       Click="SignInHeaderBtn_Click"
                       Classes="BlueBtn"
                       Padding="12,6" Margin="0,0,8,0"
-                      IsVisible="True"/>
+                      IsVisible="True" Focusable="False"/>
 
               <!-- My Sessions (visible when logged in) -->
               <Button x:Name="SessionsBtn"
@@ -204,13 +204,13 @@
                       Classes="GhostBtn"
                       Click="SessionsBtn_Click"
                       Padding="12,6" Margin="0,0,8,0"
-                      IsVisible="False"
+                      IsVisible="False" Focusable="False"
                       ToolTip.Tip="View your past interview recordings"/>
 
               <!-- Screen Analyze button (F8 / F9) -->
               <Button x:Name="ScreenAnalyzeBtn" Classes="GhostBtn"
                       Click="ScreenAnalyzeBtn_Click"
-                      Padding="12,6" Margin="0,0,8,0"
+                      Padding="12,6" Margin="0,0,8,0" Focusable="False"
                       ToolTip.Tip="Analyze screen and get an immediate AI answer (F8 / F9)">
                 <StackPanel Orientation="Horizontal" Spacing="5">
                   <TextBlock x:Name="AnalyzeIcon" Text="🔍" FontSize="13"/>
@@ -220,12 +220,12 @@
 
               <!-- Camera Mode -->
               <Button Content="📷 Camera Mode" Classes="BlueBtn"
-                      Click="CameraMode_Click" Padding="12,6" Margin="0,0,8,0"/>
+                      Click="CameraMode_Click" Padding="12,6" Margin="0,0,8,0" Focusable="False"/>
 
               <!-- Settings -->
               <Button Content="⚙" Classes="GhostBtn"
                       Click="SettingsBtn_Click" Padding="10,6" Margin="0,0,8,0"
-                      ToolTip.Tip="Settings"/>
+                      ToolTip.Tip="Settings" Focusable="False"/>
 
               <!-- Session Timer (visible while session is active) -->
               <Border x:Name="SessionTimerBadge" Background="#0D1B2E" CornerRadius="8"
@@ -245,11 +245,12 @@
               <Button Content="–" Foreground="#555" Background="Transparent"
                       BorderThickness="0" Click="MinimizeBtn_Click"
                       FontSize="18" ToolTip.Tip="Minimize" Cursor="Hand"
-                      Padding="6,0" Margin="0,0,4,0"/>
+                      Padding="6,0" Margin="0,0,4,0" Focusable="False"/>
 
               <!-- Close -->
               <Button Content="✕" Foreground="#666666" Background="Transparent"
-                      BorderThickness="0" Click="CloseBtn_Click"/>
+                      BorderThickness="0" Click="CloseBtn_Click"
+                      ToolTip.Tip="Close" Cursor="Hand" Focusable="False"/>
             </StackPanel>
           </Grid>
         </Border>
@@ -312,7 +313,7 @@
           <!-- Toggle Button -->
           <Button x:Name="ResumeToggleBtn" Grid.Column="1" Content="◀"
                   Classes="ArrowBtn" Click="ResumeToggleBtn_Click"
-                  VerticalAlignment="Center" Margin="0,0,10,0"/>
+                  VerticalAlignment="Center" Margin="0,0,10,0" Focusable="False"/>
 
           <!-- Right Panel -->
           <Grid Grid.Column="2">
@@ -402,17 +403,17 @@
                     <Button x:Name="CopyAnswerBtn" Content="📋 Copy"
                             Click="CopyAnswerBtn_Click"
                             Classes="GhostBtn"
-                            Padding="10,5" Margin="0,0,6,0"
+                            Padding="10,5" Margin="0,0,6,0" Focusable="False"
                             ToolTip.Tip="Copy answer to clipboard"/>
                     <Button x:Name="ClearAnswerBtn" Content="✕ Clear"
                             Click="ClearAnswerBtn_Click"
                             Classes="GhostBtn"
-                            Padding="10,5" Margin="0,0,6,0"
+                            Padding="10,5" Margin="0,0,6,0" Focusable="False"
                             ToolTip.Tip="Clear current transcript and answer"/>
                     <Button x:Name="NewSessionBtn" Content="＋ New Session"
                             Click="NewSessionBtn_Click"
                             Classes="GreenBtn"
-                            Padding="10,5"
+                            Padding="10,5" Focusable="False"
                             ToolTip.Tip="Start a fresh interview session"/>
                   </StackPanel>
                 </Grid>
@@ -453,14 +454,14 @@
               <ColumnDefinition Width="*"/>
               <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <Button Grid.Column="0" Classes="MicBtn" Click="MicBtn_Click" Width="40" Height="40"/>
+            <Button Grid.Column="0" Classes="MicBtn" Click="MicBtn_Click" Width="40" Height="40" Focusable="False"/>
             <ScrollViewer Grid.Column="1" Margin="20,0">
               <TextBlock x:Name="CamAnswerBox" Text="Ready..." Foreground="White"
                          FontSize="18" FontWeight="Bold"
                          TextWrapping="Wrap" TextAlignment="Center"/>
             </ScrollViewer>
             <Button Grid.Column="2" Content="Exit" Classes="GhostBtn"
-                    Click="ExitCameraMode_Click" Padding="10,5"/>
+                    Click="ExitCameraMode_Click" Padding="10,5" Focusable="False"/>
           </Grid>
         </Border>
       </Grid>

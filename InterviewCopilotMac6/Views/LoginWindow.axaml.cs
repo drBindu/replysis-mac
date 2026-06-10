@@ -166,8 +166,9 @@ namespace InterviewCopilotMac6.Views
                 else
                     ShowError("Could not send reset email. Check your email address.");
             }
-            catch
+            catch (Exception ex)
             {
+                System.Diagnostics.Debug.WriteLine($"[LoginWindow] ForgotLink_Click: {ex.Message}");
                 ShowError("Connection error. Try again.");
             }
             finally
@@ -186,7 +187,10 @@ namespace InterviewCopilotMac6.Views
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
                     "https://coopilotxai.com") { UseShellExecute = true });
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[LoginWindow] RegisterLink_Click: could not open browser: {ex.Message}");
+            }
         }
 
         // ══════════════════════════════════════════════════════════

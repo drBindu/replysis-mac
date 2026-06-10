@@ -98,7 +98,11 @@ namespace InterviewCopilotMac6
                         File.Delete(resizedPath);
                     }
                 }
-                catch { /* use original if resize fails */ }
+                catch (Exception sipsEx)
+                {
+                    Views.DebugWindow.Log("SCREEN_SIPS", $"sips resize failed — using original image: {sipsEx.Message}");
+                    // imageBytes already holds the unresized capture; continue with it
+                }
 
                 Views.DebugWindow.Log("SCREEN", $"Captured {imageBytes.Length / 1024} KB");
                 return imageBytes;
@@ -328,6 +332,11 @@ namespace InterviewCopilotMac6
                             ? full.Substring(0, MaxContextChars) + "…"
                             : full;
                 }
+
+                // Guard: if the model returned nothing, tell the user clearly
+                if (accumulated.Length == 0)
+                    yield return "⚠ The vision model returned an empty response. Try again or check your API key and quota.";
+
             }
         }
 
@@ -461,6 +470,16 @@ namespace InterviewCopilotMac6
 
         private static string BuildVisionPayloadJson(string model, string base64, string prompt)
         {
+            // Groq's vision API does not support the "detail" parameter — omit it for Groq.
+            // OpenAI supports "auto" or "high"; use "high" for best accuracy on OpenAI.
+            bool isGroq = Views.SettingsWindow.IsGroq();
+
+            object imageContent = isGroq
+                ? (object)new { type = "image_url",
+                                image_url = new { url = $"data:image/png;base64,{base64}" } }
+                : (object)new { type = "image_url",
+                                image_url = new { url = $"data:image/png;base64,{base64}", detail = "high" } };
+
             var payload = new
             {
                 model,
@@ -474,8 +493,7 @@ namespace InterviewCopilotMac6
                         content = new object[]
                         {
                             new { type = "text", text = prompt },
-                            new { type = "image_url",
-                                  image_url = new { url = $"data:image/png;base64,{base64}", detail = "high" } }
+                            imageContent
                         }
                     }
                 }

@@ -64,7 +64,10 @@ namespace InterviewCopilotMac6.Views
                     var info = ParseSessionFile(file);
                     _sessions.Add(info);
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[SESSIONS] ParseSessionFile failed for {file}: {ex.Message}");
+                }
             }
 
             SessionsList.ItemsSource = _sessions;

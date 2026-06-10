@@ -117,7 +117,9 @@
           <TextBlock Text="AI API KEY" Classes="SectionLabel"/>
           <TextBox x:Name="ApiKeyBox" Classes="DarkInput"/>
           <TextBlock Text="OpenAI: sk-...  |  Groq: gsk_...  |  Gemini: AIza..."
-                     Classes="HintLabel" Margin="4,2,0,16"/>
+                     Classes="HintLabel" Margin="4,2,0,4"/>
+          <TextBlock x:Name="ApiKeyHintLabel" Text="" FontSize="10"
+                     Margin="4,0,0,16" TextWrapping="Wrap"/>
 
           <Border Height="1" Background="#1e232d" Margin="0,4,0,16"/>
 

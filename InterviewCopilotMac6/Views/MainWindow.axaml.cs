@@ -46,6 +46,8 @@ namespace InterviewCopilotMac6.Views
 
         private AnswerWindow? _answerWindow;
         private Action? _cameraModeClosedHandler;
+        private Action? _answerWindowSpaceHandler;
+        private bool _settingsOpen = false;   // prevents double-opening Settings
 
         private DispatcherTimer? transcriptTimer;
         private DispatcherTimer? thinkingTimer;
@@ -108,8 +110,9 @@ namespace InterviewCopilotMac6.Views
 
                 _answerWindow = new AnswerWindow();
                 _cameraModeClosedHandler = () => Dispatcher.UIThread.Post(() => ExitCameraMode());
+                _answerWindowSpaceHandler = () => HandleSpacePress("CAMERA_OVERLAY");
                 _answerWindow.CameraModeClosedByUser += _cameraModeClosedHandler;
-                _answerWindow.SpacePressed += () => HandleSpacePress("CAMERA_OVERLAY");
+                _answerWindow.SpacePressed += _answerWindowSpaceHandler;
 
                 try
                 {
@@ -184,14 +187,26 @@ namespace InterviewCopilotMac6.Views
         {
             var loginWin = new LoginWindow();
             await loginWin.ShowDialog(this);
+            // Return focus to the window so Space doesn't activate the Sign In button
+            Dispatcher.UIThread.Post(() => this.Focus());
             if (loginWin.LoginSuccess)
             {
-                await UserSession.FetchSpeechmaticsKeyAsync();
+                bool keyFetched = await UserSession.FetchSpeechmaticsKeyAsync();
                 UpdateProfileUI();
-                await FetchAndDisplayCreditsAsync();
+
+                try { await FetchAndDisplayCreditsAsync(); }
+                catch (Exception ex) { DebugWindow.Log("CREDITS_ERR", $"Post-login credits fetch failed: {ex.Message}"); }
+
                 StartNewSession();
                 StartSpeechmaticsEngine();
                 DebugWindow.Log("AUTH", $"Logged in: {UserSession.Email}");
+
+                if (!keyFetched)
+                {
+                    // Still logged in — but transcription won't work until key is available
+                    AiAnswerBox.Text = "⚠ Signed in, but could not fetch your speech key from the server.\n\nAI answers will still work. If transcription doesn't start, try signing out and back in.";
+                    DebugWindow.Log("AUTH", "Warning: FetchSpeechmaticsKeyAsync failed after login");
+                }
             }
         }
 
@@ -229,6 +244,8 @@ namespace InterviewCopilotMac6.Views
             dialog.Content = panel;
 
             await dialog.ShowDialog(this);
+            // Return focus to the window so Space doesn't activate the profile badge
+            Dispatcher.UIThread.Post(() => this.Focus());
             if (signOut)
             {
                 UserSession.Clear();
@@ -316,25 +333,40 @@ namespace InterviewCopilotMac6.Views
                     }
                     else
                     {
-                        string display = credits >= 1000 ? $"{credits / 1000.0:F1}k" : credits.ToString("N0");
-                        CreditsLabel.Text  = $"⚡ {display}";
-                        CreditsPlanLabel.Text = plan;
                         CreditsIcon.Text   = "";
+                        CreditsPlanLabel.Text = plan;
 
-                        if (credits > CreditsLowThreshold)
+                        if (credits == 0)
                         {
-                            SetCreditsBadgeStyle("#0f2a1a", "#1a6b3a");
-                            CreditsLabel.Foreground = new SolidColorBrush(Color.Parse("#4ade80"));
-                        }
-                        else if (credits > CreditsCriticalThreshold)
-                        {
-                            SetCreditsBadgeStyle("#2a1a0a", "#6b4a1a");
-                            CreditsLabel.Foreground = new SolidColorBrush(Color.Parse("#f59e0b"));
+                            CreditsLabel.Text = "0 credits";
+                            CreditsPlanLabel.Text = "Tap to top up";
+                            CreditsPlanLabel.IsVisible = true;
+                            SetCreditsBadgeStyle("#2a0a0a", "#6b1a1a");
+                            CreditsLabel.Foreground = new SolidColorBrush(Color.Parse("#ef4444"));
+                            // Tooltip updated to guide user
+                            ToolTip.SetTip(CreditsBadge, "0 credits — Visit coopilotxai.com to top up");
                         }
                         else
                         {
-                            SetCreditsBadgeStyle("#2a0a0a", "#6b1a1a");
-                            CreditsLabel.Foreground = new SolidColorBrush(Color.Parse("#ef4444"));
+                            string display = credits >= 1000 ? $"{credits / 1000.0:F1}k" : credits.ToString("N0");
+                            CreditsLabel.Text  = $"⚡ {display}";
+                            ToolTip.SetTip(CreditsBadge, "Credits · Click to refresh");
+
+                            if (credits > CreditsLowThreshold)
+                            {
+                                SetCreditsBadgeStyle("#0f2a1a", "#1a6b3a");
+                                CreditsLabel.Foreground = new SolidColorBrush(Color.Parse("#4ade80"));
+                            }
+                            else if (credits > CreditsCriticalThreshold)
+                            {
+                                SetCreditsBadgeStyle("#2a1a0a", "#6b4a1a");
+                                CreditsLabel.Foreground = new SolidColorBrush(Color.Parse("#f59e0b"));
+                            }
+                            else
+                            {
+                                SetCreditsBadgeStyle("#2a0a0a", "#6b1a1a");
+                                CreditsLabel.Foreground = new SolidColorBrush(Color.Parse("#ef4444"));
+                            }
                         }
                     }
                 });
@@ -357,6 +389,19 @@ namespace InterviewCopilotMac6.Views
         private void CreditsBadge_Click(object? sender, PointerPressedEventArgs e)
         {
             if (!UserSession.IsLoggedIn) { SignInHeaderBtn_Click(sender, new Avalonia.Interactivity.RoutedEventArgs()); return; }
+
+            // If 0 credits, open the top-up page directly
+            if (UserSession.Credits == 0 && !UserSession.IsUnlimited)
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                        "https://coopilotxai.com/pricing") { UseShellExecute = true });
+                }
+                catch (Exception ex) { DebugWindow.Log("CREDITS", $"Could not open browser: {ex.Message}"); }
+                return;
+            }
+
             _ = FetchAndDisplayCreditsAsync().ContinueWith(t => {
                 if (t.IsFaulted) DebugWindow.Log("CREDITS_ERR", t.Exception?.GetBaseException().Message ?? "unknown");
             }, TaskScheduler.Default);
@@ -587,8 +632,9 @@ namespace InterviewCopilotMac6.Views
             {
                 _answerWindow = new AnswerWindow();
                 _cameraModeClosedHandler = () => Dispatcher.UIThread.Post(() => ExitCameraMode());
+                _answerWindowSpaceHandler = () => HandleSpacePress("CAMERA_OVERLAY");
                 _answerWindow.CameraModeClosedByUser += _cameraModeClosedHandler;
-                _answerWindow.SpacePressed += () => HandleSpacePress("CAMERA_OVERLAY");
+                _answerWindow.SpacePressed += _answerWindowSpaceHandler;
             }
 
             _answerWindow.ToggleCameraMode(true);
@@ -620,6 +666,16 @@ namespace InterviewCopilotMac6.Views
             _spaceHandling = true;
             try
             {
+                // Guard: if the user is logged in but the engine hasn't started yet, show feedback
+                if (UserSession.IsLoggedIn && speechmaticsProcess == null && isMuted)
+                {
+                    AiAnswerBox.Text = "⏳ Starting audio engine... please wait a moment and try again.";
+                    MicIndicatorText.Text = "STARTING";
+                    MicIndicator.Fill = new SolidColorBrush(Colors.Orange);
+                    DebugWindow.Log("MIC", $"[{source}] Space pressed but engine not started — showing Starting state");
+                    return;
+                }
+
                 if (isMuted)
                 {
                     isMuted = false; isListening = true;
@@ -688,12 +744,16 @@ namespace InterviewCopilotMac6.Views
                     return;
                 }
 
-                if (!UserSession.IsUnlimited && UserSession.Credits < CreditsCriticalThreshold)
+                if (!UserSession.IsUnlimited && UserSession.Credits <= 0)
                 {
-                    AiAnswerBox.Text = $"⚠ Not enough credits ({UserSession.Credits} remaining).\n\nVisit coopilotxai.com/pricing to upgrade.";
+                    AiAnswerBox.Text = "⚠ 0 credits remaining.\n\nVisit coopilotxai.com to top up — credits are used for AI answers.\n\nClick the credits badge in the top bar to go there directly.";
                     UpdateMicUi();
                     return;
                 }
+                // Low-credits banner shown inline with the answer
+                string lowCreditsBanner = (!UserSession.IsUnlimited && UserSession.Credits > 0 && UserSession.Credits < CreditsCriticalThreshold)
+                    ? $"⚠ Only {UserSession.Credits} credit(s) remaining — consider topping up at coopilotxai.com/pricing.\n\n"
+                    : "";
 
                 thinkingStep = 0;
                 ThinkingPanel.IsVisible = true;
@@ -704,7 +764,7 @@ namespace InterviewCopilotMac6.Views
                 string old = AiAnswerBox.Text ?? "";
                 if (old == "Results will appear here..." || old.StartsWith("Ready") || old.StartsWith("New session")) old = "";
                 if (old.Length > 5000) old = "…[earlier answers truncated]\n\n" + old.Substring(old.Length - 3000);
-                AiAnswerBox.Text = $"Q: {q}\n\n";
+                AiAnswerBox.Text = $"Q: {q}\n\n{lowCreditsBanner}";
                 if (_isCameraMode && _answerWindow != null) { _answerWindow.UpdateAnswer(""); _answerWindow.UpdateQuestion(q); }
 
                 _aiCts.Cancel();
@@ -712,10 +772,22 @@ namespace InterviewCopilotMac6.Views
                 _aiCts = new CancellationTokenSource();
                 var ct = _aiCts.Token;
 
+                // Warn user if no resume is pasted — answer will be generic
+                string resumeText = ResumeTextBox.Text ?? "";
+                string noResumeBanner = string.IsNullOrWhiteSpace(resumeText)
+                    ? "⚠ No resume pasted — answer will be generic. Paste your resume in the left panel for tailored answers.\n\n"
+                    : "";
+                if (!string.IsNullOrEmpty(noResumeBanner))
+                {
+                    AiAnswerBox.Text = $"Q: {q}\n\n{noResumeBanner}";
+                    if (_isCameraMode && _answerWindow != null)
+                        _answerWindow.UpdateAnswer("⚠ No resume — answer will be generic.");
+                }
+
                 var sb = new StringBuilder();
                 int tokenCount = 0;
 
-                await foreach (var token in StreamFromBackend(q, ResumeTextBox.Text ?? "", ct))
+                await foreach (var token in StreamFromBackend(q, resumeText, ct))
                 {
                     sb.Append(token);
                     tokenCount++;
@@ -729,14 +801,14 @@ namespace InterviewCopilotMac6.Views
                     if (tokenCount % 3 == 0 || token.Contains('\n'))
                     {
                         string soFar = sb.ToString();
-                        AiAnswerBox.Text = $"Q: {q}\n\n{soFar}";
+                        AiAnswerBox.Text = $"Q: {q}\n\n{noResumeBanner}{lowCreditsBanner}{soFar}";
                         AiAnswerBox.CaretIndex = AiAnswerBox.Text.Length;
                         if (_isCameraMode && _answerWindow != null) _answerWindow.UpdateAnswer(soFar);
                     }
                 }
 
                 string final = CleanAiOutput(sb.ToString());
-                AiAnswerBox.Text = $"Q: {q}\n\n{final}\n{sep}{old}";
+                AiAnswerBox.Text = $"Q: {q}\n\n{noResumeBanner}{lowCreditsBanner}{final}\n{sep}{old}";
                 AiAnswerBox.CaretIndex = AiAnswerBox.Text.Length;
                 if (_isCameraMode && _answerWindow != null) { _answerWindow.UpdateAnswer(final); _answerWindow.UpdateQuestion(q); }
                 PromptBuilder.AddToHistory(q, final);
@@ -894,6 +966,23 @@ namespace InterviewCopilotMac6.Views
             ans = _rxHeading.Replace(ans, "");
             ans = ans.Replace("\r\n", "\n").Replace("\r", "\n");
             ans = _rxMultiBlank.Replace(ans, "\n\n");
+
+            // Remove AI filler openers
+            var fillers = new[]
+            {
+                "Certainly! ", "Absolutely! ", "Of course! ", "Great question! ",
+                "Sure! ", "I'd be happy to ", "I'm happy to ",
+                "Certainly, ", "Absolutely, ", "Of course, ",
+                "That's a great question! ", "That's a great question, ",
+                "Good question! ", "Good question, "
+            };
+            foreach (var f in fillers)
+                ans = ans.Replace(f, "", StringComparison.OrdinalIgnoreCase);
+
+            // Replace em/en dashes with appropriate punctuation
+            ans = ans.Replace(" — ", " - ").Replace(" – ", " - ")
+                     .Replace("—", " - ").Replace("–", "-");
+
             return ans.Trim();
         }
 
@@ -981,12 +1070,18 @@ namespace InterviewCopilotMac6.Views
 
         private void ClearAnswerBtn_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
+            // Cancel any in-progress AI stream so it doesn't overwrite the cleared text
+            _aiCts.Cancel();
+            _aiCts.Dispose();
+            _aiCts = new CancellationTokenSource();
+
             TranscriptTextBlock.Text  = "";
             TranscriptHint.IsVisible  = true;
             AiAnswerBox.Text = "Ready — press SPACE to start listening, then SPACE again to get your answer.";
             if (_answerWindow != null) { _answerWindow.UpdateAnswer(""); _answerWindow.UpdateQuestion(""); }
             PromptBuilder.ClearHistory();
             try { File.WriteAllText(Path.Combine(AppDataFolder, "latest.txt"), ""); } catch { }
+            StopThinkingUi();
         }
 
         private void NewSessionBtn_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -1004,9 +1099,29 @@ namespace InterviewCopilotMac6.Views
         private void MinimizeBtn_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
             => WindowState = WindowState.Minimized;
 
+        private const int ResumeCharLimit = 8000;
+
         private void ResumeTextBox_TextChanged(object? sender, Avalonia.Controls.TextChangedEventArgs e)
         {
-            ResumeWatermark.IsVisible = string.IsNullOrWhiteSpace(ResumeTextBox.Text);
+            string text = ResumeTextBox.Text ?? "";
+            // Show placeholder only when the text box is truly empty
+            ResumeWatermark.IsVisible = string.IsNullOrWhiteSpace(text);
+
+            // Show character count warning in the save path label when over limit
+            if (text.Length > ResumeCharLimit)
+            {
+                SavePathLabel.Text = $"⚠ Resume: {text.Length:N0} chars — trim to under {ResumeCharLimit:N0} for best results.";
+                SavePathLabel.Foreground = new SolidColorBrush(Color.Parse("#f59e0b"));
+            }
+            else
+            {
+                // Restore to normal path display if previously showing a warning
+                if (SavePathLabel.Foreground is SolidColorBrush b && b.Color == Color.Parse("#f59e0b"))
+                {
+                    SavePathLabel.Text = AppDataFolder;
+                    SavePathLabel.Foreground = new SolidColorBrush(Color.Parse("#2a3a4a"));
+                }
+            }
         }
 
         // ══════════════════════════════════════════════════════════════════════
@@ -1277,7 +1392,11 @@ namespace InterviewCopilotMac6.Views
             if (e.Key == Key.F9)  { e.Handled = true; _ = RunScreenAnalysis(); return; }
             if (e.Key == Key.Space)
             {
+                // Don't intercept Space if user is typing in the resume box
                 if (ResumeTextBox != null && ResumeTextBox.IsFocused) return;
+                // Safety net: if a button somehow still has focus (e.g., after a dialog),
+                // don't trigger the mic — let the button handle its own activation
+                if (e.Source is Button) return;
                 e.Handled = true;
                 HandleSpacePress("KEYBOARD");
             }
@@ -1292,24 +1411,33 @@ namespace InterviewCopilotMac6.Views
 
         private async void SettingsBtn_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
-            var sw = new SettingsWindow();
-            await sw.ShowDialog(this);
-
-            ApplyMainWindowOpacity();
-            _answerWindow?.ApplyOverlayOpacity();
-
-            if (sw.SettingsChanged)
+            // Guard against double-open (e.g. keyboard activation while dialog is already open)
+            if (_settingsOpen) return;
+            _settingsOpen = true;
+            try
             {
-                bool deviceChanged = sw.SelectedDeviceIndex >= 0 && sw.SelectedDeviceIndex != _audioDeviceId;
-                if (deviceChanged) _audioDeviceId = sw.SelectedDeviceIndex;
-                DebugWindow.Log("SETTINGS", "Settings changed — restarting engine");
-                StartSpeechmaticsEngine();
-            }
+                var sw = new SettingsWindow();
+                await sw.ShowDialog(this);
+                // Return focus to window so Space doesn't re-trigger the Settings button
+                Dispatcher.UIThread.Post(() => this.Focus());
 
-            if (UserSession.IsLoggedIn)
-                _ = FetchAndDisplayCreditsAsync().ContinueWith(t => {
-                    if (t.IsFaulted) DebugWindow.Log("CREDITS_ERR", t.Exception?.GetBaseException().Message ?? "unknown");
-                }, TaskScheduler.Default);
+                ApplyMainWindowOpacity();
+                _answerWindow?.ApplyOverlayOpacity();
+
+                if (sw.SettingsChanged)
+                {
+                    bool deviceChanged = sw.SelectedDeviceIndex >= 0 && sw.SelectedDeviceIndex != _audioDeviceId;
+                    if (deviceChanged) _audioDeviceId = sw.SelectedDeviceIndex;
+                    DebugWindow.Log("SETTINGS", "Settings changed — restarting engine");
+                    StartSpeechmaticsEngine();
+                }
+
+                if (UserSession.IsLoggedIn)
+                    _ = FetchAndDisplayCreditsAsync().ContinueWith(t => {
+                        if (t.IsFaulted) DebugWindow.Log("CREDITS_ERR", t.Exception?.GetBaseException().Message ?? "unknown");
+                    }, TaskScheduler.Default);
+            }
+            finally { _settingsOpen = false; }
         }
 
         private void ResumeToggleBtn_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -1328,9 +1456,14 @@ namespace InterviewCopilotMac6.Views
             _engineMonitorTimer?.Stop();
             _sessionTimer?.Stop();
 
-            if (_answerWindow != null && _cameraModeClosedHandler != null)
-                _answerWindow.CameraModeClosedByUser -= _cameraModeClosedHandler;
-            try { _answerWindow?.Close(); } catch { }
+            if (_answerWindow != null)
+            {
+                if (_cameraModeClosedHandler != null)
+                    _answerWindow.CameraModeClosedByUser -= _cameraModeClosedHandler;
+                if (_answerWindowSpaceHandler != null)
+                    _answerWindow.SpacePressed -= _answerWindowSpaceHandler;
+                try { _answerWindow.Close(); } catch { }
+            }
             _answerWindow = null;
 
             _globalHotkey?.Dispose();
