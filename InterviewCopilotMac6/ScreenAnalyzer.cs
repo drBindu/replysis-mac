@@ -153,7 +153,10 @@ namespace InterviewCopilotMac6
             var sb = new StringBuilder(4096);
 
             sb.AppendLine("You are an expert interview coach helping a candidate in a live interview.");
-            sb.AppendLine("Analyze the screenshot and respond using the EXACT structure shown below for the matching content type.");
+            sb.AppendLine("The screenshot is a FULL SCREEN CAPTURE — it may include the Interview Copilot application window (dark semi-transparent overlay) AND any other content visible on screen.");
+            sb.AppendLine("IMPORTANT: Look at the ENTIRE screenshot. Identify ALL visible content — browser windows, Zoom/Meet screens, coding platforms (LeetCode, HackerRank, CoderPad), job descriptions, terminal output, error messages, design mockups, or any interview question text.");
+            sb.AppendLine("If the Interview Copilot window is visible, look THROUGH it and at its contents (transcript, current question) for additional context.");
+            sb.AppendLine("Respond using the EXACT structure shown below for the matching content type.");
             sb.AppendLine();
             sb.AppendLine("CRITICAL OUTPUT RULES — OBEY EXACTLY:");
             sb.AppendLine("1. Use ━━━ TITLE ━━━ as section headers — nothing else (no ##, no **, no ---).");
@@ -245,15 +248,16 @@ namespace InterviewCopilotMac6
             sb.AppendLine("[One sentence to say out loud to the interviewer]");
             sb.AppendLine();
             sb.AppendLine("─────────────────────────────────────────────────────");
-            sb.AppendLine("IF SCREEN CONTENT DOES NOT MATCH ANY ABOVE, output:");
+            sb.AppendLine("IF SCREEN CONTENT DOES NOT MATCH ANY ABOVE (e.g. only desktop/wallpaper visible), output:");
             sb.AppendLine("─────────────────────────────────────────────────────");
             sb.AppendLine();
             sb.AppendLine("━━━ WHAT I SEE ━━━");
-            sb.AppendLine("[Brief description of what's on screen]");
+            sb.AppendLine("[Describe ALL visible windows, apps, and content — be specific about what applications are open]");
+            sb.AppendLine("If the Interview Copilot app is visible, mention the current transcript and any question being discussed.");
             sb.AppendLine();
             sb.AppendLine("━━━ GUIDANCE ━━━");
-            sb.AppendLine("• [Most relevant interview advice]");
-            sb.AppendLine("• [Second point if needed]");
+            sb.AppendLine("• [Most relevant interview advice based on what you see]");
+            sb.AppendLine("• TIP: For best results, keep your coding platform or the interviewer's shared screen visible on screen when using Screen Analysis");
 
             return sb.ToString();
         }

@@ -498,31 +498,19 @@ namespace InterviewCopilotMac6.Views
             isProcessing = true;
             UpdateMicUi();
 
-            bool opacityRestored = false;
-
             try
             {
-                // Cancel any in-progress AI request, set up fresh CT before capture
-                // so OnClosed can interrupt the screencapture process if the app closes
+                // Cancel any in-progress AI request, set up fresh CT
                 _aiCts.Cancel();
                 _aiCts.Dispose();
                 _aiCts = new CancellationTokenSource();
                 var screenCt = _aiCts.Token;
 
-                // ── Phase 1: capture ─────────────────────────────────────────────
-                ThinkingLabel.Text      = "🔍  Capturing screen…";
-                ThinkingHintLabel.IsVisible = false;
-                ThinkingPanel.IsVisible = true;
-
-                this.Hide();
-                _answerWindow?.Hide();
-                await Task.Delay(150); // shorter delay since Hide() is compositor-guaranteed
-
+                // ── Phase 1: capture full screen as-is ───────────────────────────
+                // Do NOT hide the window. The IC window is semi-transparent so the AI
+                // can see through it. Hiding causes timing races and empty wallpaper
+                // captures when no other app is open behind IC.
                 byte[] imageBytes = await ScreenAnalyzer.CaptureScreenAsync(screenCt);
-
-                this.Show();
-                if (_isCameraMode) _answerWindow?.Show();
-                opacityRestored = true;
 
                 if (imageBytes.Length == 0)
                 {
@@ -531,8 +519,11 @@ namespace InterviewCopilotMac6.Views
                 }
 
                 // ── Phase 2: vision AI analysis ───────────────────────────────────
+                // Show thinking indicator NOW (after capture — so it doesn't appear in the screenshot)
                 string visionLabel = SettingsWindow.IsGroq() ? "Llama 4 Scout" : "GPT-4o";
-                ThinkingLabel.Text = $"🤖  {visionLabel} analyzing…";
+                ThinkingLabel.Text      = $"🔍  {visionLabel} analyzing…";
+                ThinkingHintLabel.IsVisible = false;
+                ThinkingPanel.IsVisible = true;
 
                 string resumeCtx = ResumeParser.ExtractFacts(ResumeTextBox.Text ?? "");
                 string timestamp = DateTime.Now.ToString("h:mm tt");
@@ -606,16 +597,6 @@ namespace InterviewCopilotMac6.Views
             }
             finally
             {
-                // Restore window visibility if capture failed before we restored it
-                if (!opacityRestored)
-                {
-                    try
-                    {
-                        this.Show();
-                        if (_isCameraMode) _answerWindow?.Show();
-                    }
-                    catch { }
-                }
                 StopThinkingUi();
             }
         }
