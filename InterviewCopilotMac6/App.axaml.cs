@@ -159,6 +159,9 @@ public partial class App : Application
         }
     }
 
+    internal static void RaiseUpdateReadyToInstall(AppCastItem item)
+        => UpdateReadyToInstall?.Invoke(item);
+
     internal static void InstallPendingUpdate()
     {
         if (PendingUpdatePath != null)

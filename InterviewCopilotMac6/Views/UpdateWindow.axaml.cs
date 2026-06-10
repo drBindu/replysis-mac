@@ -126,7 +126,7 @@ namespace InterviewCopilotMac6.Views
         {
             App.PendingUpdate     = _item;
             App.PendingUpdatePath = _downloadedPath;
-            App.UpdateReadyToInstall?.Invoke(_item);
+            App.RaiseUpdateReadyToInstall(_item);
             DetachEvents();
             Close();
         }
