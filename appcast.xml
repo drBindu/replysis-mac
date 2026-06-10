@@ -5,16 +5,16 @@
     <link>https://coopilotxai.com</link>
     <description>Most recent update for Interview Copilot</description>
     <item>
-      <title>Interview Copilot 1.0.63</title>
-      <sparkle:version>1.0.63</sparkle:version>
-      <sparkle:shortVersionString>1.0.63</sparkle:shortVersionString>
-      <pubDate>Wed, 10 Jun 2026 04:39:26 +0000</pubDate>
+      <title>Interview Copilot 1.0.66</title>
+      <sparkle:version>1.0.66</sparkle:version>
+      <sparkle:shortVersionString>1.0.66</sparkle:shortVersionString>
+      <pubDate>Wed, 10 Jun 2026 04:58:57 +0000</pubDate>
       <enclosure
-        url="https://github.com/moto123a/interview-copilot-mac/releases/download/v1.0.63/InterviewCopilot-update.zip"
-        sparkle:version="1.0.63"
-        sparkle:shortVersionString="1.0.63"
-        sparkle:edSignature="4nMzMTxb1IqxzBdb/+m8YN/QTNyLT6mCwkQMgW7YLOKytmG1KSr9huYgG7LSfGWs9jaq1AcZwctuCX2jLXw2Bg=="
-        length="58999634"
+        url="https://github.com/moto123a/interview-copilot-mac/releases/download/v1.0.66/InterviewCopilot-update.zip"
+        sparkle:version="1.0.66"
+        sparkle:shortVersionString="1.0.66"
+        sparkle:edSignature="eAXF77Y3ZR7/n9pi0ysKkGAkwZZyll8+atwJM/5YO02M27GxXzDd8DTqv6tGTuYYeuoQEMiGWPG77nNuVju9BA=="
+        length="59002201"
         type="application/zip"/>
     </item>
   </channel>
