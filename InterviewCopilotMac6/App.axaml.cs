@@ -1,4 +1,4 @@
-// v1.0.58
+// v1.0.59
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
