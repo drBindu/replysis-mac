@@ -45,15 +45,16 @@ public partial class App : Application
         base.OnFrameworkInitializationCompleted();
 
         DispatcherTimer.RunOnce(
-            () => _ = StartUpdateCheckAsync(),
+            () => _ = CheckForUpdatesAsync(),
             TimeSpan.FromSeconds(1));
 
-        var periodicTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
-        periodicTimer.Tick += async (_, _) => await StartUpdateCheckAsync();
+        var periodicTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        periodicTimer.Tick += async (_, _) => await CheckForUpdatesAsync();
         periodicTimer.Start();
     }
 
     // ── Read version from Info.plist — assembly version unreliable in self-contained builds ──
+    internal static string GetCurrentVersion() => GetAppVersion();
     private static string GetAppVersion()
     {
         try
@@ -82,12 +83,13 @@ public partial class App : Application
     }
 
     // ── Fetch appcast manually and do version comparison ourselves ──
-    private static async System.Threading.Tasks.Task StartUpdateCheckAsync()
+    internal static async System.Threading.Tasks.Task<string> CheckForUpdatesAsync(Action<string>? onStatus = null)
     {
         try
         {
             var currentVersionStr = GetAppVersion();
             Log($"installed={currentVersionStr}");
+            onStatus?.Invoke("Checking…");
 
             if (!Version.TryParse(currentVersionStr, out var currentVersion))
                 currentVersion = new Version(1, 0, 0);
@@ -96,14 +98,14 @@ public partial class App : Application
             var xml = await http.GetStringAsync(AppcastUrl);
 
             var versionMatch = Regex.Match(xml, @"<sparkle:version>([^<]+)</sparkle:version>");
-            if (!versionMatch.Success) { Log("appcast parse failed"); return; }
+            if (!versionMatch.Success) { Log("appcast parse failed"); onStatus?.Invoke("Could not check."); return "error"; }
             var remoteVersionStr = versionMatch.Groups[1].Value.Trim();
             Log($"remote={remoteVersionStr}");
 
-            if (!Version.TryParse(remoteVersionStr, out var remoteVersion)) { Log("remote version parse failed"); return; }
-            if (remoteVersion <= currentVersion) { Log("no update needed"); return; }
+            if (!Version.TryParse(remoteVersionStr, out var remoteVersion)) { onStatus?.Invoke("Could not check."); return "error"; }
+            if (remoteVersion <= currentVersion) { Log("no update needed"); onStatus?.Invoke($"You're up to date  (v{currentVersionStr})"); return "uptodate"; }
 
-            if (_updateDialogShowing) { Log("dialog already showing"); return; }
+            if (_updateDialogShowing) { Log("dialog already showing"); return "showing"; }
 
             Log("update available — showing popup");
 
@@ -138,10 +140,14 @@ public partial class App : Application
                 else                win.Show();
                 Log("popup shown");
             });
+            onStatus?.Invoke($"Update available: v{remoteVersionStr}");
+            return "available";
         }
         catch (Exception ex)
         {
             Log($"EXCEPTION: {ex}");
+            onStatus?.Invoke("Check failed.");
+            return "error";
         }
     }
 

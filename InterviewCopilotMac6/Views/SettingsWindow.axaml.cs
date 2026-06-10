@@ -53,6 +53,8 @@ namespace InterviewCopilotMac6.Views
             TempSlider.Value = cfg.Temperature;
             TempLabel.Text = cfg.Temperature.ToString("F1");
 
+            AppVersionLabel.Text = $"Version {App.GetCurrentVersion()}";
+
             double mainOpPct = Math.Round(cfg.MainWindowOpacity * 100);
             double overlayOpPct = Math.Round(cfg.OverlayOpacity * 100);
             MainOpacitySlider.Value = Math.Clamp(mainOpPct, 10, 100);
@@ -148,6 +150,26 @@ namespace InterviewCopilotMac6.Views
         private void CancelBtn_Click(object? sender, RoutedEventArgs e)
         {
             this.Close();
+        }
+
+        private async void CheckUpdatesBtn_Click(object? sender, RoutedEventArgs e)
+        {
+            CheckUpdatesBtn.IsEnabled = false;
+            UpdateStatusLabel.Foreground = Avalonia.Media.Brushes.Gray;
+            UpdateStatusLabel.Text = "Checking…";
+            await App.CheckForUpdatesAsync(status =>
+            {
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                {
+                    UpdateStatusLabel.Text = status;
+                    UpdateStatusLabel.Foreground = status.StartsWith("You're up to date")
+                        ? Avalonia.Media.Brush.Parse("#4ade80")
+                        : status.StartsWith("Update")
+                            ? Avalonia.Media.Brush.Parse("#fb923c")
+                            : Avalonia.Media.Brush.Parse("#6b7280");
+                });
+            });
+            CheckUpdatesBtn.IsEnabled = true;
         }
 
         // ═══════════════════════════════════════════════════════════════
