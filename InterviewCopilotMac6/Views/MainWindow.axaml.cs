@@ -1556,6 +1556,14 @@ namespace InterviewCopilotMac6.Views
             _resumeCollapsed = !_resumeCollapsed;
             ResumePanel.IsVisible    = !_resumeCollapsed;
             ResumeToggleBtn.Content  = _resumeCollapsed ? "▶" : "◀";
+
+            // Collapse the column itself so the right panel actually expands into the freed space
+            if (ResumePanel.Parent is Grid bodyGrid && bodyGrid.ColumnDefinitions.Count > 0)
+            {
+                bodyGrid.ColumnDefinitions[0].Width = _resumeCollapsed
+                    ? new Avalonia.Controls.GridLength(0)
+                    : new Avalonia.Controls.GridLength(270);
+            }
         }
 
         protected override void OnClosed(EventArgs e)

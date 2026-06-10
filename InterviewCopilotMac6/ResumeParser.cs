@@ -77,6 +77,14 @@ namespace InterviewCopilotMac6
                     sb.AppendLine("  - " + t.TrimStart('•', '-', ' ', '\t'));
             }
 
+            // 4. FULL RAW RESUME — so the AI can see location, contact, education,
+            //    project descriptions etc. that the structured extraction above misses.
+            //    The candidate's own location (e.g. "Illinois, USA") is often in the
+            //    header next to phone/email and would otherwise be dropped.
+            sb.AppendLine();
+            sb.AppendLine("--- FULL RESUME TEXT (use for location, contact, education, project details) ---");
+            sb.AppendLine(resume.Trim());
+
             return sb.ToString();
         }
 
