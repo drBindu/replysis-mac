@@ -126,6 +126,8 @@ namespace InterviewCopilotMac6.Views
                 }
                 catch (Exception ex) { DebugWindow.Log("HOTKEY_ERR", $"Global hotkey failed: {ex.Message}"); }
 
+                // Stop any previous timer before creating a new one (prevents duplicate-timer spam)
+                _engineMonitorTimer?.Stop();
                 _engineMonitorTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(EngineMonitorSecs) };
                 _engineMonitorTimer.Tick += (s2, e2) => MonitorEngine();
 
@@ -144,11 +146,23 @@ namespace InterviewCopilotMac6.Views
                 if (sessionRestored)
                 {
                     await FetchAndDisplayCreditsAsync();
-                    await UserSession.FetchSpeechmaticsKeyAsync();
+                    bool smOk = await UserSession.FetchSpeechmaticsKeyAsync();
                     UpdateProfileUI();
                     StartNewSession();
-                    StartSpeechmaticsEngine();
-                    _engineMonitorTimer.Start();
+
+                    if (smOk)
+                    {
+                        StartSpeechmaticsEngine();
+                        _engineMonitorTimer.Start();
+                    }
+                    else
+                    {
+                        // SM key unavailable — show NO KEY state, don't run the retry loop
+                        DebugWindow.Log("ENGINE", "SM key not available after restore — mic disabled");
+                        MicIndicatorText.Text = "NO MIC";
+                        MicIndicator.Fill = new SolidColorBrush(Color.Parse("#6b7280"));
+                        AiAnswerBox.Text = "Ready — mic transcription unavailable (sign out and back in if needed).\n\nUse F9 to analyze your screen, or press Space if transcription resolves.";
+                    }
                 }
                 else
                 {
@@ -647,13 +661,28 @@ namespace InterviewCopilotMac6.Views
             _spaceHandling = true;
             try
             {
-                // Guard: if the user is logged in but the engine hasn't started yet, show feedback
+                // Guard: if the user is logged in but the engine hasn't started yet
                 if (UserSession.IsLoggedIn && speechmaticsProcess == null && isMuted)
                 {
-                    AiAnswerBox.Text = "⏳ Starting audio engine... please wait a moment and try again.";
-                    MicIndicatorText.Text = "STARTING";
-                    MicIndicator.Fill = new SolidColorBrush(Colors.Orange);
-                    DebugWindow.Log("MIC", $"[{source}] Space pressed but engine not started — showing Starting state");
+                    string smKey = UserSession.SpeechmaticsKey;
+                    if (string.IsNullOrWhiteSpace(smKey)) smKey = SettingsWindow.GetSpeechmaticsKey();
+
+                    if (string.IsNullOrWhiteSpace(smKey))
+                    {
+                        // Key permanently missing — engine will never start
+                        AiAnswerBox.Text = "⚠ Speech transcription unavailable.\n\nYour speech key could not be loaded from the server.\n\n• Try signing out and signing back in\n• Use F9 / Analyze Screen instead — no speech key needed\n• Contact support at coopilotxai.com if this persists";
+                        MicIndicatorText.Text = "NO MIC";
+                        MicIndicator.Fill = new SolidColorBrush(Color.Parse("#6b7280"));
+                        DebugWindow.Log("MIC", $"[{source}] Space pressed — no SM key available");
+                    }
+                    else
+                    {
+                        // Has a key but engine hasn't launched yet — brief startup delay
+                        AiAnswerBox.Text = "⏳ Starting audio engine... please wait a moment and try again.";
+                        MicIndicatorText.Text = "STARTING";
+                        MicIndicator.Fill = new SolidColorBrush(Colors.Orange);
+                        DebugWindow.Log("MIC", $"[{source}] Space pressed but engine not started yet — key exists, wait");
+                    }
                     return;
                 }
 
@@ -1344,6 +1373,17 @@ namespace InterviewCopilotMac6.Views
         {
             if (speechmaticsProcess == null || speechmaticsProcess.HasExited)
             {
+                // Check if we even have a key — no point retrying forever without one
+                string smKey = UserSession.SpeechmaticsKey;
+                if (string.IsNullOrWhiteSpace(smKey)) smKey = SettingsWindow.GetSpeechmaticsKey();
+                if (string.IsNullOrWhiteSpace(smKey))
+                {
+                    DebugWindow.Log("ENGINE", "No SM key — stopping monitor (mic unavailable)");
+                    _engineMonitorTimer?.Stop();
+                    MicIndicatorText.Text = "NO MIC";
+                    MicIndicator.Fill = new SolidColorBrush(Color.Parse("#6b7280"));
+                    return;
+                }
                 DebugWindow.Log("ENGINE", "Dead — restarting...");
                 StartSpeechmaticsEngine();
             }
