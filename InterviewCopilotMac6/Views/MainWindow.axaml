@@ -137,7 +137,9 @@
               <Button x:Name="MicBtn" Classes="MicBtn" Click="MicBtn_Click" Margin="0,0,16,0" Focusable="False">
                 <TextBlock Text="🎤" FontSize="20"/>
               </Button>
-              <StackPanel VerticalAlignment="Center" Margin="0,0,20,0">
+              <StackPanel VerticalAlignment="Center" Margin="0,0,20,0"
+                          PointerPressed="MicStatus_PointerPressed" Cursor="Hand"
+                          ToolTip.Tip="Click to retry speech connection">
                 <StackPanel Orientation="Horizontal">
                   <Ellipse x:Name="MicIndicator" Width="9" Height="9" Fill="#ef4444" Margin="0,0,8,0"/>
                   <TextBlock x:Name="MicIndicatorText" Text="READY" Foreground="White"

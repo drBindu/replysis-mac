@@ -54,6 +54,7 @@ namespace InterviewCopilotMac6.Views
         private DispatcherTimer? creditsRefreshTimer;
         private DispatcherTimer? _sessionTimer;
         private DispatcherTimer? _engineMonitorTimer;
+        private DispatcherTimer? _smRetryTimer;
         private int _sessionSeconds = 0;
         private int thinkingStep = 0;
 
@@ -157,11 +158,12 @@ namespace InterviewCopilotMac6.Views
                     }
                     else
                     {
-                        // SM key unavailable — show NO KEY state, don't run the retry loop
-                        DebugWindow.Log("ENGINE", "SM key not available after restore — mic disabled");
+                        // SM key unavailable — show NO KEY state and start background retry
+                        DebugWindow.Log("ENGINE", "SM key not available after restore — starting retry timer");
                         MicIndicatorText.Text = "NO MIC";
                         MicIndicator.Fill = new SolidColorBrush(Color.Parse("#6b7280"));
-                        AiAnswerBox.Text = "Ready — mic transcription unavailable (sign out and back in if needed).\n\nUse F9 to analyze your screen, or press Space if transcription resolves.";
+                        AiAnswerBox.Text = "Ready — speech service temporarily unavailable. Retrying automatically every 60 s.\n\nClick the NO MIC badge to retry now, or use F9 to analyze your screen.";
+                        StartSmRetry();
                     }
                 }
                 else
@@ -217,9 +219,11 @@ namespace InterviewCopilotMac6.Views
 
                 if (!keyFetched)
                 {
-                    // Still logged in — but transcription won't work until key is available
-                    AiAnswerBox.Text = "⚠ Signed in, but could not fetch your speech key from the server.\n\nAI answers will still work. If transcription doesn't start, try signing out and back in.";
-                    DebugWindow.Log("AUTH", "Warning: FetchSpeechmaticsKeyAsync failed after login");
+                    MicIndicatorText.Text = "NO MIC";
+                    MicIndicator.Fill = new SolidColorBrush(Color.Parse("#6b7280"));
+                    AiAnswerBox.Text = "⚠ Signed in, but speech service temporarily unavailable.\n\nAI answers still work. Retrying speech key automatically — or click the NO MIC badge to retry now.";
+                    StartSmRetry();
+                    DebugWindow.Log("AUTH", "Warning: FetchSpeechmaticsKeyAsync failed after login — retry started");
                 }
             }
         }
@@ -292,6 +296,9 @@ namespace InterviewCopilotMac6.Views
             SessionsBtn.IsVisible     = false;
             CreditsBadge.IsVisible    = false;
             CreditsPlanLabel.IsVisible = false;
+
+            _smRetryTimer?.Stop();
+            _smRetryTimer = null;
 
             if (isRecording) EndSession();
         }
@@ -685,10 +692,11 @@ namespace InterviewCopilotMac6.Views
 
                     if (string.IsNullOrWhiteSpace(smKey))
                     {
-                        // Key permanently missing — engine will never start
-                        AiAnswerBox.Text = "⚠ Speech transcription unavailable.\n\nYour speech key could not be loaded from the server.\n\n• Try signing out and signing back in\n• Use F9 / Analyze Screen instead — no speech key needed\n• Contact support at coopilotxai.com if this persists";
+                        // Key missing — start/keep background retry, don't spam the message
+                        AiAnswerBox.Text = "⚠ Speech service temporarily unavailable.\n\nRetrying automatically every 60 s — or click the NO MIC badge to retry now.\n\n• Use F9 / Analyze Screen instead — no speech key needed";
                         MicIndicatorText.Text = "NO MIC";
                         MicIndicator.Fill = new SolidColorBrush(Color.Parse("#6b7280"));
+                        if (_smRetryTimer == null || !_smRetryTimer.IsEnabled) StartSmRetry();
                         DebugWindow.Log("MIC", $"[{source}] Space pressed — no SM key available");
                     }
                     else
@@ -742,6 +750,66 @@ namespace InterviewCopilotMac6.Views
 
         private void MicBtn_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
             => HandleSpacePress("BUTTON");
+
+        // ── SM key retry ─────────────────────────────────────────────────────
+
+        /// <summary>Starts a 60-second background timer that retries fetching the SM key.</summary>
+        private void StartSmRetry()
+        {
+            _smRetryTimer?.Stop();
+            _smRetryTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
+            _smRetryTimer.Tick += async (_, _) =>
+            {
+                if (!UserSession.IsLoggedIn) { _smRetryTimer?.Stop(); _smRetryTimer = null; return; }
+                DebugWindow.Log("ENGINE", "Auto-retrying SM key fetch…");
+                bool ok = await UserSession.FetchSpeechmaticsKeyAsync();
+                if (ok)
+                {
+                    _smRetryTimer?.Stop();
+                    _smRetryTimer = null;
+                    DebugWindow.Log("ENGINE", "SM key obtained on retry — starting engine");
+                    StartSpeechmaticsEngine();
+                    _engineMonitorTimer?.Start();
+                    MicIndicatorText.Text = "READY";
+                    MicIndicator.Fill = new SolidColorBrush(Color.Parse("#ef4444"));
+                    AiAnswerBox.Text = "";
+                }
+                else
+                {
+                    DebugWindow.Log("ENGINE", "SM key retry failed — will try again in 60 s");
+                }
+            };
+            _smRetryTimer.Start();
+            DebugWindow.Log("ENGINE", "SM retry timer started (60 s interval)");
+        }
+
+        /// <summary>Click the NO MIC badge to trigger an immediate manual retry.</summary>
+        private async void MicStatus_PointerPressed(object? sender, PointerPressedEventArgs e)
+        {
+            if (!UserSession.IsLoggedIn || !string.IsNullOrEmpty(UserSession.SpeechmaticsKey)) return;
+            DebugWindow.Log("ENGINE", "Manual SM key retry triggered by user");
+            MicIndicatorText.Text = "RETRY…";
+            MicIndicator.Fill = new SolidColorBrush(Colors.Orange);
+            bool ok = await UserSession.FetchSpeechmaticsKeyAsync();
+            if (ok)
+            {
+                _smRetryTimer?.Stop();
+                _smRetryTimer = null;
+                StartSpeechmaticsEngine();
+                _engineMonitorTimer?.Start();
+                MicIndicatorText.Text = "READY";
+                MicIndicator.Fill = new SolidColorBrush(Color.Parse("#ef4444"));
+                AiAnswerBox.Text = "";
+                DebugWindow.Log("ENGINE", "SM key obtained on manual retry — engine started");
+            }
+            else
+            {
+                MicIndicatorText.Text = "NO MIC";
+                MicIndicator.Fill = new SolidColorBrush(Color.Parse("#6b7280"));
+                AiAnswerBox.Text = "⚠ Speech service still unavailable. Will retry automatically every 60 s.\n\nUse F9 / Analyze Screen instead — no speech key needed.";
+                DebugWindow.Log("ENGINE", "Manual SM key retry failed");
+            }
+        }
 
         // ══════════════════════════════════════════════════════════════════════
         // AI
