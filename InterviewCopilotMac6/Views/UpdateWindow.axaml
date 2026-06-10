@@ -148,6 +148,25 @@
                  HorizontalAlignment="Center"
                  Margin="0,0,0,16"/>
 
+      <!-- Restart Now / Later panel (shown when download completes) -->
+      <StackPanel x:Name="RestartPanel" IsVisible="False" Margin="0,0,0,4">
+        <Border Background="#0a2118" BorderBrush="#1a5c35" BorderThickness="1"
+                CornerRadius="8" Padding="14,12" Margin="0,0,0,14">
+          <StackPanel>
+            <TextBlock Text="✓  Ready to install!"
+                       Foreground="#4ade80" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,4"/>
+            <TextBlock Text="Restart now to apply, or come back later via Settings → Software Update."
+                       Foreground="#6b7280" FontSize="11" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+        <Grid ColumnDefinitions="*,12,*">
+          <Button Grid.Column="0" x:Name="RestartLaterBtn" Classes="Outline"
+                  Content="Restart Later" Click="RestartLater_Click"/>
+          <Button Grid.Column="2" x:Name="RestartNowBtn" Classes="Primary"
+                  Content="Restart Now" Click="RestartNow_Click"/>
+        </Grid>
+      </StackPanel>
+
       <!-- Error banner -->
       <Border x:Name="ErrorPanel"
               IsVisible="False"

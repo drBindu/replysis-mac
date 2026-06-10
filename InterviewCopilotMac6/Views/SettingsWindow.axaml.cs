@@ -56,6 +56,7 @@ namespace InterviewCopilotMac6.Views
             AppVersionLabel.Text = $"Version {App.GetCurrentVersion()}";
             if (!string.IsNullOrEmpty(App.LastUpdateStatus))
                 UpdateStatusLabel.Text = App.LastUpdateStatus;
+            RestartUpdateBtn.IsVisible = App.PendingUpdate != null;
 
             double mainOpPct = Math.Round(cfg.MainWindowOpacity * 100);
             double overlayOpPct = Math.Round(cfg.OverlayOpacity * 100);
@@ -152,6 +153,11 @@ namespace InterviewCopilotMac6.Views
         private void CancelBtn_Click(object? sender, RoutedEventArgs e)
         {
             this.Close();
+        }
+
+        private void RestartUpdateBtn_Click(object? sender, RoutedEventArgs e)
+        {
+            App.InstallPendingUpdate();
         }
 
         private async void CheckUpdatesBtn_Click(object? sender, RoutedEventArgs e)

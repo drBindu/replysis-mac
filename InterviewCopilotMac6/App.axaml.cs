@@ -101,7 +101,8 @@ public partial class App : Application
                 currentVersion = new Version(1, 0, 0);
 
             using var http = new HttpClient();
-            var xml = await http.GetStringAsync(AppcastUrl);
+            var url = $"{AppcastUrl}?t={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+            var xml = await http.GetStringAsync(url);
 
             var versionMatch = Regex.Match(xml, @"<sparkle:version>([^<]+)</sparkle:version>");
             if (!versionMatch.Success) { Log("appcast parse failed"); onStatus?.Invoke("Could not check."); return "error"; }
@@ -156,6 +157,42 @@ public partial class App : Application
             onStatus?.Invoke("Check failed.");
             return "error";
         }
+    }
+
+    internal static void InstallPendingUpdate()
+    {
+        if (PendingUpdatePath != null)
+            LaunchInstallerAndQuit(PendingUpdatePath);
+    }
+
+    internal static void LaunchInstallerAndQuit(string zipPath)
+    {
+        try
+        {
+            var appBundle  = System.IO.Path.GetFullPath(System.IO.Path.Combine(AppContext.BaseDirectory, "../.."));
+            var appParent  = System.IO.Path.GetDirectoryName(appBundle) ?? "/Applications";
+            var scriptPath = "/tmp/ic_relaunch.sh";
+            var logPath    = "/tmp/ic_relaunch.log";
+
+            System.IO.File.WriteAllText(scriptPath,
+                "#!/bin/bash\n" +
+                "sleep 3\n" +
+                $"rm -rf \"{appBundle}\"\n" +
+                $"unzip -o \"{zipPath}\" -d \"{appParent}/\"\n" +
+                $"open \"{appBundle}\"\n");
+
+            System.Diagnostics.Process.Start(
+                new System.Diagnostics.ProcessStartInfo("/bin/chmod", $"+x \"{scriptPath}\"")
+                { UseShellExecute = false, CreateNoWindow = true })?.WaitForExit();
+
+            System.Diagnostics.Process.Start(
+                new System.Diagnostics.ProcessStartInfo(
+                    "/bin/bash", $"-c \"nohup /bin/bash '{scriptPath}' > '{logPath}' 2>&1 &\"")
+                { UseShellExecute = false, CreateNoWindow = true })?.WaitForExit();
+        }
+        catch { }
+
+        System.Threading.Tasks.Task.Delay(1000).ContinueWith(_ => Environment.Exit(0));
     }
 
     private static Window? GetMainWindow()

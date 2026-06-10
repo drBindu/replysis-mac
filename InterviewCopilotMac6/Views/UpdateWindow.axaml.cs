@@ -15,7 +15,8 @@ namespace InterviewCopilotMac6.Views
     {
         private readonly SparkleUpdater _sparkle;
         private readonly AppCastItem   _item;
-        private bool _downloading = false;
+        private bool   _downloading = false;
+        private string? _downloadedPath = null;
 
         // ── Constructor ────────────────────────────────────────────
         public UpdateWindow(SparkleUpdater sparkle, AppCastItem item)
@@ -55,7 +56,7 @@ namespace InterviewCopilotMac6.Views
             LaterBtn.IsVisible      = false;
             ProgressPanel.IsVisible = true;
             StatusText.Text         = "Downloading update…";
-            NoteText.Text           = "App will restart automatically when ready.";
+            NoteText.Text           = "Downloading in background — you can close this window.";
             NoteText.IsVisible      = true;
 
             try
@@ -104,48 +105,30 @@ namespace InterviewCopilotMac6.Views
 
         private void OnDownloadFinished(AppCastItem item, string path)
         {
+            _downloadedPath = path;
             Dispatcher.UIThread.Post(() =>
             {
-                ProgressBar.Value = 100;
-                PctText.Text      = "100%";
-                StatusText.Text   = "Installing…";
-                NoteText.Text     = "Relaunching in a moment…";
-                LaunchInstallerAndQuit(path);
+                ProgressBar.Value       = 100;
+                PctText.Text            = "100%";
+                ProgressPanel.IsVisible = false;
+                NoteText.IsVisible      = false;
+                RestartPanel.IsVisible  = true;
             });
         }
 
-        private static void LaunchInstallerAndQuit(string zipPath)
+        private void RestartNow_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
-            try
-            {
-                // Resolve the .app bundle (BaseDirectory = .../InterviewCopilot.app/Contents/MacOS/)
-                var appBundle = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../.."));
-                var appParent = Path.GetDirectoryName(appBundle) ?? "/Applications";
-                var scriptPath = "/tmp/ic_relaunch.sh";
-                var logPath    = "/tmp/ic_relaunch.log";
+            if (_downloadedPath != null)
+                App.LaunchInstallerAndQuit(_downloadedPath);
+        }
 
-                File.WriteAllText(scriptPath,
-                    "#!/bin/bash\n" +
-                    "sleep 3\n" +
-                    $"rm -rf \"{appBundle}\"\n" +
-                    $"unzip -o \"{zipPath}\" -d \"{appParent}/\"\n" +
-                    $"open \"{appBundle}\"\n");
-
-                // Make executable
-                System.Diagnostics.Process.Start(
-                    new System.Diagnostics.ProcessStartInfo("/bin/chmod", $"+x \"{scriptPath}\"")
-                    { UseShellExecute = false, CreateNoWindow = true })?.WaitForExit();
-
-                // Launch with nohup so the script survives after this app quits
-                System.Diagnostics.Process.Start(
-                    new System.Diagnostics.ProcessStartInfo(
-                        "/bin/bash",
-                        $"-c \"nohup /bin/bash '{scriptPath}' > '{logPath}' 2>&1 &\"")
-                    { UseShellExecute = false, CreateNoWindow = true })?.WaitForExit();
-            }
-            catch { }
-
-            Task.Delay(1000).ContinueWith(_ => Environment.Exit(0));
+        private void RestartLater_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        {
+            App.PendingUpdate     = _item;
+            App.PendingUpdatePath = _downloadedPath;
+            App.UpdateReadyToInstall?.Invoke(_item);
+            DetachEvents();
+            Close();
         }
 
         private void OnDownloadError(AppCastItem item, string? path, Exception ex)
