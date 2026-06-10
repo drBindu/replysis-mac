@@ -42,7 +42,7 @@ namespace InterviewCopilotMac6
             try
             {
                 if (string.IsNullOrEmpty(IdToken)) return false;
-                using var req = new HttpRequestMessage(HttpMethod.Get, "https://coopilotxai.com/api/stt/key");
+                using var req = new HttpRequestMessage(HttpMethod.Get, "https://coopilotxai.com/api/v1/stt/key");
                 req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", IdToken);
                 using var res = await _http.SendAsync(req);
                 string body = await res.Content.ReadAsStringAsync();
