@@ -1,4 +1,4 @@
-// v1.0.59
+// v1.0.66-test
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -27,6 +27,11 @@ public partial class App : Application
 
     internal static SparkleUpdater? Sparkle;
     private static bool _updateDialogShowing = false;
+
+    // Pending update — set when user clicks "Restart Later"
+    internal static AppCastItem? PendingUpdate { get; set; }
+    internal static string? PendingUpdatePath { get; set; }
+    internal static event Action<AppCastItem>? UpdateReadyToInstall;
 
     // ────────────────────────────────────────────────────────────
 
