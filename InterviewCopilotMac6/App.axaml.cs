@@ -1,4 +1,4 @@
-// v1.0.56
+// v1.0.57
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -10,6 +10,8 @@ using NetSparkleUpdater;
 using NetSparkleUpdater.Enums;
 using NetSparkleUpdater.SignatureVerifiers;
 using System;
+using System.IO;
+using System.Text.RegularExpressions;
 
 namespace InterviewCopilotMac6;
 
@@ -59,17 +61,38 @@ public partial class App : Application
         periodicTimer.Start();
     }
 
+    // ── Read version from Info.plist (assembly version not reliable for self-contained apps) ──
+    private static string GetAppVersion()
+    {
+        try
+        {
+            var plistPath = Path.Combine(AppContext.BaseDirectory, "..", "Info.plist");
+            if (File.Exists(plistPath))
+            {
+                var content = File.ReadAllText(plistPath);
+                var match = Regex.Match(content,
+                    @"<key>CFBundleShortVersionString</key>\s*<string>([^<]+)</string>");
+                if (match.Success) return match.Groups[1].Value.Trim();
+            }
+        }
+        catch { }
+        return System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.0";
+    }
+
     // ── Silent background update check ──────────────────────────
     private static async System.Threading.Tasks.Task StartUpdateCheckAsync()
     {
         try
         {
+            var currentVersion = GetAppVersion();
+
             // Initialise once; reuse on periodic ticks
             Sparkle ??= new SparkleUpdater(
                 AppcastUrl,
                 new Ed25519Checker(SecurityMode.Strict, SparklePublicKey))
             {
                 RelaunchAfterUpdate = true,
+                AppVersionNumber    = currentVersion,
             };
 
             var info = await Sparkle.CheckForUpdatesQuietly();
