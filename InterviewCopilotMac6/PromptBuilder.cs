@@ -117,6 +117,8 @@ namespace InterviewCopilotMac6
             CoveredTopics.Clear();
             MentionedExamples.Clear();
             LockedFacts.Clear();
+            _cachedSystemPrompt = null;
+            _cachedResumeFacts = null;
         }
 
         public static bool IsGreeting(string q)
@@ -397,8 +399,14 @@ namespace InterviewCopilotMac6
         // SYSTEM PROMPT
         // =====================================================================
 
+        private static string? _cachedSystemPrompt;
+        private static string? _cachedResumeFacts;
+
         private static string BuildSystemPrompt(string resumeFacts)
         {
+            if (_cachedSystemPrompt != null && _cachedResumeFacts == resumeFacts)
+                return _cachedSystemPrompt;
+
             bool hasResume = !string.IsNullOrWhiteSpace(resumeFacts)
                              && resumeFacts != "No resume provided.";
 
@@ -534,7 +542,9 @@ namespace InterviewCopilotMac6
             sb.AppendLine("  - Paragraphs/theory when asked a simple preference");
             sb.AppendLine("  - Agreeing with an interviewer-suggested value that contradicts your prior answer");
 
-            return sb.ToString();
+            _cachedSystemPrompt = sb.ToString();
+            _cachedResumeFacts = resumeFacts;
+            return _cachedSystemPrompt;
         }
 
         // =====================================================================

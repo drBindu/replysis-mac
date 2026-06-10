@@ -42,6 +42,7 @@ namespace InterviewCopilotMac6.Views
         private bool _justStartedListening = false;
         private int  _listenStartTicks = 0;
         private bool _isScreenAnalyzing = false;
+        private static int SuppressTickCount => (int)(1050.0 / TranscriptPollMs);
 
         private AnswerWindow? _answerWindow;
         private Action? _cameraModeClosedHandler;
@@ -91,10 +92,10 @@ namespace InterviewCopilotMac6.Views
 
             this.Opened += async (s, e) =>
             {
+                // Fire cleanup without blocking
+                _ = NuclearKillOldProcesses();
                 await Task.Delay(1500);
                 IntroLayer.IsVisible = false;
-
-                await NuclearKillOldProcesses();
 
                 isMuted = true;
                 isListening = false;
@@ -104,7 +105,6 @@ namespace InterviewCopilotMac6.Views
                 SavePathLabel.Text = AppDataFolder;
 
                 ApplyMainWindowOpacity();
-                StartSpeechmaticsEngine();
 
                 _answerWindow = new AnswerWindow();
                 _cameraModeClosedHandler = () => Dispatcher.UIThread.Post(() => ExitCameraMode());
@@ -125,7 +125,6 @@ namespace InterviewCopilotMac6.Views
 
                 _engineMonitorTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(EngineMonitorSecs) };
                 _engineMonitorTimer.Tick += (s2, e2) => MonitorEngine();
-                _engineMonitorTimer.Start();
 
                 // ── Session restore with silent token refresh ──────────────
                 bool sessionRestored = UserSession.TryLoadFromDisk();
@@ -146,6 +145,7 @@ namespace InterviewCopilotMac6.Views
                     UpdateProfileUI();
                     StartNewSession();
                     StartSpeechmaticsEngine();
+                    _engineMonitorTimer.Start();
                 }
                 else
                 {
@@ -453,7 +453,6 @@ namespace InterviewCopilotMac6.Views
             isProcessing = true;
             UpdateMicUi();
 
-            double savedOpacity = this.Opacity;
             bool opacityRestored = false;
 
             try
@@ -470,14 +469,14 @@ namespace InterviewCopilotMac6.Views
                 ThinkingHintLabel.IsVisible = false;
                 ThinkingPanel.IsVisible = true;
 
-                this.Opacity = 0;
-                if (_answerWindow != null) _answerWindow.Opacity = 0;
-                await Task.Delay(300);
+                this.Hide();
+                _answerWindow?.Hide();
+                await Task.Delay(150); // shorter delay since Hide() is compositor-guaranteed
 
                 byte[] imageBytes = await ScreenAnalyzer.CaptureScreenAsync(screenCt);
 
-                this.Opacity = savedOpacity;
-                if (_answerWindow != null) _answerWindow.Opacity = SettingsWindow.GetOverlayOpacity();
+                this.Show();
+                if (_isCameraMode) _answerWindow?.Show();
                 opacityRestored = true;
 
                 if (imageBytes.Length == 0)
@@ -546,7 +545,7 @@ namespace InterviewCopilotMac6.Views
                     _answerWindow.UpdateQuestion("[Screen Analysis]");
                 }
 
-                AppendToSessionLog("[Screen Analysis]", finalResult);
+                await AppendToSessionLog("[Screen Analysis]", finalResult);
                 PromptBuilder.AddToHistory("Analyze what is currently on my screen", finalResult);
 
                 DebugWindow.Log("SCREEN", $"Done — {tokenCount} tokens, {finalResult.Length} chars");
@@ -567,8 +566,8 @@ namespace InterviewCopilotMac6.Views
                 {
                     try
                     {
-                        this.Opacity = savedOpacity;
-                        if (_answerWindow != null) _answerWindow.Opacity = SettingsWindow.GetOverlayOpacity();
+                        this.Show();
+                        if (_isCameraMode) _answerWindow?.Show();
                     }
                     catch { }
                 }
@@ -667,7 +666,9 @@ namespace InterviewCopilotMac6.Views
         // ══════════════════════════════════════════════════════════════════════
         private async Task AskAiAsync()
         {
-            if (isProcessing) return;
+            if (isProcessing) return; // double-guard
+            isProcessing = true;
+            transcriptTimer?.Stop();
 
             string q = "";
             try
@@ -694,7 +695,7 @@ namespace InterviewCopilotMac6.Views
                     return;
                 }
 
-                isProcessing = true; thinkingStep = 0;
+                thinkingStep = 0;
                 ThinkingPanel.IsVisible = true;
                 thinkingTimer?.Start();
                 UpdateMicUi();
@@ -702,6 +703,7 @@ namespace InterviewCopilotMac6.Views
                 string sep = "\n" + new string('─', 45) + "\n\n";
                 string old = AiAnswerBox.Text ?? "";
                 if (old == "Results will appear here..." || old.StartsWith("Ready") || old.StartsWith("New session")) old = "";
+                if (old.Length > 5000) old = "…[earlier answers truncated]\n\n" + old.Substring(old.Length - 3000);
                 AiAnswerBox.Text = $"Q: {q}\n\n";
                 if (_isCameraMode && _answerWindow != null) { _answerWindow.UpdateAnswer(""); _answerWindow.UpdateQuestion(q); }
 
@@ -738,7 +740,7 @@ namespace InterviewCopilotMac6.Views
                 AiAnswerBox.CaretIndex = AiAnswerBox.Text.Length;
                 if (_isCameraMode && _answerWindow != null) { _answerWindow.UpdateAnswer(final); _answerWindow.UpdateQuestion(q); }
                 PromptBuilder.AddToHistory(q, final);
-                AppendToSessionLog(q, final);
+                await AppendToSessionLog(q, final);
                 DebugWindow.Log("AI", $"Done — {tokenCount} tokens");
 
                 _ = FetchAndDisplayCreditsAsync().ContinueWith(t => {
@@ -764,18 +766,37 @@ namespace InterviewCopilotMac6.Views
             if (PromptBuilder.IsGreeting(question)) { yield return PromptBuilder.GetGreetingResponse(); yield break; }
             if (PromptBuilder.IsSmallTalk(question)) { yield return PromptBuilder.GetSmallTalkResponse(); yield break; }
 
-            using HttpResponseMessage res = await SendBackendRequestAsync(question, resume, ct);
+            HttpResponseMessage res = await SendBackendRequestAsync(question, resume, ct);
 
             int status = (int)res.StatusCode;
-            if (status == 402) { yield return "⚠ Not enough credits. Visit coopilotxai.com/pricing to upgrade."; yield break; }
+            if (status == 402) { yield return "⚠ Not enough credits. Visit coopilotxai.com/pricing to upgrade."; res.Dispose(); yield break; }
             if (status == 401)
             {
                 UserSession.Clear();
                 Dispatcher.UIThread.Post(() => SetLoggedOutUI());
                 yield return "⚠ Session expired. Please sign in again.";
+                res.Dispose();
                 yield break;
             }
-            if (!res.IsSuccessStatusCode) { yield return $"Backend error ({status}). Try again."; yield break; }
+            if (status == 429)
+            {
+                res.Dispose();
+                yield return "\n⚠ Rate limit reached. Waiting 10 seconds and retrying…";
+                await Task.Delay(10000, ct);
+                res = await SendBackendRequestAsync(question, resume, ct);
+                status = (int)res.StatusCode;
+            }
+            else if (status >= 500)
+            {
+                res.Dispose();
+                yield return $"\n⚠ Server error ({status}). Retrying in 3s…";
+                await Task.Delay(3000, ct);
+                res = await SendBackendRequestAsync(question, resume, ct);
+                status = (int)res.StatusCode;
+            }
+            if (!res.IsSuccessStatusCode) { yield return $"Backend error ({status}). Try again."; res.Dispose(); yield break; }
+
+            using var _resDispose = res;
 
             // Stream tokens in real time — yield each token as it arrives rather than buffering
             await using var bodyStream = await res.Content.ReadAsStreamAsync(ct);
@@ -800,7 +821,7 @@ namespace InterviewCopilotMac6.Views
             var (qType, isDrill) = PromptBuilder.ClassifyQuestion(question);
             var messages = PromptBuilder.BuildMessages(resumeFacts, question, qType, isDrill);
             string enhancedQuestion = PromptBuilder.BuildEnhancedQuestion(question, resumeFacts, qType, isDrill);
-            var payload = new { question = enhancedQuestion, resume = resume ?? "", provider = "groq", messages };
+            var payload = new { question = enhancedQuestion, resume = resume ?? "", provider = SettingsWindow.IsGroq() ? "groq" : SettingsWindow.IsGemini() ? "gemini" : "openai", messages };
 
             using var request = new HttpRequestMessage(HttpMethod.Post,
                 $"{BackendUrl}/api/v1/interview/ask");
@@ -859,7 +880,7 @@ namespace InterviewCopilotMac6.Views
         }
 
         private static readonly Regex _rxSentenceSplit = new(@"(?<=[.!?])\s+",          RegexOptions.Compiled);
-        private static readonly Regex _rxCodeFence     = new(@"```[a-z]*|```",          RegexOptions.Compiled);
+        private static readonly Regex _rxCodeFence     = new Regex(@"(?m)^```[a-z]*$|^```$", RegexOptions.Multiline | RegexOptions.Compiled);
         private static readonly Regex _rxBold        = new(@"\*{1,3}([^*\n]+)\*{1,3}", RegexOptions.Compiled);
         private static readonly Regex _rxItalicUs    = new(@"_{1,3}([^_\n]+)_{1,3}",  RegexOptions.Compiled);
         private static readonly Regex _rxHeading     = new(@"(?m)^#{1,6}\s+",          RegexOptions.Compiled);
@@ -884,6 +905,7 @@ namespace InterviewCopilotMac6.Views
             ThinkingLabel.Text          = "Thinking...";
             isProcessing       = false;
             _isScreenAnalyzing = false;
+            transcriptTimer?.Start();
             UpdateMicUi();
         }
 
@@ -925,10 +947,10 @@ namespace InterviewCopilotMac6.Views
             DebugWindow.Log("SESSION", $"Started session #{sessionNumber}");
         }
 
-        private void AppendToSessionLog(string q, string a)
+        private async Task AppendToSessionLog(string q, string a)
         {
             if (string.IsNullOrEmpty(sessionLogPath)) return;
-            try { File.AppendAllText(sessionLogPath, $"Q: {q}\nA: {a}\n\n"); }
+            try { await File.AppendAllTextAsync(sessionLogPath, $"Q: {q}\nA: {a}\n\n"); }
             catch (Exception ex) { DebugWindow.Log("LOG_ERR", ex.Message); }
         }
 
@@ -1021,7 +1043,7 @@ namespace InterviewCopilotMac6.Views
             {
                 _listenStartTicks++;
                 TranscriptTextBlock.Text = "";
-                if (_listenStartTicks >= 7) _justStartedListening = false;
+                if (_listenStartTicks >= SuppressTickCount) _justStartedListening = false;
                 return;
             }
 
@@ -1159,6 +1181,20 @@ namespace InterviewCopilotMac6.Views
                             string? line = await proc.StandardError.ReadLineAsync(ct).ConfigureAwait(false);
                             if (line == null) break;
                             Dispatcher.UIThread.Post(() => DebugWindow.Log("PY_ERR", line));
+
+                            if (line.Contains("401") || line.Contains("Authentication") ||
+                                line.Contains("Invalid") || line.Contains("Unauthorized"))
+                            {
+                                DebugWindow.Log("ENGINE", "Auth error — stopping engine monitor");
+                                _engineMonitorTimer?.Stop();
+                                KillAndDisposeEngine();
+                                Dispatcher.UIThread.Post(() =>
+                                {
+                                    MicIndicatorText.Text = "KEY ERROR";
+                                    MicIndicator.Fill = Avalonia.Media.Brushes.Red;
+                                });
+                                break;
+                            }
                         }
                     }
                     catch (OperationCanceledException) { }

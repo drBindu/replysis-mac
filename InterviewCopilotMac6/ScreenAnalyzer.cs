@@ -69,15 +69,39 @@ namespace InterviewCopilotMac6
                 if (!string.IsNullOrWhiteSpace(stderr))
                     Views.DebugWindow.Log("SCREEN_STDERR", stderr.Trim());
 
+                if (proc.ExitCode != 0)
+                {
+                    Views.DebugWindow.Log("SCREEN", $"screencapture failed with exit code {proc.ExitCode}");
+                    return Array.Empty<byte>();
+                }
+
                 if (!File.Exists(tmpPath))
                 {
                     Views.DebugWindow.Log("SCREEN", "screencapture produced no file");
                     return Array.Empty<byte>();
                 }
 
-                byte[] bytes = await File.ReadAllBytesAsync(tmpPath);
-                Views.DebugWindow.Log("SCREEN", $"Captured {bytes.Length / 1024} KB");
-                return bytes;
+                byte[] imageBytes = await File.ReadAllBytesAsync(tmpPath);
+
+                // Resize to max 1280px wide using sips (built into macOS) — prevents 16MB payloads
+                var resizedPath = tmpPath + "_resized.png";
+                try
+                {
+                    var sips = new System.Diagnostics.ProcessStartInfo("sips",
+                        $"--resampleWidth 1280 \"{tmpPath}\" --out \"{resizedPath}\"")
+                    { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true };
+                    var sipsProc = System.Diagnostics.Process.Start(sips);
+                    await (sipsProc?.WaitForExitAsync(externalCt) ?? System.Threading.Tasks.Task.CompletedTask);
+                    if (File.Exists(resizedPath))
+                    {
+                        imageBytes = await File.ReadAllBytesAsync(resizedPath, externalCt);
+                        File.Delete(resizedPath);
+                    }
+                }
+                catch { /* use original if resize fails */ }
+
+                Views.DebugWindow.Log("SCREEN", $"Captured {imageBytes.Length / 1024} KB");
+                return imageBytes;
             }
             catch (Exception ex)
             {
