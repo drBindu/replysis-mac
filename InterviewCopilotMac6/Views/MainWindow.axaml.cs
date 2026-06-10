@@ -866,6 +866,15 @@ namespace InterviewCopilotMac6.Views
                 _aiCts = new CancellationTokenSource();
                 var ct = _aiCts.Token;
 
+                // Lock resume box once the interview starts — prevents accidental edits
+                // mid-session. New Session button re-enables editing.
+                if (!ResumeTextBox.IsReadOnly)
+                {
+                    ResumeTextBox.IsReadOnly = true;
+                    ResumeTextBox.Opacity = 0.85;
+                    ToolTip.SetTip(ResumeTextBox, "🔒 Resume locked during session. Click 'New Session' to edit.");
+                }
+
                 // Warn user if no resume is pasted — answer will be generic
                 string resumeText = ResumeTextBox.Text ?? "";
                 string noResumeBanner = string.IsNullOrWhiteSpace(resumeText)
@@ -1097,6 +1106,14 @@ namespace InterviewCopilotMac6.Views
         // ══════════════════════════════════════════════════════════════════════
         private void StartNewSession()
         {
+            // Unlock the resume box so the user can edit it for the new session
+            if (ResumeTextBox != null)
+            {
+                ResumeTextBox.IsReadOnly = false;
+                ResumeTextBox.Opacity = 1.0;
+                ToolTip.SetTip(ResumeTextBox, null);
+            }
+
             // Guard against infinite loop on corrupted filesystem — cap at 10000 sessions
             while (sessionNumber < 10000 &&
                    File.Exists(Path.Combine(AppDataFolder, "interview_" + sessionNumber + ".txt")))
@@ -1194,6 +1211,22 @@ namespace InterviewCopilotMac6.Views
             => WindowState = WindowState.Minimized;
 
         private const int ResumeCharLimit = 8000;
+
+        /// <summary>
+        /// Detect Ctrl+V / Cmd+V — after paste completes, move focus to the window
+        /// so the user can press Space immediately to start the mic without clicking
+        /// elsewhere first.
+        /// </summary>
+        private async void ResumeTextBox_KeyDown(object? sender, Avalonia.Input.KeyEventArgs e)
+        {
+            bool isPaste = e.Key == Avalonia.Input.Key.V &&
+                           (e.KeyModifiers.HasFlag(Avalonia.Input.KeyModifiers.Control) ||
+                            e.KeyModifiers.HasFlag(Avalonia.Input.KeyModifiers.Meta));
+            if (!isPaste) return;
+            // Let the paste settle in the textbox first, then blur it
+            await Task.Delay(150);
+            this.Focus();
+        }
 
         private void ResumeTextBox_TextChanged(object? sender, Avalonia.Controls.TextChangedEventArgs e)
         {
