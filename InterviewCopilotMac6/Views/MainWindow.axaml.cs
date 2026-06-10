@@ -1217,15 +1217,15 @@ namespace InterviewCopilotMac6.Views
         /// so the user can press Space immediately to start the mic without clicking
         /// elsewhere first.
         /// </summary>
-        private async void ResumeTextBox_KeyDown(object? sender, Avalonia.Input.KeyEventArgs e)
+        private void ResumeTextBox_KeyDown(object? sender, Avalonia.Input.KeyEventArgs e)
         {
             bool isPaste = e.Key == Avalonia.Input.Key.V &&
                            (e.KeyModifiers.HasFlag(Avalonia.Input.KeyModifiers.Control) ||
                             e.KeyModifiers.HasFlag(Avalonia.Input.KeyModifiers.Meta));
             if (!isPaste) return;
-            // Let the paste settle in the textbox first, then blur it
-            await Task.Delay(150);
-            this.Focus();
+            // Queue focus change at Background priority so it runs AFTER the paste
+            // operation finishes its UI work — no arbitrary delay needed.
+            Dispatcher.UIThread.Post(() => this.Focus(), DispatcherPriority.Background);
         }
 
         private void ResumeTextBox_TextChanged(object? sender, Avalonia.Controls.TextChangedEventArgs e)
