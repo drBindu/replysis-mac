@@ -289,7 +289,11 @@ namespace InterviewCopilotMac6.Views
                 }
 
                 using var doc = JsonDocument.Parse(body);
-                int credits     = doc.RootElement.TryGetProperty("credits",    out var c) ? c.GetInt32()    : 0;
+                // FIX 12 — guard against non-numeric "credits" value
+                int credits = 0;
+                if (doc.RootElement.TryGetProperty("credits", out var c) &&
+                    c.ValueKind == JsonValueKind.Number)
+                    credits = c.GetInt32();
                 string plan     = doc.RootElement.TryGetProperty("plan",       out var p) ? p.GetString() ?? "free" : "free";
                 bool isUnlimited = doc.RootElement.TryGetProperty("isUnlimited", out var u) ? u.GetBoolean() : false;
 
@@ -828,7 +832,9 @@ namespace InterviewCopilotMac6.Views
                 using var doc = JsonDocument.Parse(data);
                 if (doc.RootElement.TryGetProperty("error", out var errProp))
                     return $"⚠ Error: {errProp.GetString()}";
+                // FIX 12 — guard ValueKind before calling GetArrayLength
                 if (!doc.RootElement.TryGetProperty("choices", out var choices) ||
+                    choices.ValueKind != JsonValueKind.Array ||
                     choices.GetArrayLength() == 0) return null;
                 var delta = choices[0].GetProperty("delta");
                 return delta.TryGetProperty("content", out var cp) ? cp.GetString() : null;
@@ -916,7 +922,6 @@ namespace InterviewCopilotMac6.Views
             };
             _sessionTimer.Start();
 
-            RecordingBadge.IsVisible = true;
             DebugWindow.Log("SESSION", $"Started session #{sessionNumber}");
         }
 
@@ -936,7 +941,6 @@ namespace InterviewCopilotMac6.Views
 
             _sessionTimer?.Stop();
             SessionTimerBadge.IsVisible = false;
-            RecordingBadge.IsVisible    = false;
 
             PromptBuilder.ClearHistory();
             DebugWindow.Log("SESSION", "Session ended");
@@ -967,7 +971,7 @@ namespace InterviewCopilotMac6.Views
         {
             if (isProcessing) return;
             EndSession();
-            sessionNumber++;
+            // FIX 10 — removed duplicate sessionNumber++ here; StartNewSession scans for next free number
             TranscriptTextBlock.Text = "";
             TranscriptHint.IsVisible = true;
             AiAnswerBox.Text = "New session started — press SPACE to begin.";
@@ -1111,7 +1115,17 @@ namespace InterviewCopilotMac6.Views
                 speechmaticsProcess.StartInfo.UseShellExecute       = false;
                 speechmaticsProcess.StartInfo.RedirectStandardOutput = true;
                 speechmaticsProcess.StartInfo.RedirectStandardError  = true;
-                if (!speechmaticsProcess.Start())
+                // FIX 15 — guard against Start() throwing (e.g. binary not found) as well as returning false
+                bool started = false;
+                try { started = speechmaticsProcess.Start(); }
+                catch (Exception startEx)
+                {
+                    DebugWindow.Log("ENGINE", $"Process.Start() threw: {startEx.Message}");
+                    speechmaticsProcess.Dispose();
+                    speechmaticsProcess = null;
+                    return;
+                }
+                if (!started)
                 {
                     DebugWindow.Log("ENGINE", "Process.Start() returned false — engine did not launch");
                     speechmaticsProcess.Dispose();
@@ -1274,6 +1288,7 @@ namespace InterviewCopilotMac6.Views
             transcriptTimer?.Stop();
             thinkingTimer?.Stop();
             creditsRefreshTimer?.Stop();
+            // FIX 11 — stop monitor timer BEFORE killing engine to prevent a restart race
             _engineMonitorTimer?.Stop();
             _sessionTimer?.Stop();
 

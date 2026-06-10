@@ -25,6 +25,12 @@ public partial class App : Application
     private const string AppcastUrl =
         "https://raw.githubusercontent.com/moto123a/interview-copilot-mac/main/appcast.xml";
 
+    // FIX 2 — static HttpClient (not recreated every 30s)
+    private static readonly HttpClient _httpClient = new HttpClient();
+
+    // FIX 3 — stored reference so it can be stopped on exit
+    private static DispatcherTimer? _periodicTimer;
+
     internal static SparkleUpdater? Sparkle;
     private static bool _updateDialogShowing = false;
     internal static string LastUpdateStatus { get; private set; } = "";
@@ -54,9 +60,16 @@ public partial class App : Application
             () => _ = CheckForUpdatesAsync(),
             TimeSpan.FromSeconds(1));
 
-        var periodicTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
-        periodicTimer.Tick += async (_, _) => await CheckForUpdatesAsync();
-        periodicTimer.Start();
+        // FIX 3 — use static field so we can stop it on exit
+        _periodicTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        _periodicTimer.Tick += async (_, _) => await CheckForUpdatesAsync();
+        _periodicTimer.Start();
+
+        // FIX 3 — stop timer on application exit
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop2)
+        {
+            desktop2.Exit += (_, _) => _periodicTimer?.Stop();
+        }
     }
 
     // ── Read version from Info.plist — assembly version unreliable in self-contained builds ──
@@ -100,9 +113,9 @@ public partial class App : Application
             if (!Version.TryParse(currentVersionStr, out var currentVersion))
                 currentVersion = new Version(1, 0, 0);
 
-            using var http = new HttpClient();
+            // FIX 2 — use static HttpClient instance
             var url = $"{AppcastUrl}?t={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
-            var xml = await http.GetStringAsync(url);
+            var xml = await _httpClient.GetStringAsync(url);
 
             var versionMatch = Regex.Match(xml, @"<sparkle:version>([^<]+)</sparkle:version>");
             if (!versionMatch.Success) { Log("appcast parse failed"); onStatus?.Invoke("Could not check."); return "error"; }
@@ -174,15 +187,31 @@ public partial class App : Application
         {
             var appBundle  = System.IO.Path.GetFullPath(System.IO.Path.Combine(AppContext.BaseDirectory, "../.."));
             var appParent  = System.IO.Path.GetDirectoryName(appBundle) ?? "/Applications";
-            var scriptPath = "/tmp/ic_relaunch.sh";
-            var logPath    = "/tmp/ic_relaunch.log";
 
+            // FIX 9 — validate appBundle path ends with .app before proceeding
+            if (!appBundle.EndsWith(".app", StringComparison.OrdinalIgnoreCase))
+            {
+                Log($"INSTALL ERROR: unexpected appBundle path: {appBundle}");
+                return;
+            }
+
+            // FIX 4 — use unique temp path to avoid TOCTOU race
+            var scriptPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"ic_relaunch_{Guid.NewGuid():N}.sh");
+            var logPath    = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ic_relaunch.log");
+
+            // FIX 5 — check unzip exit code before deleting old app; extract to temp dir first
             System.IO.File.WriteAllText(scriptPath,
                 "#!/bin/bash\n" +
+                $"ZIPFILE=\"{zipPath}\"\n" +
+                $"APPBUNDLE=\"{appBundle}\"\n" +
+                $"APPPARENT=\"{appParent}\"\n" +
+                "TMPEXTRACT=$(mktemp -d)\n" +
                 "sleep 3\n" +
-                $"rm -rf \"{appBundle}\"\n" +
-                $"unzip -o \"{zipPath}\" -d \"{appParent}/\"\n" +
-                $"open \"{appBundle}\"\n");
+                "unzip -o \"$ZIPFILE\" -d \"$TMPEXTRACT/\" || exit 1\n" +
+                "rm -rf \"$APPBUNDLE\"\n" +
+                "cp -R \"$TMPEXTRACT/InterviewCopilot.app\" \"$APPPARENT/\"\n" +
+                "rm -rf \"$TMPEXTRACT\"\n" +
+                "open \"$APPBUNDLE\"\n");
 
             System.Diagnostics.Process.Start(
                 new System.Diagnostics.ProcessStartInfo("/bin/chmod", $"+x \"{scriptPath}\"")

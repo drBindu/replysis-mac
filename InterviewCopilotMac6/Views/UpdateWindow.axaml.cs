@@ -124,6 +124,8 @@ namespace InterviewCopilotMac6.Views
 
         private void RestartLater_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
+            // FIX 8 — null guard: don't set PendingUpdatePath if download path is null
+            if (_downloadedPath == null) return;
             App.PendingUpdate     = _item;
             App.PendingUpdatePath = _downloadedPath;
             App.RaiseUpdateReadyToInstall(_item);
@@ -155,6 +157,13 @@ namespace InterviewCopilotMac6.Views
             _sparkle.DownloadMadeProgress -= OnDownloadProgress;
             _sparkle.DownloadFinished     -= OnDownloadFinished;
             _sparkle.DownloadHadError     -= OnDownloadError;
+        }
+
+        // FIX 7 — detach events when window is closed via OS (e.g. red traffic-light button)
+        protected override void OnClosed(EventArgs e)
+        {
+            DetachEvents();
+            base.OnClosed(e);
         }
 
         private void TitleBar_PointerPressed(object? sender, PointerPressedEventArgs e)

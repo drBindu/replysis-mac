@@ -106,7 +106,7 @@ namespace InterviewCopilotMac6.Views
                     AudioDeviceCombo.Items.Add("No devices — run engine first");
                 }
             }
-            catch { }
+            catch { AudioDeviceCombo.Items.Add("Error loading devices"); }
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -144,7 +144,12 @@ namespace InterviewCopilotMac6.Views
                 MainWindowOpacity = Math.Round(MainOpacitySlider.Value / 100.0, 2),
                 OverlayOpacity = Math.Round(OverlayOpacitySlider.Value / 100.0, 2),
             };
-            SaveConfig(cfg);
+            // FIX 13 — check for save failure before closing
+            if (!SaveConfig(cfg))
+            {
+                UpdateStatusLabel.Text = "⚠ Failed to save settings!";
+                return;
+            }
 
             SettingsChanged = true;
             this.Close();
@@ -190,8 +195,8 @@ namespace InterviewCopilotMac6.Views
             public string SpeechmaticsKey { get; set; } = "";
             public string BackendUrl { get; set; } = "https://ai-powered-developer-assistance-platform.onrender.com/api/config/keys";
             public string CoopilotEmail { get; set; } = "";
-            // Firebase Web API key — safe to include in desktop app config for your own project.
-            public string FirebaseApiKey { get; set; } = "AIzaSyAGGmuFpR0qkCHLI3q2cPv_o3cQlbIU8lE";
+            // Firebase Web API key — stored in config; falls back to compiled default if blank.
+            public string FirebaseApiKey { get; set; } = "";
             public double Temperature { get; set; } = 0.2;
             public double MainWindowOpacity { get; set; } = 0.98;
             public double OverlayOpacity { get; set; } = 0.90;
@@ -225,7 +230,8 @@ namespace InterviewCopilotMac6.Views
             return _cachedConfig;
         }
 
-        public static void SaveConfig(AppConfig cfg)
+        // FIX 13 — return bool so callers can detect failure
+        public static bool SaveConfig(AppConfig cfg)
         {
             try
             {
@@ -234,8 +240,9 @@ namespace InterviewCopilotMac6.Views
                 File.WriteAllText(ConfigPath, json);
                 _cachedConfig = cfg;
                 _cacheTime = DateTime.UtcNow;
+                return true;
             }
-            catch { }
+            catch { return false; }
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -255,8 +262,14 @@ namespace InterviewCopilotMac6.Views
             return ModelEndpoints[idx];
         }
 
+        // FIX 6 — default key kept in a private field; not exposed as default property value
+        private static readonly string _defaultFirebaseKey = "AIzaSyAGGmuFpR0qkCHLI3q2cPv_o3cQlbIU8lE";
         public static string GetApiKey() => LoadConfig().ApiKey ?? "";
-        public static string GetFirebaseApiKey() => LoadConfig().FirebaseApiKey;
+        public static string GetFirebaseApiKey()
+        {
+            var key = LoadConfig().FirebaseApiKey;
+            return string.IsNullOrEmpty(key) ? _defaultFirebaseKey : key;
+        }
         public static string GetSpeechmaticsKey() => LoadConfig().SpeechmaticsKey ?? "";
         public static string GetBackendUrl() => LoadConfig().BackendUrl ?? "";
         public static string GetCoopilotEmail() => LoadConfig().CoopilotEmail ?? "";

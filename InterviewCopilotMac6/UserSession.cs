@@ -124,6 +124,8 @@ namespace InterviewCopilotMac6
         }
 
         // ── Load session from disk (on app start) ──
+        // FIX 16 — when IdToken may be expired (SavedAt > 55 min ago), we still load credentials
+        // so the caller can attempt TryRefreshAsync(), but we return false to signal a refresh is needed.
         public static bool TryLoadFromDisk()
         {
             try
@@ -134,7 +136,6 @@ namespace InterviewCopilotMac6
                 var data = JsonSerializer.Deserialize<SessionData>(json);
                 if (data == null) return false;
 
-                // Token expires after 1 hour — if saved more than 55 min ago, keep refresh token for refresh
                 IdToken      = data.IdToken      ?? "";
                 RefreshToken = data.RefreshToken ?? "";
                 Email        = data.Email        ?? "";
@@ -142,7 +143,16 @@ namespace InterviewCopilotMac6
                 UserId       = data.UserId       ?? "";
                 _savedAt     = data.SavedAt;
 
-                return !string.IsNullOrEmpty(RefreshToken) || IsLoggedIn;
+                // If no credentials at all, nothing to work with
+                if (string.IsNullOrEmpty(RefreshToken) && string.IsNullOrEmpty(IdToken))
+                    return false;
+
+                // FIX 16 — if token is potentially expired, return false so the caller
+                // attempts TryRefreshAsync() rather than using a stale IdToken.
+                if (IsTokenExpired())
+                    return false;
+
+                return IsLoggedIn;
             }
             catch (Exception ex)
             {
