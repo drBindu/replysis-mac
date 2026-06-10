@@ -3,6 +3,8 @@
         x:Class="InterviewCopilotMac6.Views.MainWindow"
         Title="Interview Copilot"
         Width="1120" Height="740"
+        MinWidth="760" MinHeight="480"
+        CanResize="True"
         TransparencyLevelHint="Transparent"
         Background="Transparent"
         ExtendClientAreaToDecorationsHint="True"
@@ -465,6 +467,15 @@
           </Grid>
         </Border>
       </Grid>
+
+      <!-- RESIZE GRIP — bottom-right corner drag hint -->
+      <Border HorizontalAlignment="Right" VerticalAlignment="Bottom"
+              Width="16" Height="16" Cursor="SizeAll"
+              Background="Transparent" ZIndex="5"
+              PointerPressed="ResizeGrip_PointerPressed">
+        <Path Data="M 12,4 L 12,12 L 4,12" Stroke="#334466" StrokeThickness="1.5"
+              HorizontalAlignment="Right" VerticalAlignment="Bottom"/>
+      </Border>
 
       <!-- INTRO LAYER -->
       <Border x:Name="IntroLayer" Background="#070609" ZIndex="10">

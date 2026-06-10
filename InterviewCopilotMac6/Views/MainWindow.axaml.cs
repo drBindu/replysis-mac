@@ -1388,6 +1388,12 @@ namespace InterviewCopilotMac6.Views
             BeginMoveDrag(e);
         }
 
+        private void ResizeGrip_PointerPressed(object? sender, PointerPressedEventArgs e)
+        {
+            // Drag the bottom-right corner to resize
+            BeginResizeDrag(WindowEdge.SouthEast, e);
+        }
+
         private void CloseBtn_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => Close();
 
         private async void SettingsBtn_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
