@@ -1,11 +1,12 @@
 """
-Ocean blue owl on dark navy background with macOS squircle corners baked in.
+Ocean blue owl on solid dark navy background.
+macOS applies squircle corners automatically — same as all other apps.
 """
-from PIL import Image, ImageEnhance, ImageDraw
+from PIL import Image, ImageEnhance
 
 SRC     = "InterviewCopilotMac6/Assets/AppIcon.png"
 BG      = (0, 12, 50)
-PADDING = 0.08
+PADDING = 0.04   # small padding — owl fills the box like other apps
 
 img = Image.open(SRC).convert("RGBA")
 w, h = img.size
@@ -24,7 +25,7 @@ img  = Image.merge("RGB", (r_ch, g_ch, b_ch))
 img  = ImageEnhance.Brightness(img).enhance(0.65)
 img  = ImageEnhance.Contrast(img).enhance(1.8)
 
-# Center owl with padding on dark navy canvas
+# Center owl with small padding on dark navy canvas
 pad     = int(w * PADDING)
 art_w   = w - 2 * pad
 art_h   = h - 2 * pad
@@ -32,12 +33,6 @@ artwork = img.resize((art_w, art_h), Image.LANCZOS)
 canvas  = Image.new("RGB", (w, h), BG)
 canvas.paste(artwork, (pad, pad))
 
-# Bake macOS squircle rounded corners (transparent outside)
-radius = int(w * 0.30)
-mask   = Image.new("L", (w, h), 0)
-ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=255)
-result = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-result.paste(canvas, mask=mask)
-
-result.save(SRC)
-print(f"✓ Squircle icon saved ({w}×{h}, radius={radius})")
+# Save as solid RGB — macOS applies squircle mask same as all other apps
+canvas.save(SRC)
+print(f"✓ Solid dark navy icon saved ({w}×{h})")
