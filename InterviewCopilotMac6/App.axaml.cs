@@ -1,4 +1,4 @@
-// v1.0.57
+// v1.0.58
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -11,6 +11,7 @@ using NetSparkleUpdater.Enums;
 using NetSparkleUpdater.SignatureVerifiers;
 using System;
 using System.IO;
+using System.Net.Http;
 using System.Text.RegularExpressions;
 
 namespace InterviewCopilotMac6;
@@ -18,8 +19,6 @@ namespace InterviewCopilotMac6;
 public partial class App : Application
 {
     // ── Sparkle auto-updater config ──────────────────────────────
-    // PUBLIC key — safe to ship in the binary
-    // The matching PRIVATE key lives in GitHub Actions secret SPARKLE_PRIVATE_KEY
     private const string SparklePublicKey =
         "GLZzMYoNz4KvKt7ExIndPLaootI0M56sjGZ5I/qYKGs=";
 
@@ -27,8 +26,6 @@ public partial class App : Application
         "https://raw.githubusercontent.com/moto123a/interview-copilot-mac/main/appcast.xml";
 
     internal static SparkleUpdater? Sparkle;
-
-    // Prevent multiple update dialogs from stacking
     private static bool _updateDialogShowing = false;
 
     // ────────────────────────────────────────────────────────────
@@ -47,21 +44,16 @@ public partial class App : Application
 
         base.OnFrameworkInitializationCompleted();
 
-        // First check: immediately after launch
         DispatcherTimer.RunOnce(
             () => _ = StartUpdateCheckAsync(),
             TimeSpan.FromSeconds(1));
 
-        // Periodic check: every 4 hours while the app is running
-        var periodicTimer = new DispatcherTimer
-        {
-            Interval = TimeSpan.FromMinutes(1)
-        };
+        var periodicTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
         periodicTimer.Tick += async (_, _) => await StartUpdateCheckAsync();
         periodicTimer.Start();
     }
 
-    // ── Read version from Info.plist (assembly version not reliable for self-contained apps) ──
+    // ── Read version from Info.plist — assembly version unreliable in self-contained builds ──
     private static string GetAppVersion()
     {
         try
@@ -70,55 +62,68 @@ public partial class App : Application
             if (File.Exists(plistPath))
             {
                 var content = File.ReadAllText(plistPath);
-                var match = Regex.Match(content,
+                var m = Regex.Match(content,
                     @"<key>CFBundleShortVersionString</key>\s*<string>([^<]+)</string>");
-                if (match.Success) return match.Groups[1].Value.Trim();
+                if (m.Success) return m.Groups[1].Value.Trim();
             }
         }
         catch { }
         return System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.0";
     }
 
-    // ── Silent background update check ──────────────────────────
+    // ── Fetch appcast manually and do version comparison ourselves ──
     private static async System.Threading.Tasks.Task StartUpdateCheckAsync()
     {
         try
         {
-            var currentVersion = GetAppVersion();
+            var currentVersionStr = GetAppVersion();
+            if (!Version.TryParse(currentVersionStr, out var currentVersion))
+                currentVersion = new Version(1, 0, 0);
 
-            // Initialise once; reuse on periodic ticks
+            using var http = new HttpClient();
+            var xml = await http.GetStringAsync(AppcastUrl);
+
+            var versionMatch = Regex.Match(xml, @"<sparkle:version>([^<]+)</sparkle:version>");
+            if (!versionMatch.Success) return;
+            var remoteVersionStr = versionMatch.Groups[1].Value.Trim();
+            if (!Version.TryParse(remoteVersionStr, out var remoteVersion)) return;
+            if (remoteVersion <= currentVersion) return;
+
+            if (_updateDialogShowing) return;
+
+            // Parse download info from appcast
+            var urlMatch    = Regex.Match(xml, @"url=""([^""]+)""");
+            var sigMatch    = Regex.Match(xml, @"sparkle:edSignature=""([^""]+)""");
+            var lengthMatch = Regex.Match(xml, @"length=""(\d+)""");
+            var titleMatch  = Regex.Match(xml, @"<title>Interview Copilot[^<]*</title>");
+
+            var item = new AppCastItem
+            {
+                Version      = remoteVersionStr,
+                Title        = titleMatch.Success
+                                ? titleMatch.Value.Replace("<title>", "").Replace("</title>", "").Trim()
+                                : $"Interview Copilot {remoteVersionStr}",
+                DownloadLink = urlMatch.Success ? urlMatch.Groups[1].Value : string.Empty,
+                DownloadSignature = sigMatch.Success ? sigMatch.Groups[1].Value : string.Empty,
+                ContentLength = lengthMatch.Success
+                                && long.TryParse(lengthMatch.Groups[1].Value, out var len) ? len : 0,
+            };
+
             Sparkle ??= new SparkleUpdater(
                 AppcastUrl,
                 new Ed25519Checker(SecurityMode.Strict, SparklePublicKey))
             {
                 RelaunchAfterUpdate = true,
-                AppVersionNumber    = currentVersion,
             };
 
-            var info = await Sparkle.CheckForUpdatesQuietly();
-            if (info?.Updates == null || info.Updates.Count == 0) return;
-
-            // Don't stack dialogs if one is already open
-            if (_updateDialogShowing) return;
-
-            var update = info.Updates[0];
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 _updateDialogShowing = true;
-                var win    = new UpdateWindow(Sparkle, update);
+                var win    = new UpdateWindow(Sparkle, item);
                 var parent = GetMainWindow();
-
                 win.Closed += (_, _) => _updateDialogShowing = false;
-
-                // Use Show() — ShowDialog requires await and can silently fail
-                if (parent != null)
-                {
-                    win.ShowDialog(parent);
-                }
-                else
-                {
-                    win.Show();
-                }
+                if (parent != null) win.ShowDialog(parent);
+                else                win.Show();
             });
         }
         catch (Exception ex)
