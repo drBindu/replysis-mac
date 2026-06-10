@@ -109,8 +109,9 @@ namespace InterviewCopilotMac6.Views
                 StatusText.Text   = "Installing…";
                 NoteText.Text     = "Relaunching in a moment…";
 
-                // Auto-install — no second click needed
                 _sparkle.InstallUpdate(item, path);
+                // App must quit so the installer script can replace it and relaunch
+                Task.Delay(1000).ContinueWith(_ => Environment.Exit(0));
             });
         }
 

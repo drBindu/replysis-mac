@@ -27,6 +27,7 @@ public partial class App : Application
 
     internal static SparkleUpdater? Sparkle;
     private static bool _updateDialogShowing = false;
+    internal static string LastUpdateStatus { get; private set; } = "";
 
     // Pending update — set when user clicks "Restart Later"
     internal static AppCastItem? PendingUpdate { get; set; }
@@ -108,7 +109,7 @@ public partial class App : Application
             Log($"remote={remoteVersionStr}");
 
             if (!Version.TryParse(remoteVersionStr, out var remoteVersion)) { onStatus?.Invoke("Could not check."); return "error"; }
-            if (remoteVersion <= currentVersion) { Log("no update needed"); onStatus?.Invoke($"You're up to date  (v{currentVersionStr})"); return "uptodate"; }
+            if (remoteVersion <= currentVersion) { Log("no update needed"); LastUpdateStatus = $"You're up to date  (v{currentVersionStr})"; onStatus?.Invoke(LastUpdateStatus); return "uptodate"; }
 
             if (_updateDialogShowing) { Log("dialog already showing"); return "showing"; }
 
@@ -145,7 +146,8 @@ public partial class App : Application
                 else                win.Show();
                 Log("popup shown");
             });
-            onStatus?.Invoke($"Update available: v{remoteVersionStr}");
+            LastUpdateStatus = $"Update available: v{remoteVersionStr}";
+            onStatus?.Invoke(LastUpdateStatus);
             return "available";
         }
         catch (Exception ex)

@@ -54,6 +54,8 @@ namespace InterviewCopilotMac6.Views
             TempLabel.Text = cfg.Temperature.ToString("F1");
 
             AppVersionLabel.Text = $"Version {App.GetCurrentVersion()}";
+            if (!string.IsNullOrEmpty(App.LastUpdateStatus))
+                UpdateStatusLabel.Text = App.LastUpdateStatus;
 
             double mainOpPct = Math.Round(cfg.MainWindowOpacity * 100);
             double overlayOpPct = Math.Round(cfg.OverlayOpacity * 100);
