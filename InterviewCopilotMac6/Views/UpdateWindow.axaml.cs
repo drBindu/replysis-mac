@@ -68,14 +68,12 @@ namespace InterviewCopilotMac6.Views
 
         private void Later_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
-            if (_downloading) return; // can't dismiss mid-download
             DetachEvents();
             Close();
         }
 
         private void Close_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
-            if (_downloading) return;
             DetachEvents();
             Close();
         }
