@@ -1,4 +1,4 @@
-// v1.0.70-relaunch-test
+// v1.0.71-nohup-test
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
