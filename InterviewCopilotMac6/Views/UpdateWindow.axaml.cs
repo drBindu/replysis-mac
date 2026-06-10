@@ -5,7 +5,9 @@ using Avalonia.Threading;
 using NetSparkleUpdater;
 using NetSparkleUpdater.Events;
 using System;
+using System.IO;
 using System.Reflection;
+using System.Threading.Tasks;
 
 namespace InterviewCopilotMac6.Views
 {
@@ -108,11 +110,37 @@ namespace InterviewCopilotMac6.Views
                 PctText.Text      = "100%";
                 StatusText.Text   = "Installing…";
                 NoteText.Text     = "Relaunching in a moment…";
-
-                _sparkle.InstallUpdate(item, path);
-                // App must quit so the installer script can replace it and relaunch
-                Task.Delay(1000).ContinueWith(_ => Environment.Exit(0));
+                LaunchInstallerAndQuit(path);
             });
+        }
+
+        private static void LaunchInstallerAndQuit(string zipPath)
+        {
+            try
+            {
+                // Resolve the .app bundle (BaseDirectory = .../InterviewCopilot.app/Contents/MacOS/)
+                var appBundle = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../.."));
+                var appParent = Path.GetDirectoryName(appBundle) ?? "/Applications";
+                var scriptPath = "/tmp/ic_relaunch.sh";
+
+                File.WriteAllText(scriptPath,
+                    "#!/bin/bash\n" +
+                    "sleep 2\n" +
+                    $"rm -rf \"{appBundle}\"\n" +
+                    $"unzip -o \"{zipPath}\" -d \"{appParent}/\"\n" +
+                    $"open \"{appBundle}\"\n");
+
+                System.Diagnostics.Process.Start(
+                    new System.Diagnostics.ProcessStartInfo("chmod", $"+x \"{scriptPath}\"")
+                    { UseShellExecute = false, CreateNoWindow = true })?.WaitForExit();
+
+                System.Diagnostics.Process.Start(
+                    new System.Diagnostics.ProcessStartInfo("/bin/bash", scriptPath)
+                    { UseShellExecute = false, CreateNoWindow = true });
+            }
+            catch { }
+
+            Task.Delay(1000).ContinueWith(_ => Environment.Exit(0));
         }
 
         private void OnDownloadError(AppCastItem item, string? path, Exception ex)
