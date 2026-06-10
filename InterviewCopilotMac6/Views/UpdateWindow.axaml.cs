@@ -122,21 +122,26 @@ namespace InterviewCopilotMac6.Views
                 var appBundle = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../.."));
                 var appParent = Path.GetDirectoryName(appBundle) ?? "/Applications";
                 var scriptPath = "/tmp/ic_relaunch.sh";
+                var logPath    = "/tmp/ic_relaunch.log";
 
                 File.WriteAllText(scriptPath,
                     "#!/bin/bash\n" +
-                    "sleep 2\n" +
+                    "sleep 3\n" +
                     $"rm -rf \"{appBundle}\"\n" +
                     $"unzip -o \"{zipPath}\" -d \"{appParent}/\"\n" +
                     $"open \"{appBundle}\"\n");
 
+                // Make executable
                 System.Diagnostics.Process.Start(
-                    new System.Diagnostics.ProcessStartInfo("chmod", $"+x \"{scriptPath}\"")
+                    new System.Diagnostics.ProcessStartInfo("/bin/chmod", $"+x \"{scriptPath}\"")
                     { UseShellExecute = false, CreateNoWindow = true })?.WaitForExit();
 
+                // Launch with nohup so the script survives after this app quits
                 System.Diagnostics.Process.Start(
-                    new System.Diagnostics.ProcessStartInfo("/bin/bash", scriptPath)
-                    { UseShellExecute = false, CreateNoWindow = true });
+                    new System.Diagnostics.ProcessStartInfo(
+                        "/bin/bash",
+                        $"-c \"nohup /bin/bash '{scriptPath}' > '{logPath}' 2>&1 &\"")
+                    { UseShellExecute = false, CreateNoWindow = true })?.WaitForExit();
             }
             catch { }
 
