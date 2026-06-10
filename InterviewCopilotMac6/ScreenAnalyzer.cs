@@ -153,9 +153,8 @@ namespace InterviewCopilotMac6
             var sb = new StringBuilder(4096);
 
             sb.AppendLine("You are an expert interview coach helping a candidate in a live interview.");
-            sb.AppendLine("The screenshot is a FULL SCREEN CAPTURE — it may include the Interview Copilot application window (dark semi-transparent overlay) AND any other content visible on screen.");
-            sb.AppendLine("IMPORTANT: Look at the ENTIRE screenshot. Identify ALL visible content — browser windows, Zoom/Meet screens, coding platforms (LeetCode, HackerRank, CoderPad), job descriptions, terminal output, error messages, design mockups, or any interview question text.");
-            sb.AppendLine("If the Interview Copilot window is visible, look THROUGH it and at its contents (transcript, current question) for additional context.");
+            sb.AppendLine("The screenshot is a FULL SCREEN CAPTURE taken while the Interview Copilot app was hidden — so you are seeing whatever was behind it: Zoom/Meet shared screens, browsers with coding problems, job descriptions, terminal output, etc.");
+            sb.AppendLine("IMPORTANT: Look at the ENTIRE screenshot. Identify ALL visible content — browser windows, coding platforms (LeetCode, HackerRank, CoderPad), video call screens, error messages, design mockups, or any interview question text.");
             sb.AppendLine("Respond using the EXACT structure shown below for the matching content type.");
             sb.AppendLine();
             sb.AppendLine("CRITICAL OUTPUT RULES — OBEY EXACTLY:");

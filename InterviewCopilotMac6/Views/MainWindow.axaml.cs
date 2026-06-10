@@ -512,19 +512,29 @@ namespace InterviewCopilotMac6.Views
             isProcessing = true;
             UpdateMicUi();
 
+            bool windowsHidden = false;
+
             try
             {
-                // Cancel any in-progress AI request, set up fresh CT
+                // Cancel any in-progress AI request, set up fresh CT before capture
                 _aiCts.Cancel();
                 _aiCts.Dispose();
                 _aiCts = new CancellationTokenSource();
                 var screenCt = _aiCts.Token;
 
-                // ── Phase 1: capture full screen as-is ───────────────────────────
-                // Do NOT hide the window. The IC window is semi-transparent so the AI
-                // can see through it. Hiding causes timing races and empty wallpaper
-                // captures when no other app is open behind IC.
+                // ── Phase 1: hide IC window, wait for compositor, then capture ────
+                // Hiding reveals whatever is behind IC (Zoom/browser with coding question).
+                // 400ms gives enough time for the macOS compositor to fully refresh.
+                this.Hide();
+                _answerWindow?.Hide();
+                windowsHidden = true;
+                await Task.Delay(400);
+
                 byte[] imageBytes = await ScreenAnalyzer.CaptureScreenAsync(screenCt);
+
+                this.Show();
+                if (_isCameraMode) _answerWindow?.Show();
+                windowsHidden = false;
 
                 if (imageBytes.Length == 0)
                 {
@@ -533,7 +543,7 @@ namespace InterviewCopilotMac6.Views
                 }
 
                 // ── Phase 2: vision AI analysis ───────────────────────────────────
-                // Show thinking indicator NOW (after capture — so it doesn't appear in the screenshot)
+                // Show thinking indicator NOW (after capture — not before, so it doesn't appear in the screenshot)
                 string visionLabel = SettingsWindow.IsGroq() ? "Llama 4 Scout" : "GPT-4o";
                 ThinkingLabel.Text      = $"🔍  {visionLabel} analyzing…";
                 ThinkingHintLabel.IsVisible = false;
@@ -611,6 +621,12 @@ namespace InterviewCopilotMac6.Views
             }
             finally
             {
+                // Ensure window is always restored if we hid it
+                if (windowsHidden)
+                {
+                    try { this.Show(); } catch { }
+                    try { if (_isCameraMode) _answerWindow?.Show(); } catch { }
+                }
                 StopThinkingUi();
             }
         }
