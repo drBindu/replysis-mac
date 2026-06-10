@@ -112,7 +112,7 @@ namespace InterviewCopilotMac6.Views
                 NoteText.Text     = "Relaunching in a moment…";
 
                 // Auto-install — no second click needed
-                _sparkle.InstallUpdate(item);
+                _sparkle.InstallUpdate(item, path);
             });
         }
 
