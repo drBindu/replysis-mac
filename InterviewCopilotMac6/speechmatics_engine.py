@@ -497,17 +497,30 @@ async def main():
                 confirmed_text = ""
                 partial_text   = ""
 
+                def _consume_reset():
+                    """Reset state, clear latest.txt, remove the flag. Returns True if reset was consumed."""
+                    nonlocal confirmed_text, partial_text
+                    if not os.path.exists(RESET_FLAG):
+                        return False
+                    confirmed_text = ""
+                    partial_text   = ""
+                    try:
+                        _write("")          # clear UI-visible file so old text disappears immediately
+                    except Exception:
+                        pass
+                    try:
+                        os.remove(RESET_FLAG)
+                    except Exception:
+                        pass
+                    print(">>> RESET: cleared transcript state", flush=True)
+                    return True
+
                 def handle_final(msg):
                     nonlocal confirmed_text, partial_text
-                    if os.path.exists(PAUSE_FLAG):
+                    # Check reset FIRST so any old confirmed_text gets wiped before we add a segment
+                    if _consume_reset():
                         return
-                    if os.path.exists(RESET_FLAG):
-                        confirmed_text = ""
-                        partial_text   = ""
-                        try:
-                            os.remove(RESET_FLAG)
-                        except Exception:
-                            pass
+                    if os.path.exists(PAUSE_FLAG):
                         return
                     segment = build_text_from_results(msg.get("results", []))
                     if not segment.strip():
@@ -519,10 +532,11 @@ async def main():
                     _write(display)
 
                 def handle_partial(msg):
-                    nonlocal partial_text
-                    if os.path.exists(PAUSE_FLAG):
+                    nonlocal confirmed_text, partial_text
+                    # Check reset FIRST so partials don't keep showing stale confirmed_text
+                    if _consume_reset():
                         return
-                    if os.path.exists(RESET_FLAG):
+                    if os.path.exists(PAUSE_FLAG):
                         return
                     segment      = build_text_from_results(msg.get("results", []))
                     partial_text = segment
