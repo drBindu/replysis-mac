@@ -92,6 +92,7 @@ parser.add_argument("-sysdevice", type=int, default=None)
 parser.add_argument("-max-delay", type=float, default=1.0)
 parser.add_argument("-mode", type=str, default="mic", choices=["mic", "system", "both"])
 parser.add_argument("-syscapture", type=str, default=None)
+parser.add_argument("-language", type=str, default="en")
 args = parser.parse_args()
 
 if not args.key:
@@ -115,6 +116,7 @@ print(f">>> Script folder : {SCRIPT_DIR}", flush=True)
 print(f">>> Data folder   : {APP_DATA}", flush=True)
 print(f">>> API key       : {args.key[:8]}...", flush=True)
 print(f">>> Audio mode    : {args.mode}", flush=True)
+print(f">>> Language      : {args.language}", flush=True)
 
 if args.mode in ("mic", "both"):
     mic_ok = test_microphone()
@@ -558,8 +560,8 @@ async def main():
                 ws.add_event_handler("Error",
                                      lambda e: print(f">>> WS ERROR: {e}", flush=True))
 
-                conf = TranscriptionConfig(
-                    language="en",
+                conf_kwargs = dict(
+                    language=args.language,
                     operating_point="enhanced",
                     max_delay=args.max_delay,
                     enable_partials=True,
@@ -569,7 +571,13 @@ async def main():
                     },
                     enable_entities=True,
                     disfluencies=False,
-                    additional_vocab=[
+                )
+
+                # These vocab hints are English lab/pharma terms — only helpful (and only
+                # valid) when transcribing English. For other languages, omit them so they
+                # don't bias/corrupt recognition of non-English speech.
+                if args.language == "en":
+                    conf_kwargs["additional_vocab"] = [
                         {"content": "AVA",               "sounds_like": ["AY-VAH", "AY-VA"]},
                         {"content": "AVA Inc"},
                         {"content": "HPLC",              "sounds_like": ["H-P-L-C"]},
@@ -586,7 +594,8 @@ async def main():
                         {"content": "Agilent ChemStation"},
                         {"content": "Willowbrook"},
                     ]
-                )
+
+                conf = TranscriptionConfig(**conf_kwargs)
 
                 audio_conf = AudioSettings(
                     encoding="pcm_s16le",

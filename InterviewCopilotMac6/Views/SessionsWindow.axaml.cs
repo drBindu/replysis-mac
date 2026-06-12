@@ -88,6 +88,7 @@ namespace InterviewCopilotMac6.Views
             string header = lines.Length > 0 ? lines[0].Trim() : "";
             int sessionNum = 0;
             string modelName = "—";
+            string resumeTitle = "";
             DateTime sessionDate = created;
 
             if (header.StartsWith("SESSION "))
@@ -99,10 +100,15 @@ namespace InterviewCopilotMac6.Views
                     modelName = parts[1].Trim();
                 if (parts.Length >= 3 && DateTime.TryParse(parts[2].Trim(), out var parsed))
                     sessionDate = parsed;
+                if (parts.Length >= 4)
+                    resumeTitle = parts[3].Trim().Replace("RESUME:", "").Trim();
             }
 
             int qCount = lines.Count(l => l.StartsWith("Q: "));
             int aCount = lines.Count(l => l.StartsWith("A: "));
+
+            var lastWrite = File.GetLastWriteTime(path);
+            var duration = lastWrite > sessionDate ? lastWrite - sessionDate : TimeSpan.Zero;
 
             return new SessionInfo
             {
@@ -112,6 +118,8 @@ namespace InterviewCopilotMac6.Views
                 QuestionCount = qCount,
                 AnswerCount = aCount,
                 ModelName = modelName,
+                ResumeTitle = resumeTitle,
+                Duration = duration,
                 AllLines = lines
             };
         }
@@ -166,7 +174,11 @@ namespace InterviewCopilotMac6.Views
 
             DetailHeader.IsVisible = true;
             DetailTitle.Text = info.DisplayTitle;
-            DetailMeta.Text = $"{info.DisplayDate}  ·  {info.DisplayStats}  ·  {info.DisplayModel}";
+            var metaParts = new List<string> { info.DisplayDate, info.DisplayStats };
+            if (!string.IsNullOrEmpty(info.DisplayDuration)) metaParts.Add(info.DisplayDuration);
+            if (!string.IsNullOrEmpty(info.DisplayModel)) metaParts.Add(info.DisplayModel);
+            metaParts.Add($"Resume: {info.DisplayResume}");
+            DetailMeta.Text = string.Join("  ·  ", metaParts);
             DeleteBtn.IsVisible = true;
 
             RenderTranscript(info);
@@ -528,6 +540,8 @@ namespace InterviewCopilotMac6.Views
         public int QuestionCount { get; set; }
         public int AnswerCount { get; set; }
         public string ModelName { get; set; } = "";
+        public string ResumeTitle { get; set; } = "";
+        public TimeSpan Duration { get; set; }
         public string[] AllLines { get; set; } = Array.Empty<string>();
 
         public string DisplayTitle =>
@@ -543,5 +557,15 @@ namespace InterviewCopilotMac6.Views
             string.IsNullOrWhiteSpace(ModelName) || ModelName == "—"
                 ? ""
                 : ModelName.Length > 20 ? ModelName.Substring(0, 20) + "…" : ModelName;
+
+        public string DisplayResume =>
+            string.IsNullOrWhiteSpace(ResumeTitle)
+                ? "No resume"
+                : ResumeTitle.Length > 28 ? ResumeTitle.Substring(0, 28) + "…" : ResumeTitle;
+
+        public string DisplayDuration =>
+            Duration.TotalSeconds < 1 ? "" :
+            Duration.TotalHours >= 1 ? $"{(int)Duration.TotalHours}h {Duration.Minutes}m" :
+            $"{Duration.Minutes}m {Duration.Seconds}s";
     }
 }

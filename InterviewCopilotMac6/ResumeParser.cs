@@ -38,15 +38,9 @@ namespace InterviewCopilotMac6
             var sb = new StringBuilder();
 
             // 1. Name — first short non-label line
-            foreach (var line in resume.Split('\n'))
-            {
-                string t = line.Trim();
-                if (t.Length > 2 && t.Length < 50 && !t.Contains(":") && !t.StartsWith("•"))
-                {
-                    sb.AppendLine("Name: " + t);
-                    break;
-                }
-            }
+            string name = ExtractName(resume);
+            if (!string.IsNullOrEmpty(name))
+                sb.AppendLine("Name: " + name);
 
             // 2. Jobs and durations
             var jobs = ExtractJobs(resume);
@@ -86,6 +80,23 @@ namespace InterviewCopilotMac6
             sb.AppendLine(resume.Trim());
 
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Returns the candidate's name — the first short non-label line of the resume —
+        /// or "" if the resume is empty or no such line is found.
+        /// </summary>
+        public static string ExtractName(string resume)
+        {
+            if (string.IsNullOrWhiteSpace(resume)) return "";
+
+            foreach (var line in resume.Split('\n'))
+            {
+                string t = line.Trim();
+                if (t.Length > 2 && t.Length < 50 && !t.Contains(":") && !t.StartsWith("•"))
+                    return t;
+            }
+            return "";
         }
 
         // ── Job extraction ──────────────────────────────────────────

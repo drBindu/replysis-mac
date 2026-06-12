@@ -53,6 +53,11 @@ namespace InterviewCopilotMac6.Views
             TempSlider.Value = cfg.Temperature;
             TempLabel.Text = cfg.Temperature.ToString("F1");
 
+            foreach (var (name, code) in SpeechLanguages)
+                SpeechLanguageCombo.Items.Add(new ComboBoxItem { Content = name, Tag = code });
+            int langIdx = Array.FindIndex(SpeechLanguages, l => l.Code == (cfg.SpeechLanguage ?? "en"));
+            SpeechLanguageCombo.SelectedIndex = langIdx >= 0 ? langIdx : 0;
+
             AppVersionLabel.Text = $"Version {App.GetCurrentVersion()}";
             if (!string.IsNullOrEmpty(App.LastUpdateStatus))
                 UpdateStatusLabel.Text = App.LastUpdateStatus;
@@ -196,6 +201,8 @@ namespace InterviewCopilotMac6.Views
             if (AudioDeviceCombo.SelectedIndex > -1 && deviceIndices.Count > AudioDeviceCombo.SelectedIndex)
                 SelectedDeviceIndex = deviceIndices[AudioDeviceCombo.SelectedIndex];
 
+            string speechLanguage = (SpeechLanguageCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "en";
+
             var cfg = new AppConfig
             {
                 ModelIndex = ModelCombo.SelectedIndex >= 0 ? ModelCombo.SelectedIndex : 0,
@@ -204,6 +211,7 @@ namespace InterviewCopilotMac6.Views
                 Temperature = Math.Round(TempSlider.Value, 1),
                 MainWindowOpacity = Math.Round(MainOpacitySlider.Value / 100.0, 2),
                 OverlayOpacity = Math.Round(OverlayOpacitySlider.Value / 100.0, 2),
+                SpeechLanguage = speechLanguage,
             };
             // FIX 13 — check for save failure before closing
             if (!SaveConfig(cfg))
@@ -271,7 +279,35 @@ namespace InterviewCopilotMac6.Views
             public double Temperature { get; set; } = 0.7;
             public double MainWindowOpacity { get; set; } = 0.98;
             public double OverlayOpacity { get; set; } = 0.90;
+            // Spoken language for speech-to-text (Speechmatics language code, e.g. "en", "es", "hi").
+            public string SpeechLanguage { get; set; } = "en";
         }
+
+        // ═══════════════════════════════════════════════════════════════
+        // SPOKEN LANGUAGE OPTIONS — (DisplayName, Speechmatics language code)
+        // ═══════════════════════════════════════════════════════════════
+        public static readonly (string Name, string Code)[] SpeechLanguages = {
+            ("English",             "en"),
+            ("Spanish",             "es"),
+            ("French",              "fr"),
+            ("German",              "de"),
+            ("Italian",             "it"),
+            ("Portuguese",          "pt"),
+            ("Dutch",               "nl"),
+            ("Hindi",               "hi"),
+            ("Mandarin Chinese",    "cmn"),
+            ("Japanese",            "ja"),
+            ("Korean",              "ko"),
+            ("Arabic",              "ar"),
+            ("Russian",             "ru"),
+            ("Turkish",             "tr"),
+            ("Polish",              "pl"),
+            ("Swedish",             "sv"),
+            ("Vietnamese",          "vi"),
+            ("Bengali",             "bn"),
+            ("Tamil",               "ta"),
+            ("Urdu",                "ur"),
+        };
 
         // ═══════════════════════════════════════════════════════════════
         // PERSISTENCE
@@ -373,6 +409,11 @@ namespace InterviewCopilotMac6.Views
             SaveConfig(cfg);
         }
         public static string GetSpeechmaticsKey() => LoadConfig().SpeechmaticsKey ?? "";
+        public static string GetSpeechLanguage()
+        {
+            var lang = LoadConfig().SpeechLanguage;
+            return string.IsNullOrWhiteSpace(lang) ? "en" : lang;
+        }
         public static string GetBackendUrl() => LoadConfig().BackendUrl ?? "";
         public static string GetCoopilotEmail() => LoadConfig().CoopilotEmail ?? "";
         public static double GetTemperature() => LoadConfig().Temperature;

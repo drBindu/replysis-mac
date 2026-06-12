@@ -894,17 +894,7 @@ namespace InterviewCopilotMac6.Views
                     ToolTip.SetTip(ResumeTextBox, "🔒 Resume locked during session. Click 'New Session' to edit.");
                 }
 
-                // Warn user if no resume is pasted — answer will be generic
                 string resumeText = ResumeTextBox.Text ?? "";
-                string noResumeBanner = string.IsNullOrWhiteSpace(resumeText)
-                    ? "⚠ No resume pasted — answer will be generic. Paste your resume in the left panel for tailored answers.\n\n"
-                    : "";
-                if (!string.IsNullOrEmpty(noResumeBanner))
-                {
-                    AiAnswerBox.Text = $"Q: {q}\n\n{noResumeBanner}";
-                    if (_isCameraMode && _answerWindow != null)
-                        _answerWindow.UpdateAnswer("⚠ No resume — answer will be generic.");
-                }
 
                 var sb = new StringBuilder();
                 int tokenCount = 0;
@@ -923,14 +913,14 @@ namespace InterviewCopilotMac6.Views
                     if (tokenCount % 3 == 0 || token.Contains('\n'))
                     {
                         string soFar = sb.ToString();
-                        AiAnswerBox.Text = $"Q: {q}\n\n{noResumeBanner}{lowCreditsBanner}{soFar}";
+                        AiAnswerBox.Text = $"Q: {q}\n\n{lowCreditsBanner}{soFar}";
                         AiAnswerBox.CaretIndex = AiAnswerBox.Text.Length;
                         if (_isCameraMode && _answerWindow != null) _answerWindow.UpdateAnswer(soFar);
                     }
                 }
 
                 string final = CleanAiOutput(sb.ToString());
-                AiAnswerBox.Text = $"Q: {q}\n\n{noResumeBanner}{lowCreditsBanner}{final}\n{sep}{old}";
+                AiAnswerBox.Text = $"Q: {q}\n\n{lowCreditsBanner}{final}\n{sep}{old}";
                 AiAnswerBox.CaretIndex = AiAnswerBox.Text.Length;
                 if (_isCameraMode && _answerWindow != null) { _answerWindow.UpdateAnswer(final); _answerWindow.UpdateQuestion(q); }
                 PromptBuilder.AddToHistory(q, final);
@@ -1140,7 +1130,13 @@ namespace InterviewCopilotMac6.Views
 
             sessionLogPath = Path.Combine(AppDataFolder, "interview_" + sessionNumber + ".txt");
 
-            string header = $"SESSION {sessionNumber} | {SettingsWindow.GetActiveModelId()} | {DateTime.Now:yyyy-MM-dd HH:mm:ss}";
+            // Record which resume (if any) is in use for this session
+            string resumeTitle = ResumeParser.ExtractName(ResumeTextBox?.Text ?? "");
+            if (string.IsNullOrWhiteSpace(resumeTitle)) resumeTitle = "No resume";
+            resumeTitle = resumeTitle.Replace("|", "-").Trim();
+            if (resumeTitle.Length > 60) resumeTitle = resumeTitle.Substring(0, 60).Trim();
+
+            string header = $"SESSION {sessionNumber} | {SettingsWindow.GetActiveModelId()} | {DateTime.Now:yyyy-MM-dd HH:mm:ss} | RESUME: {resumeTitle}";
             try { File.WriteAllText(sessionLogPath, header + "\n\n"); }
             catch (Exception ex) { DebugWindow.Log("SESSION_ERR", $"Log create failed: {ex.Message}"); sessionLogPath = ""; }
             try { File.WriteAllText(Path.Combine(AppDataFolder, "record.flag"), "1"); }
@@ -1492,13 +1488,14 @@ namespace InterviewCopilotMac6.Views
                 string modeArg       = hasSysCapture ? " -mode both" : " -mode mic";
                 string syscaptureArg = hasSysCapture ? $" -syscapture \"{syscapturePath}\"" : "";
                 const string maxDelayArg = " -max-delay 1.0";
+                string languageArg  = $" -language {SettingsWindow.GetSpeechLanguage()}";
 
                 speechmaticsProcess = new Process();
                 if (hasBinary)
                 {
                     // Bundled binary — pass key as env var (keeps it out of `ps aux`)
                     speechmaticsProcess.StartInfo.FileName  = binaryEngine;
-                    speechmaticsProcess.StartInfo.Arguments = $"{deviceArg}{modeArg}{syscaptureArg}{maxDelayArg}".TrimStart();
+                    speechmaticsProcess.StartInfo.Arguments = $"{deviceArg}{modeArg}{syscaptureArg}{maxDelayArg}{languageArg}".TrimStart();
                     speechmaticsProcess.StartInfo.Environment["SPEECHMATICS_API_KEY"] = smKey;
                 }
                 else
@@ -1507,7 +1504,7 @@ namespace InterviewCopilotMac6.Views
                     string pythonPath = FindPythonPath();
                     DebugWindow.Log("ENGINE", $"Python  : {pythonPath}");
                     speechmaticsProcess.StartInfo.FileName  = pythonPath;
-                    speechmaticsProcess.StartInfo.Arguments = $"\"{pyScript}\"{deviceArg}{modeArg}{syscaptureArg}{maxDelayArg}";
+                    speechmaticsProcess.StartInfo.Arguments = $"\"{pyScript}\"{deviceArg}{modeArg}{syscaptureArg}{maxDelayArg}{languageArg}";
                     speechmaticsProcess.StartInfo.Environment["SPEECHMATICS_API_KEY"] = smKey;
                 }
                 speechmaticsProcess.StartInfo.WorkingDirectory      = scriptFolder;
