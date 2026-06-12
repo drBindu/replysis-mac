@@ -344,8 +344,18 @@ namespace InterviewCopilotMac6.Views
             var key = LoadConfig().FirebaseApiKey;
             return string.IsNullOrEmpty(key) ? _defaultFirebaseKey : key;
         }
-        public static string GetGoogleClientId() => LoadConfig().GoogleClientId ?? "";
-        public static string GetGoogleClientSecret() => LoadConfig().GoogleClientSecret ?? "";
+        private static readonly string _defaultGoogleClientId = "745433477203-lvqmnnip9pb241vkfp628qmue8313cre.apps.googleusercontent.com";
+        private static readonly string _defaultGoogleClientSecret = "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";
+        public static string GetGoogleClientId()
+        {
+            var id = LoadConfig().GoogleClientId;
+            return string.IsNullOrEmpty(id) ? _defaultGoogleClientId : id;
+        }
+        public static string GetGoogleClientSecret()
+        {
+            var secret = LoadConfig().GoogleClientSecret;
+            return string.IsNullOrEmpty(secret) ? _defaultGoogleClientSecret : secret;
+        }
 
         public static (string Email, string Name, string PhotoUrl, string Provider) GetLastAccount()
         {

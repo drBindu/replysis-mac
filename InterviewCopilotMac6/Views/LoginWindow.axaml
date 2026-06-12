@@ -33,6 +33,34 @@
     <Style Selector="Button.LinkBtn:pointerover /template/ ContentPresenter">
       <Setter Property="Foreground" Value="#93C5FD"/>
     </Style>
+
+    <!-- PRIMARY BUTTON (Sign In / Continue) HOVER + PRESSED STATES -->
+    <Style Selector="Button#SignInBtn:pointerover /template/ Border#Bd">
+      <Setter Property="Background" Value="#3B82F6"/>
+      <Setter Property="BoxShadow" Value="0 4 14 0 #592563EB"/>
+    </Style>
+    <Style Selector="Button#SignInBtn:pressed /template/ Border#Bd">
+      <Setter Property="Background" Value="#1D4ED8"/>
+      <Setter Property="BoxShadow" Value="0 1 4 0 #4D2563EB"/>
+    </Style>
+    <Style Selector="Button#ContinueAsBtn:pointerover /template/ Border#ContinueBd">
+      <Setter Property="Background" Value="#3B82F6"/>
+      <Setter Property="BoxShadow" Value="0 4 14 0 #592563EB"/>
+    </Style>
+    <Style Selector="Button#ContinueAsBtn:pressed /template/ Border#ContinueBd">
+      <Setter Property="Background" Value="#1D4ED8"/>
+      <Setter Property="BoxShadow" Value="0 1 4 0 #4D2563EB"/>
+    </Style>
+
+    <!-- GOOGLE BUTTON HOVER + PRESSED STATES -->
+    <Style Selector="Button#GoogleSignInBtn:pointerover /template/ Border#GoogleBd">
+      <Setter Property="Background" Value="#F8F9FA"/>
+      <Setter Property="BoxShadow" Value="0 2 8 0 #26000000"/>
+    </Style>
+    <Style Selector="Button#GoogleSignInBtn:pressed /template/ Border#GoogleBd">
+      <Setter Property="Background" Value="#F1F3F4"/>
+      <Setter Property="BoxShadow" Value="0 1 2 0 #14000000"/>
+    </Style>
   </Window.Styles>
 
   <!-- Outer shadow / drag area -->
@@ -126,7 +154,15 @@
                     Height="44" Cursor="Hand" HorizontalAlignment="Stretch">
               <Button.Template>
                 <ControlTemplate TargetType="Button">
-                  <Border CornerRadius="10" Background="#2563EB">
+                  <Border x:Name="ContinueBd" CornerRadius="12"
+                          Background="#2563EB"
+                          BoxShadow="0 2 10 0 #4D2563EB">
+                    <Border.Transitions>
+                      <Transitions>
+                        <BrushTransition Property="Background" Duration="0:0:0.12"/>
+                        <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.12"/>
+                      </Transitions>
+                    </Border.Transitions>
                     <Grid>
                       <TextBlock x:Name="ContinueAsBtnText" Text="Continue"
                                  Foreground="White" FontSize="14" FontWeight="SemiBold"
@@ -188,8 +224,15 @@
                 HorizontalAlignment="Stretch">
           <Button.Template>
             <ControlTemplate TargetType="Button">
-              <Border x:Name="Bd" CornerRadius="10"
-                      Background="#2563EB">
+              <Border x:Name="Bd" CornerRadius="12"
+                      Background="#2563EB"
+                      BoxShadow="0 2 10 0 #4D2563EB">
+                <Border.Transitions>
+                  <Transitions>
+                    <BrushTransition Property="Background" Duration="0:0:0.12"/>
+                    <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.12"/>
+                  </Transitions>
+                </Border.Transitions>
                 <Grid>
                   <TextBlock x:Name="BtnText" Text="Sign In"
                              Foreground="White" FontSize="14"
@@ -229,8 +272,15 @@
                 HorizontalAlignment="Stretch">
           <Button.Template>
             <ControlTemplate TargetType="Button">
-              <Border CornerRadius="23" Background="#FFFFFF"
-                      BorderBrush="#dadce0" BorderThickness="1">
+              <Border x:Name="GoogleBd" CornerRadius="23" Background="#FFFFFF"
+                      BorderBrush="#dadce0" BorderThickness="1"
+                      BoxShadow="0 1 4 0 #1F000000">
+                <Border.Transitions>
+                  <Transitions>
+                    <BrushTransition Property="Background" Duration="0:0:0.12"/>
+                    <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.12"/>
+                  </Transitions>
+                </Border.Transitions>
                 <Grid>
                   <StackPanel Orientation="Horizontal"
                               HorizontalAlignment="Center" VerticalAlignment="Center"

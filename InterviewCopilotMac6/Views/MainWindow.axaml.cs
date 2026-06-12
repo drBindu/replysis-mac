@@ -14,6 +14,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 
 namespace InterviewCopilotMac6.Views
@@ -55,6 +56,7 @@ namespace InterviewCopilotMac6.Views
         private DispatcherTimer? _sessionTimer;
         private DispatcherTimer? _engineMonitorTimer;
         private DispatcherTimer? _smRetryTimer;
+        private DispatcherTimer? _resumeSaveTimer;
         private int _sessionSeconds = 0;
         private int thinkingStep = 0;
 
@@ -85,6 +87,8 @@ namespace InterviewCopilotMac6.Views
             return p;
         }
 
+        private string ResumeFilePath => Path.Combine(AppDataFolder, "resume.txt");
+
 
         public MainWindow()
         {
@@ -92,6 +96,20 @@ namespace InterviewCopilotMac6.Views
 
             projectRoot = AppDomain.CurrentDomain.BaseDirectory;
             scriptFolder = FindScriptFolder(projectRoot);
+
+            // ── Resume drag & drop ──
+            ResumeDropBorder.AddHandler(DragDrop.DragEnterEvent, ResumeDropBorder_DragEnter);
+            ResumeDropBorder.AddHandler(DragDrop.DragOverEvent, ResumeDropBorder_DragOver);
+            ResumeDropBorder.AddHandler(DragDrop.DragLeaveEvent, ResumeDropBorder_DragLeave);
+            ResumeDropBorder.AddHandler(DragDrop.DropEvent, ResumeDropBorder_Drop);
+
+            // ── Debounced resume auto-save ──
+            _resumeSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(800) };
+            _resumeSaveTimer.Tick += (s, e) =>
+            {
+                _resumeSaveTimer!.Stop();
+                SaveResumeToDisk();
+            };
 
             this.Opened += async (s, e) =>
             {
@@ -106,6 +124,7 @@ namespace InterviewCopilotMac6.Views
                 UpdateMicUi();
 
                 SavePathLabel.Text = AppDataFolder;
+                LoadResumeFromDisk();
 
                 ApplyMainWindowOpacity();
 
@@ -1249,6 +1268,123 @@ namespace InterviewCopilotMac6.Views
                     SavePathLabel.Foreground = new SolidColorBrush(Color.Parse("#2a3a4a"));
                 }
             }
+
+            // Debounce-save resume text so it survives app restarts
+            _resumeSaveTimer?.Stop();
+            _resumeSaveTimer?.Start();
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // RESUME PERSISTENCE + FILE UPLOAD / DRAG & DROP
+        // ══════════════════════════════════════════════════════════════════════
+        private void SaveResumeToDisk()
+        {
+            try { File.WriteAllText(ResumeFilePath, ResumeTextBox.Text ?? ""); }
+            catch (Exception ex) { DebugWindow.Log("RESUME", $"Save failed: {ex.Message}"); }
+        }
+
+        private void LoadResumeFromDisk()
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(ResumeTextBox.Text) && File.Exists(ResumeFilePath))
+                    ResumeTextBox.Text = File.ReadAllText(ResumeFilePath);
+            }
+            catch (Exception ex) { DebugWindow.Log("RESUME", $"Load failed: {ex.Message}"); }
+        }
+
+        private async void ResumeUploadBtn_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        {
+            if (ResumeTextBox.IsReadOnly)
+            {
+                ShowResumeStatus("🔒 Resume locked during session. Click 'New Session' to edit.", "#f59e0b");
+                return;
+            }
+
+            var sp = TopLevel.GetTopLevel(this)?.StorageProvider;
+            if (sp == null) return;
+
+            var files = await sp.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "Upload Resume",
+                AllowMultiple = false,
+                FileTypeFilter = new[]
+                {
+                    new FilePickerFileType("Resume (PDF, DOCX, TXT)")
+                    {
+                        Patterns = new[] { "*.pdf", "*.docx", "*.txt" }
+                    }
+                }
+            });
+
+            if (files == null || files.Count == 0) return;
+            await LoadResumeFileAsync(files[0].Path.LocalPath);
+        }
+
+        private async Task LoadResumeFileAsync(string filePath)
+        {
+            string fileName = Path.GetFileName(filePath);
+
+            if (!ResumeFileReader.IsSupported(fileName))
+            {
+                ShowResumeStatus("⚠ Unsupported file type. Please upload a PDF, DOCX, or TXT resume.", "#f59e0b");
+                return;
+            }
+
+            ShowResumeStatus($"Reading {fileName}…", "#38BDF8");
+
+            var result = await ResumeFileReader.ExtractTextAsync(filePath);
+            if (!result.Success)
+            {
+                ShowResumeStatus($"⚠ {result.Error}", "#f59e0b");
+                return;
+            }
+
+            ResumeTextBox.Text = result.Text;
+            ShowResumeStatus($"✓ Loaded {fileName} ({result.Text.Length:N0} chars)", "#4ade80");
+        }
+
+        private void ShowResumeStatus(string text, string colorHex)
+        {
+            SavePathLabel.Text = text;
+            SavePathLabel.Foreground = new SolidColorBrush(Color.Parse(colorHex));
+        }
+
+        private void ResumeDropBorder_DragEnter(object? sender, DragEventArgs e)
+        {
+            bool hasSupportedFile = e.Data.GetFiles()?.Any(f => ResumeFileReader.IsSupported(f.Name)) ?? false;
+            bool canDrop = hasSupportedFile && !ResumeTextBox.IsReadOnly;
+            e.DragEffects = canDrop ? DragDropEffects.Copy : DragDropEffects.None;
+            ResumeDragOverlay.IsVisible = canDrop;
+        }
+
+        private void ResumeDropBorder_DragOver(object? sender, DragEventArgs e)
+        {
+            bool hasSupportedFile = e.Data.GetFiles()?.Any(f => ResumeFileReader.IsSupported(f.Name)) ?? false;
+            bool canDrop = hasSupportedFile && !ResumeTextBox.IsReadOnly;
+            e.DragEffects = canDrop ? DragDropEffects.Copy : DragDropEffects.None;
+        }
+
+        private void ResumeDropBorder_DragLeave(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        {
+            ResumeDragOverlay.IsVisible = false;
+        }
+
+        private async void ResumeDropBorder_Drop(object? sender, DragEventArgs e)
+        {
+            ResumeDragOverlay.IsVisible = false;
+
+            if (ResumeTextBox.IsReadOnly)
+            {
+                ShowResumeStatus("🔒 Resume locked during session. Click 'New Session' to edit.", "#f59e0b");
+                return;
+            }
+
+            var files = e.Data.GetFiles()?.ToList();
+            if (files == null || files.Count == 0) return;
+
+            var target = files.FirstOrDefault(f => ResumeFileReader.IsSupported(f.Name)) ?? files[0];
+            await LoadResumeFileAsync(target.Path.LocalPath);
         }
 
         // ══════════════════════════════════════════════════════════════════════
