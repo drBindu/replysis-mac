@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -8,6 +9,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 
 namespace InterviewCopilotMac6.Views
@@ -29,9 +31,74 @@ namespace InterviewCopilotMac6.Views
 
             this.Opened += (s, e) =>
             {
-                // Start blank — never pre-fill another user's email
-                EmailBox.Focus();
+                InitializeAccountChooser();
             };
+        }
+
+        // ══════════════════════════════════════════════════════════
+        // ACCOUNT CHOOSER ("Continue as ...")
+        // ══════════════════════════════════════════════════════════
+        private void InitializeAccountChooser()
+        {
+            var (email, name, photoUrl, provider) = SettingsWindow.GetLastAccount();
+            if (string.IsNullOrEmpty(email))
+            {
+                // No remembered account — start blank, never pre-fill another user's email
+                EmailBox.Focus();
+                return;
+            }
+
+            ContinueAsCard.IsVisible  = true;
+            CredentialsForm.IsVisible = false;
+
+            ContinueAsName.Text     = string.IsNullOrEmpty(name) ? email : name;
+            ContinueAsEmail.Text    = provider == "google" ? $"{email} · Google" : email;
+            ContinueAsInitials.Text = UserSession.GetInitials(name);
+
+            if (!string.IsNullOrEmpty(photoUrl))
+                _ = LoadAvatarPhotoAsync(photoUrl);
+        }
+
+        private async Task LoadAvatarPhotoAsync(string url)
+        {
+            try
+            {
+                byte[] bytes = await _http.GetByteArrayAsync(url);
+                using var stream = new MemoryStream(bytes);
+                ContinueAsPhoto.Source    = new Bitmap(stream);
+                ContinueAsPhoto.IsVisible = true;
+                ContinueAsInitials.IsVisible = false;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[LoginWindow] LoadAvatarPhotoAsync: {ex.Message}");
+            }
+        }
+
+        private async void ContinueAsBtn_Click(object? sender, RoutedEventArgs e)
+        {
+            var (email, _, _, provider) = SettingsWindow.GetLastAccount();
+
+            if (provider == "google")
+            {
+                await DoGoogleSignIn();
+                return;
+            }
+
+            // Password account — switch to the credentials form with the email pre-filled
+            ContinueAsCard.IsVisible  = false;
+            CredentialsForm.IsVisible = true;
+            EmailBox.Text = email;
+            PasswordBox.Focus();
+        }
+
+        private void UseDifferentAccount_Click(object? sender, RoutedEventArgs e)
+        {
+            ContinueAsCard.IsVisible  = false;
+            CredentialsForm.IsVisible = true;
+            EmailBox.Text    = "";
+            PasswordBox.Text = "";
+            EmailBox.Focus();
         }
 
         // ══════════════════════════════════════════════════════════
@@ -121,6 +188,62 @@ namespace InterviewCopilotMac6.Views
 
                 // Save token to session
                 UserSession.SetSession(IdToken, UserEmail, UserName, UserId, refreshToken);
+                SettingsWindow.SaveLastAccount(UserEmail, UserName, "", "password");
+
+                ShowSuccess($"Welcome back, {UserName}!");
+                await Task.Delay(800);
+
+                LoginSuccess = true;
+                this.Close();
+            }
+            catch (Exception)
+            {
+                ShowError("Connection error. Check your internet connection.");
+                SetLoading(false);
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════
+        // CONTINUE WITH GOOGLE
+        // ══════════════════════════════════════════════════════════
+        private async void GoogleSignInBtn_Click(object? sender, RoutedEventArgs e)
+        {
+            await DoGoogleSignIn();
+        }
+
+        private async Task DoGoogleSignIn()
+        {
+            if (string.IsNullOrEmpty(SettingsWindow.GetGoogleClientId()))
+            {
+                ShowError("Google sign-in isn't configured yet.");
+                return;
+            }
+
+            SetLoading(true);
+            HideError();
+
+            try
+            {
+                var result = await GoogleSignIn.SignInAsync();
+
+                if (!result.Success)
+                {
+                    ShowError(result.Error);
+                    SetLoading(false);
+                    return;
+                }
+
+                IdToken   = result.IdToken;
+                UserEmail = result.Email;
+                UserId    = result.UserId;
+                UserName  = result.DisplayName;
+
+                var cfg = SettingsWindow.LoadConfig();
+                cfg.CoopilotEmail = UserEmail;
+                SettingsWindow.SaveConfig(cfg);
+
+                UserSession.SetSession(IdToken, UserEmail, UserName, UserId, result.RefreshToken);
+                SettingsWindow.SaveLastAccount(UserEmail, UserName, result.PhotoUrl, "google");
 
                 ShowSuccess($"Welcome back, {UserName}!");
                 await Task.Delay(800);
@@ -198,14 +321,27 @@ namespace InterviewCopilotMac6.Views
         // ══════════════════════════════════════════════════════════
         private void SetLoading(bool loading)
         {
-            SignInBtn.IsEnabled   = !loading;
-            EmailBox.IsEnabled    = !loading;
-            PasswordBox.IsEnabled = !loading;
+            SignInBtn.IsEnabled             = !loading;
+            GoogleSignInBtn.IsEnabled       = !loading;
+            ContinueAsBtn.IsEnabled         = !loading;
+            UseDifferentAccountBtn.IsEnabled = !loading;
+            EmailBox.IsEnabled        = !loading;
+            PasswordBox.IsEnabled     = !loading;
             // BtnText/LoadingText are nested inside the Button's content — FindControl is correct here
             var btnText     = SignInBtn.FindControl<TextBlock>("BtnText");
             var loadingText = SignInBtn.FindControl<TextBlock>("LoadingText");
             if (btnText     != null) btnText.IsVisible     = !loading;
             if (loadingText != null) loadingText.IsVisible = loading;
+
+            var googleBtnText     = GoogleSignInBtn.FindControl<TextBlock>("GoogleBtnText");
+            var googleLoadingText = GoogleSignInBtn.FindControl<TextBlock>("GoogleLoadingText");
+            if (googleBtnText     != null) googleBtnText.IsVisible     = !loading;
+            if (googleLoadingText != null) googleLoadingText.IsVisible = loading;
+
+            var continueBtnText     = ContinueAsBtn.FindControl<TextBlock>("ContinueAsBtnText");
+            var continueLoadingText = ContinueAsBtn.FindControl<TextBlock>("ContinueAsLoadingText");
+            if (continueBtnText     != null) continueBtnText.IsVisible     = !loading;
+            if (continueLoadingText != null) continueLoadingText.IsVisible = loading;
         }
 
         private void ShowError(string msg)

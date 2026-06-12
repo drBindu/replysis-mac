@@ -258,7 +258,17 @@ namespace InterviewCopilotMac6.Views
             public string CoopilotEmail { get; set; } = "";
             // Firebase Web API key — stored in config; falls back to compiled default if blank.
             public string FirebaseApiKey { get; set; } = "";
-            public double Temperature { get; set; } = 0.2;
+            // Google OAuth "Desktop app" client credentials — required for "Continue with Google".
+            public string GoogleClientId { get; set; } = "";
+            public string GoogleClientSecret { get; set; } = "";
+            // Remembered account shown as "Continue as..." on the login screen after sign-out.
+            public string LastAccountEmail { get; set; } = "";
+            public string LastAccountName { get; set; } = "";
+            public string LastAccountPhotoUrl { get; set; } = "";
+            public string LastAccountProvider { get; set; } = ""; // "google" or "password"
+            // 0.7 gives natural human variation in word choice + sentence rhythm,
+            // making answers harder to detect as AI. 0.2 was too deterministic/robotic.
+            public double Temperature { get; set; } = 0.7;
             public double MainWindowOpacity { get; set; } = 0.98;
             public double OverlayOpacity { get; set; } = 0.90;
         }
@@ -333,6 +343,24 @@ namespace InterviewCopilotMac6.Views
         {
             var key = LoadConfig().FirebaseApiKey;
             return string.IsNullOrEmpty(key) ? _defaultFirebaseKey : key;
+        }
+        public static string GetGoogleClientId() => LoadConfig().GoogleClientId ?? "";
+        public static string GetGoogleClientSecret() => LoadConfig().GoogleClientSecret ?? "";
+
+        public static (string Email, string Name, string PhotoUrl, string Provider) GetLastAccount()
+        {
+            var cfg = LoadConfig();
+            return (cfg.LastAccountEmail ?? "", cfg.LastAccountName ?? "", cfg.LastAccountPhotoUrl ?? "", cfg.LastAccountProvider ?? "");
+        }
+
+        public static void SaveLastAccount(string email, string name, string photoUrl, string provider)
+        {
+            var cfg = LoadConfig();
+            cfg.LastAccountEmail    = email;
+            cfg.LastAccountName     = name;
+            cfg.LastAccountPhotoUrl = photoUrl;
+            cfg.LastAccountProvider = provider;
+            SaveConfig(cfg);
         }
         public static string GetSpeechmaticsKey() => LoadConfig().SpeechmaticsKey ?? "";
         public static string GetBackendUrl() => LoadConfig().BackendUrl ?? "";
