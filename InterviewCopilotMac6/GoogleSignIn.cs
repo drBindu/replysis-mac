@@ -86,7 +86,20 @@ namespace InterviewCopilotMac6
                 if (!tokenRes.IsSuccessStatusCode)
                 {
                     System.Diagnostics.Debug.WriteLine($"[GoogleSignIn] token exchange failed: {tokenBody}");
-                    return new Result(false, "", "", "", "", "", "", "Google sign-in failed during token exchange.");
+                    string detail = "";
+                    try
+                    {
+                        using var errDoc = JsonDocument.Parse(tokenBody);
+                        string err = errDoc.RootElement.TryGetProperty("error", out var e) ? e.GetString() ?? "" : "";
+                        string errDesc = errDoc.RootElement.TryGetProperty("error_description", out var ed) ? ed.GetString() ?? "" : "";
+                        detail = string.IsNullOrEmpty(errDesc) ? err : $"{err}: {errDesc}";
+                    }
+                    catch { /* ignore parse errors, fall back to generic message */ }
+
+                    return new Result(false, "", "", "", "", "", "",
+                        string.IsNullOrEmpty(detail)
+                            ? "Google sign-in failed during token exchange."
+                            : $"Google sign-in failed: {detail}");
                 }
 
                 using var tokenDoc = JsonDocument.Parse(tokenBody);
