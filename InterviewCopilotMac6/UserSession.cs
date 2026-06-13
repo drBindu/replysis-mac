@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Net.Http;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace InterviewCopilotMac6
@@ -172,13 +173,24 @@ namespace InterviewCopilotMac6
         public static bool IsTokenExpired() =>
             _savedAt == DateTime.MinValue || (DateTime.UtcNow - _savedAt).TotalMinutes > 55;
 
+        // Serializes TryRefreshAsync — Firebase rotates refresh tokens on use, so two
+        // concurrent refreshes with the same stored token would race (one succeeds and
+        // rotates the token, the other fails with invalid_grant and looks like a sign-out).
+        private static readonly SemaphoreSlim _refreshLock = new(1, 1);
+
         // ── Silently refresh the Firebase ID token using the stored refresh token ──
         public static async Task<bool> TryRefreshAsync()
         {
             if (string.IsNullOrEmpty(RefreshToken)) return false;
             if (!IsTokenExpired()) return true; // still valid
+
+            await _refreshLock.WaitAsync();
             try
             {
+                // A concurrent caller may have already refreshed while we were waiting.
+                if (!IsTokenExpired()) return true;
+                if (string.IsNullOrEmpty(RefreshToken)) return false;
+
                 string url = $"https://securetoken.googleapis.com/v1/token?key={FirebaseApiKey}";
                 var content = new System.Net.Http.FormUrlEncodedContent(new[]
                 {
@@ -207,6 +219,10 @@ namespace InterviewCopilotMac6
             {
                 System.Diagnostics.Debug.WriteLine($"[SESSION] TryRefreshAsync failed: {ex.Message}");
                 return false;
+            }
+            finally
+            {
+                _refreshLock.Release();
             }
         }
 

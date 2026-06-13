@@ -30,8 +30,6 @@ namespace InterviewCopilotMac6.Views
         private const int EngineMonitorSecs        = 3;
         private const int CreditsLowThreshold      = 20;
         private const int CreditsCriticalThreshold = 5;
-        private const int TranscriptRetryCount     = 3;
-        private const int TranscriptRetryDelayMs   = 10;
 
         private bool isMuted = true;
         private bool isListening = false;
@@ -115,8 +113,6 @@ namespace InterviewCopilotMac6.Views
             {
                 // Fire cleanup without blocking
                 _ = NuclearKillOldProcesses();
-                await Task.Delay(1500);
-                IntroLayer.IsVisible = false;
 
                 isMuted = true;
                 isListening = false;
@@ -127,6 +123,7 @@ namespace InterviewCopilotMac6.Views
                 LoadResumeFromDisk();
 
                 ApplyMainWindowOpacity();
+                IntroLayer.IsVisible = false;
 
                 _answerWindow = new AnswerWindow();
                 _cameraModeClosedHandler = () => Dispatcher.UIThread.Post(() => ExitCameraMode());
@@ -258,6 +255,7 @@ namespace InterviewCopilotMac6.Views
                 CanResize = false,
                 SystemDecorations = SystemDecorations.BorderOnly
             };
+            dialog.KeyDown += (_, e) => { if (e.Key == Key.Escape) dialog.Close(); };
 
             var panel = new StackPanel { Margin = new Thickness(24) };
             panel.Children.Add(new TextBlock
@@ -279,6 +277,9 @@ namespace InterviewCopilotMac6.Views
             btnRow.Children.Add(yesBtn);
             panel.Children.Add(btnRow);
             dialog.Content = panel;
+
+            // Default focus on Cancel so a stray Enter press doesn't sign the user out.
+            dialog.Opened += (_, _) => cancelBtn.Focus();
 
             await dialog.ShowDialog(this);
             // Return focus to the window so Space doesn't activate the profile badge
@@ -650,8 +651,8 @@ namespace InterviewCopilotMac6.Views
                 // Ensure window is always restored if we hid it
                 if (windowsHidden)
                 {
-                    try { this.Show(); } catch { }
-                    try { if (_isCameraMode) _answerWindow?.Show(); } catch { }
+                    try { this.Show(); } catch (Exception ex) { DebugWindow.Log("SCREEN_ERR", $"Restore window failed: {ex.Message}"); }
+                    try { if (_isCameraMode) _answerWindow?.Show(); } catch (Exception ex) { DebugWindow.Log("SCREEN_ERR", $"Restore overlay failed: {ex.Message}"); }
                 }
                 StopThinkingUi();
             }
@@ -678,9 +679,6 @@ namespace InterviewCopilotMac6.Views
             _answerWindow.UpdateMicState(isListening, isProcessing);
         }
 
-        private void ExitCameraMode_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-            => ExitCameraMode();
-
         private void ExitCameraMode()
         {
             _isCameraMode = false;
@@ -695,13 +693,25 @@ namespace InterviewCopilotMac6.Views
         // ══════════════════════════════════════════════════════════════════════
         // MIC / SPACE HANDLING
         // ══════════════════════════════════════════════════════════════════════
-        private bool _spaceHandling = false;
+        private DateTime _lastSpaceHandledUtc = DateTime.MinValue;
+        private const int SpaceDebounceMs = 400;
 
         private void HandleSpacePress(string source)
         {
-            if (_spaceHandling || isProcessing) return;
-            _spaceHandling = true;
-            try
+            if (isProcessing) return;
+
+            // Debounce: macOS' global hotkey (CGEventTap, ListenOnly) doesn't consume
+            // the key event, so a single SPACE press also reaches Window_KeyDown — one
+            // fires synchronously, the other is posted async, so a re-entrancy bool
+            // isn't enough to stop the second one from toggling the mic right back.
+            var now = DateTime.UtcNow;
+            if ((now - _lastSpaceHandledUtc).TotalMilliseconds < SpaceDebounceMs)
+            {
+                DebugWindow.Log("MIC", $"[{source}] Space press ignored (debounced)");
+                return;
+            }
+            _lastSpaceHandledUtc = now;
+
             {
                 // Guard: if the user is logged in but the engine hasn't started yet
                 if (UserSession.IsLoggedIn && speechmaticsProcess == null && isMuted)
@@ -764,7 +774,6 @@ namespace InterviewCopilotMac6.Views
                     }, TaskScheduler.Default);
                 }
             }
-            finally { _spaceHandling = false; }
         }
 
         private void MicBtn_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -1172,7 +1181,7 @@ namespace InterviewCopilotMac6.Views
         private void EndSession()
         {
             string f = Path.Combine(AppDataFolder, "record.flag");
-            try { if (File.Exists(f)) File.Delete(f); } catch { }
+            try { if (File.Exists(f)) File.Delete(f); } catch (Exception ex) { DebugWindow.Log("SESSION_ERR", $"record.flag delete failed: {ex.Message}"); }
             isRecording    = false;
             sessionLogPath = "";
 
@@ -1206,7 +1215,7 @@ namespace InterviewCopilotMac6.Views
             AiAnswerBox.Text = "Ready — press SPACE to start listening, then SPACE again to get your answer.";
             if (_answerWindow != null) { _answerWindow.UpdateAnswer(""); _answerWindow.UpdateQuestion(""); }
             PromptBuilder.ClearHistory();
-            try { File.WriteAllText(Path.Combine(AppDataFolder, "latest.txt"), ""); } catch { }
+            try { File.WriteAllText(Path.Combine(AppDataFolder, "latest.txt"), ""); } catch (Exception ex) { DebugWindow.Log("FILE", $"latest.txt clear failed: {ex.Message}"); }
             StopThinkingUi();
         }
 
@@ -1487,15 +1496,16 @@ namespace InterviewCopilotMac6.Views
                 string deviceArg     = _audioDeviceId >= 0 ? $" -device {_audioDeviceId}" : "";
                 string modeArg       = hasSysCapture ? " -mode both" : " -mode mic";
                 string syscaptureArg = hasSysCapture ? $" -syscapture \"{syscapturePath}\"" : "";
-                const string maxDelayArg = " -max-delay 1.0";
-                string languageArg  = $" -language {SettingsWindow.GetSpeechLanguage()}";
+                // 0.7s is the minimum max_delay Speechmatics' "enhanced" operating point allows —
+                // gives the fastest possible finalization of transcripts for a real-time feel.
+                const string maxDelayArg = " -max-delay 0.7";
 
                 speechmaticsProcess = new Process();
                 if (hasBinary)
                 {
                     // Bundled binary — pass key as env var (keeps it out of `ps aux`)
                     speechmaticsProcess.StartInfo.FileName  = binaryEngine;
-                    speechmaticsProcess.StartInfo.Arguments = $"{deviceArg}{modeArg}{syscaptureArg}{maxDelayArg}{languageArg}".TrimStart();
+                    speechmaticsProcess.StartInfo.Arguments = $"{deviceArg}{modeArg}{syscaptureArg}{maxDelayArg}".TrimStart();
                     speechmaticsProcess.StartInfo.Environment["SPEECHMATICS_API_KEY"] = smKey;
                 }
                 else
@@ -1504,7 +1514,7 @@ namespace InterviewCopilotMac6.Views
                     string pythonPath = FindPythonPath();
                     DebugWindow.Log("ENGINE", $"Python  : {pythonPath}");
                     speechmaticsProcess.StartInfo.FileName  = pythonPath;
-                    speechmaticsProcess.StartInfo.Arguments = $"\"{pyScript}\"{deviceArg}{modeArg}{syscaptureArg}{maxDelayArg}{languageArg}";
+                    speechmaticsProcess.StartInfo.Arguments = $"\"{pyScript}\"{deviceArg}{modeArg}{syscaptureArg}{maxDelayArg}";
                     speechmaticsProcess.StartInfo.Environment["SPEECHMATICS_API_KEY"] = smKey;
                 }
                 speechmaticsProcess.StartInfo.WorkingDirectory      = scriptFolder;
@@ -1561,10 +1571,12 @@ namespace InterviewCopilotMac6.Views
                                 line.Contains("Invalid") || line.Contains("Unauthorized"))
                             {
                                 DebugWindow.Log("ENGINE", "Auth error — stopping engine monitor");
-                                _engineMonitorTimer?.Stop();
-                                KillAndDisposeEngine();
+                                // DispatcherTimer and process-handle teardown must happen on the
+                                // UI thread — this reader runs on a background Task.
                                 Dispatcher.UIThread.Post(() =>
                                 {
+                                    _engineMonitorTimer?.Stop();
+                                    KillAndDisposeEngine();
                                     MicIndicatorText.Text = "KEY ERROR";
                                     MicIndicator.Fill = Avalonia.Media.Brushes.Red;
                                 });
@@ -1584,8 +1596,10 @@ namespace InterviewCopilotMac6.Views
             var proc = speechmaticsProcess;
             speechmaticsProcess = null;
             if (proc == null) return;
-            try { proc.Kill(); } catch { }
-            try { proc.Dispose(); } catch { }
+            // entireProcessTree: true — the engine spawns a SystemAudioCapture child
+            // (ScreenCaptureKit) via subprocess.Popen; killing only the parent orphans it.
+            try { proc.Kill(entireProcessTree: true); } catch (Exception ex) { DebugWindow.Log("ENGINE", $"Kill failed: {ex.Message}"); }
+            try { proc.Dispose(); } catch (Exception ex) { DebugWindow.Log("ENGINE", $"Dispose failed: {ex.Message}"); }
         }
 
         private void WritePauseFlag()  { try { File.WriteAllText(Path.Combine(AppDataFolder, "pause.flag"), "1"); } catch (Exception ex) { DebugWindow.Log("FILE", ex.Message); } }
@@ -1608,12 +1622,14 @@ namespace InterviewCopilotMac6.Views
 
                 foreach (string line in output.Split('\n'))
                 {
-                    if (!line.Contains("speechmatics_engine")) continue;
+                    // Also target orphaned SystemAudioCapture (ScreenCaptureKit) helper
+                    // processes left behind by a previously-killed engine.
+                    if (!line.Contains("speechmatics_engine") && !line.Contains("SystemAudioCapture")) continue;
                     string trimmed = line.TrimStart();
                     int spaceIdx = trimmed.IndexOf(' ');
                     if (spaceIdx <= 0) continue;
                     if (!int.TryParse(trimmed[..spaceIdx], out int pid)) continue;
-                    try { var p = Process.GetProcessById(pid); p.Kill(); p.Dispose(); DebugWindow.Log("ENGINE", $"Killed orphaned PID {pid}"); } catch { }
+                    try { var p = Process.GetProcessById(pid); p.Kill(entireProcessTree: true); p.Dispose(); DebugWindow.Log("ENGINE", $"Killed orphaned PID {pid}"); } catch { }
                 }
             }
             catch (Exception ex) { DebugWindow.Log("ENGINE", $"NuclearKill ps failed: {ex.Message}"); }
@@ -1747,7 +1763,7 @@ namespace InterviewCopilotMac6.Views
                     _answerWindow.CameraModeClosedByUser -= _cameraModeClosedHandler;
                 if (_answerWindowSpaceHandler != null)
                     _answerWindow.SpacePressed -= _answerWindowSpaceHandler;
-                try { _answerWindow.Close(); } catch { }
+                try { _answerWindow.Close(); } catch (Exception ex) { DebugWindow.Log("CLOSE_ERR", $"AnswerWindow close failed: {ex.Message}"); }
             }
             _answerWindow = null;
 
@@ -1755,7 +1771,7 @@ namespace InterviewCopilotMac6.Views
             _debugWindowInst?.ForceClose();
             EndSession();
 
-            try { File.WriteAllText(Path.Combine(AppDataFolder, "shutdown.flag"), "1"); } catch { }
+            try { File.WriteAllText(Path.Combine(AppDataFolder, "shutdown.flag"), "1"); } catch (Exception ex) { DebugWindow.Log("CLOSE_ERR", $"shutdown.flag write failed: {ex.Message}"); }
             _aiCts.Cancel();
             _aiCts.Dispose();
             _engineCts.Cancel();

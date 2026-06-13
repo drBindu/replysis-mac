@@ -12,6 +12,9 @@ namespace InterviewCopilotMac6
     /// </summary>
     public static class ResumeParser
     {
+        /// Sentinel returned by <see cref="ExtractFacts"/> when no usable resume text is available.
+        public const string NoResumeMarker = "No resume provided.";
+
         private static readonly Dictionary<string, int> MonthMap =
             new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
             {
@@ -33,7 +36,7 @@ namespace InterviewCopilotMac6
         public static string ExtractFacts(string resume)
         {
             if (string.IsNullOrWhiteSpace(resume) || resume.Length < 50)
-                return "No resume provided.";
+                return NoResumeMarker;
 
             var sb = new StringBuilder();
 
@@ -62,9 +65,12 @@ namespace InterviewCopilotMac6
                 // Detect section header lines only (short lines that ARE the heading, not skill content)
                 bool isHeader = t.Length < 40 && !t.StartsWith("•") && !t.StartsWith("-");
 
-                if (lower.Contains("skill") || lower.Contains("expertise") || lower.Contains("key skill"))
+                // Only a HEADER line containing "skill"/"expertise" starts the skills
+                // section — otherwise a bullet like "Trained staff on lab skills" would
+                // falsely flip inSkills on mid-Experience section.
+                if (isHeader && (lower.Contains("skill") || lower.Contains("expertise")))
                     inSkills = true;
-                else if (inSkills && isHeader && (lower.Contains("experience") || lower.Contains("education") || lower.Contains("employment")))
+                else if (inSkills && isHeader && (lower.Contains("experience") || lower.Contains("education") || lower.Contains("employment") || lower.Contains("project")))
                     inSkills = false;
 
                 if (inSkills && t.Length > 5 && !lower.Contains("skill") && !lower.Contains("expertise"))
@@ -110,9 +116,22 @@ namespace InterviewCopilotMac6
             public int EndIdx { get; set; }
         }
 
-        private static readonly Regex DatePattern = new Regex(
-            @"([A-Za-z]{3,9})\s+(\d{4})\s*[-–—]\s*(Present|Till\s*Date|[A-Za-z]{3,9}\s+\d{4})",
+        // "Jan 2020 - Present" / "January 2020 - Dec 2022"
+        private static readonly Regex DatePatternMonthName = new Regex(
+            @"([A-Za-z]{3,9})\s+(\d{4})\s*[-–—]\s*(Present|Current|Till\s*Date|[A-Za-z]{3,9}\s+\d{4})",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        // "01/2020 - 06/2022" / "1-2020 - Present"
+        private static readonly Regex DatePatternNumeric = new Regex(
+            @"(\d{1,2})[/\-](\d{4})\s*[-–—]\s*(Present|Current|Till\s*Date|\d{1,2}[/\-]\d{4})",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        // "2020 - 2022" / "2020 - Present" (year-only ranges)
+        private static readonly Regex DatePatternYearOnly = new Regex(
+            @"(?<!\d)(\d{4})\s*[-–—]\s*(Present|Current|Till\s*Date|\d{4})(?!\d)",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private enum DateFormat { MonthName, Numeric, YearOnly }
 
         public static List<JobEntry> ExtractJobs(string resume)
         {
@@ -123,11 +142,15 @@ namespace InterviewCopilotMac6
             for (int i = 0; i < lines.Length; i++)
             {
                 string t = lines[i].Trim();
-                var match = DatePattern.Match(t);
+
+                var match = DatePatternMonthName.Match(t);
+                var fmt = DateFormat.MonthName;
+                if (!match.Success) { match = DatePatternNumeric.Match(t); fmt = DateFormat.Numeric; }
+                if (!match.Success) { match = DatePatternYearOnly.Match(t); fmt = DateFormat.YearOnly; }
 
                 if (match.Success)
                 {
-                    var entry = ParseMatch(match);
+                    var entry = ParseMatch(match, fmt);
                     if (entry == null) continue;
 
                     // Label is either the same line (minus dates) or the previous line
@@ -145,33 +168,90 @@ namespace InterviewCopilotMac6
             return jobs;
         }
 
-        private static JobEntry? ParseMatch(Match m)
+        // Sanity bounds for bare-year ranges so things like zip codes or arbitrary
+        // 4-digit numbers ("2020-2024" copyright lines, etc.) don't get treated as jobs.
+        private const int MinValidYear = 1950;
+        private static int MaxValidYear => NOW_YEAR + 1;
+
+        private static JobEntry? ParseMatch(Match m, DateFormat fmt)
         {
             try
             {
-                string startMonthStr = m.Groups[1].Value;
-                int startYear = int.Parse(m.Groups[2].Value);
                 string endStr = m.Groups[3].Value.Trim();
+                string endLower = endStr.ToLower().Replace(" ", "");
+                bool isOpenEnded = endLower.Contains("present") || endLower.Contains("current") || endLower.Contains("tilldate");
 
-                if (!MonthMap.TryGetValue(startMonthStr, out int startMonth)) return null;
+                int startIdx, endIdx;
 
-                int startIdx = startYear * 12 + (startMonth - 1);
-                int endIdx;
-
-                if (endStr.ToLower().Contains("present") || endStr.ToLower().Replace(" ", "").Contains("tilldate"))
+                switch (fmt)
                 {
-                    endIdx = NOW_YEAR * 12 + (NOW_MONTH - 1);
-                }
-                else
-                {
-                    var parts = endStr.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                    if (parts.Length < 2) return null;
-                    if (!MonthMap.TryGetValue(parts[0], out int endMonth)) return null;
-                    if (!int.TryParse(parts[1], out int endYear)) return null;
-                    endIdx = endYear * 12 + (endMonth - 1);
+                    case DateFormat.MonthName:
+                    {
+                        if (!MonthMap.TryGetValue(m.Groups[1].Value, out int startMonth)) return null;
+                        int startYear = int.Parse(m.Groups[2].Value);
+                        startIdx = startYear * 12 + (startMonth - 1);
+
+                        if (isOpenEnded)
+                        {
+                            endIdx = NOW_YEAR * 12 + (NOW_MONTH - 1);
+                        }
+                        else
+                        {
+                            var parts = endStr.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                            if (parts.Length < 2) return null;
+                            if (!MonthMap.TryGetValue(parts[0], out int endMonth)) return null;
+                            if (!int.TryParse(parts[1], out int endYear)) return null;
+                            endIdx = endYear * 12 + (endMonth - 1);
+                        }
+                        break;
+                    }
+
+                    case DateFormat.Numeric:
+                    {
+                        if (!int.TryParse(m.Groups[1].Value, out int startMonth) || startMonth < 1 || startMonth > 12) return null;
+                        int startYear = int.Parse(m.Groups[2].Value);
+                        if (startYear < MinValidYear || startYear > MaxValidYear) return null;
+                        startIdx = startYear * 12 + (startMonth - 1);
+
+                        if (isOpenEnded)
+                        {
+                            endIdx = NOW_YEAR * 12 + (NOW_MONTH - 1);
+                        }
+                        else
+                        {
+                            var parts = endStr.Split(new[] { '/', '-' }, StringSplitOptions.RemoveEmptyEntries);
+                            if (parts.Length < 2) return null;
+                            if (!int.TryParse(parts[0], out int endMonth) || endMonth < 1 || endMonth > 12) return null;
+                            if (!int.TryParse(parts[1], out int endYear)) return null;
+                            endIdx = endYear * 12 + (endMonth - 1);
+                        }
+                        break;
+                    }
+
+                    case DateFormat.YearOnly:
+                    default:
+                    {
+                        int startYear = int.Parse(m.Groups[1].Value);
+                        if (startYear < MinValidYear || startYear > MaxValidYear) return null;
+                        startIdx = startYear * 12; // January
+
+                        if (isOpenEnded)
+                        {
+                            endIdx = NOW_YEAR * 12 + (NOW_MONTH - 1);
+                        }
+                        else
+                        {
+                            if (!int.TryParse(endStr, out int endYear) || endYear < MinValidYear || endYear > MaxValidYear) return null;
+                            endIdx = endYear * 12 + 11; // December
+                        }
+                        break;
+                    }
                 }
 
-                int months = Math.Max(0, endIdx - startIdx + 1);
+                // Clamp so a garbled/reversed date range (end before start) can't produce
+                // a negative segment length when intervals are merged in CalculateTotalMonths.
+                endIdx = Math.Max(endIdx, startIdx);
+                int months = endIdx - startIdx + 1;
 
                 return new JobEntry
                 {

@@ -89,7 +89,8 @@
 
                 <!-- AI ANSWER -->
                 <ScrollViewer Grid.Row="2"
-                              VerticalScrollBarVisibility="Hidden"
+                              x:Name="AnswerScroll"
+                              VerticalScrollBarVisibility="Auto"
                               HorizontalScrollBarVisibility="Disabled">
                     <TextBlock x:Name="AnswerTextBlock"
                                Text="Press SPACE to start listening..."

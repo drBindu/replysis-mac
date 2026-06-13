@@ -40,6 +40,10 @@ namespace InterviewCopilotMac6
 
                 string codeVerifier  = GenerateCodeVerifier();
                 string codeChallenge = GenerateCodeChallenge(codeVerifier);
+                // CSRF protection — random per-attempt value, echoed back by Google and
+                // validated against the redirect so a forged/replayed redirect can't
+                // be accepted as a successful sign-in.
+                string state = GenerateCodeVerifier();
 
                 listener = new HttpListener();
                 listener.Prefixes.Add(redirectUri);
@@ -51,20 +55,37 @@ namespace InterviewCopilotMac6
                     "&response_type=code" +
                     "&scope=openid%20email%20profile" +
                     $"&code_challenge={Uri.EscapeDataString(codeChallenge)}" +
-                    "&code_challenge_method=S256";
+                    "&code_challenge_method=S256" +
+                    $"&state={Uri.EscapeDataString(state)}";
 
                 Process.Start(new ProcessStartInfo(authUrl) { UseShellExecute = true });
 
                 var contextTask = listener.GetContextAsync();
                 var winner = await Task.WhenAny(contextTask, Task.Delay(TimeSpan.FromMinutes(2)));
                 if (winner != contextTask)
+                {
+                    // Observe the still-pending task's eventual result/exception so it
+                    // doesn't surface as an UnobservedTaskException after we return.
+                    _ = contextTask.ContinueWith(t =>
+                    {
+                        if (t.IsFaulted) System.Diagnostics.Debug.WriteLine($"[GoogleSignIn] late listener task faulted: {t.Exception?.GetBaseException().Message}");
+                    }, TaskScheduler.Default);
                     return new Result(false, "", "", "", "", "", "", "Sign-in timed out. Please try again.");
+                }
 
                 var context = await contextTask;
-                string? code  = context.Request.QueryString["code"];
-                string? error = context.Request.QueryString["error"];
+                string? code         = context.Request.QueryString["code"];
+                string? error        = context.Request.QueryString["error"];
+                string? returnedState = context.Request.QueryString["state"];
 
-                await RespondToBrowserAsync(context, success: error == null && !string.IsNullOrEmpty(code));
+                bool stateValid = string.Equals(returnedState, state, StringComparison.Ordinal);
+                await RespondToBrowserAsync(context, success: error == null && !string.IsNullOrEmpty(code) && stateValid);
+
+                if (!stateValid)
+                {
+                    System.Diagnostics.Debug.WriteLine("[GoogleSignIn] state mismatch — possible CSRF, aborting");
+                    return new Result(false, "", "", "", "", "", "", "Sign-in failed a security check. Please try again.");
+                }
 
                 if (error != null || string.IsNullOrEmpty(code))
                     return new Result(false, "", "", "", "", "", "", "Google sign-in was cancelled.");

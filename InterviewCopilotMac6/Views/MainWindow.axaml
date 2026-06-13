@@ -171,7 +171,7 @@
                   <TextBlock x:Name="CreditsIcon" Text="⚡" FontSize="11"
                              Margin="0,0,5,0" VerticalAlignment="Center"/>
                   <StackPanel VerticalAlignment="Center">
-                    <TextBlock x:Name="CreditsLabel" Text="Sign in"
+                    <TextBlock x:Name="CreditsLabel" Text="…"
                                Foreground="#4ade80" FontSize="11" FontWeight="Bold"/>
                     <TextBlock x:Name="CreditsPlanLabel" Text=""
                                Foreground="#3d4d5f" FontSize="9" IsVisible="False"/>
@@ -484,28 +484,6 @@
             </Border>
           </Grid>
         </Grid>
-      </Grid>
-
-      <!-- CAMERA MODE BAR -->
-      <Grid x:Name="CameraModeGrid" IsVisible="False" VerticalAlignment="Top" Height="110">
-        <Border Background="#E6080C14" CornerRadius="0,0,14,14"
-                BorderBrush="#55FFFFFF" BorderThickness="0,0,0,1">
-          <Grid Margin="20,10">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="Auto"/>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <Button Grid.Column="0" Classes="MicBtn" Click="MicBtn_Click" Width="40" Height="40" Focusable="False"/>
-            <ScrollViewer Grid.Column="1" Margin="20,0">
-              <TextBlock x:Name="CamAnswerBox" Text="Ready..." Foreground="White"
-                         FontSize="18" FontWeight="Bold"
-                         TextWrapping="Wrap" TextAlignment="Center"/>
-            </ScrollViewer>
-            <Button Grid.Column="2" Content="Exit" Classes="GhostBtn"
-                    Click="ExitCameraMode_Click" Padding="10,5" Focusable="False"/>
-          </Grid>
-        </Border>
       </Grid>
 
       <!-- RESIZE GRIP — bottom-right corner drag hint -->

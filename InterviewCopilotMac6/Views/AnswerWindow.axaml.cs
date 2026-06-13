@@ -113,6 +113,8 @@ namespace InterviewCopilotMac6.Views
                     return;
                 }
                 AnswerTextBlock.Text = FormatForReading(text);
+                // Keep the latest streamed text in view as the answer grows.
+                AnswerScroll.ScrollToEnd();
             });
         }
 
@@ -123,6 +125,7 @@ namespace InterviewCopilotMac6.Views
             {
                 AnswerTextBlock.Text = "Listening...";
                 QuestionTextBlock.Text = "Waiting for audio...";
+                AnswerScroll.ScrollToHome();
             });
         }
 

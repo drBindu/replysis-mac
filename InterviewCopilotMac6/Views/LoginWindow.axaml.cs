@@ -184,7 +184,8 @@ namespace InterviewCopilotMac6.Views
                 // Save email for next time
                 var cfg = SettingsWindow.LoadConfig();
                 cfg.CoopilotEmail = UserEmail;
-                SettingsWindow.SaveConfig(cfg);
+                if (!SettingsWindow.SaveConfig(cfg))
+                    System.Diagnostics.Debug.WriteLine("[LOGIN] SaveConfig failed (CoopilotEmail not persisted)");
 
                 // Save token to session
                 UserSession.SetSession(IdToken, UserEmail, UserName, UserId, refreshToken);
@@ -196,8 +197,15 @@ namespace InterviewCopilotMac6.Views
                 LoginSuccess = true;
                 this.Close();
             }
-            catch (Exception)
+            catch (JsonException ex)
             {
+                System.Diagnostics.Debug.WriteLine($"[LOGIN] DoSignIn: unexpected (non-JSON) server response: {ex.Message}");
+                ShowError("Unexpected response from server. Please try again in a moment.");
+                SetLoading(false);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[LOGIN] DoSignIn failed: {ex.Message}");
                 ShowError("Connection error. Check your internet connection.");
                 SetLoading(false);
             }
@@ -240,7 +248,8 @@ namespace InterviewCopilotMac6.Views
 
                 var cfg = SettingsWindow.LoadConfig();
                 cfg.CoopilotEmail = UserEmail;
-                SettingsWindow.SaveConfig(cfg);
+                if (!SettingsWindow.SaveConfig(cfg))
+                    System.Diagnostics.Debug.WriteLine("[LOGIN] SaveConfig failed (CoopilotEmail not persisted)");
 
                 UserSession.SetSession(IdToken, UserEmail, UserName, UserId, result.RefreshToken);
                 SettingsWindow.SaveLastAccount(UserEmail, UserName, result.PhotoUrl, "google");
@@ -251,8 +260,9 @@ namespace InterviewCopilotMac6.Views
                 LoginSuccess = true;
                 this.Close();
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                System.Diagnostics.Debug.WriteLine($"[LOGIN] DoGoogleSignIn failed: {ex.Message}");
                 ShowError("Connection error. Check your internet connection.");
                 SetLoading(false);
             }

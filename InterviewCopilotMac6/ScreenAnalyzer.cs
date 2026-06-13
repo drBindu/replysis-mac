@@ -93,15 +93,18 @@ namespace InterviewCopilotMac6
                     var sipsProc = System.Diagnostics.Process.Start(sips);
                     await (sipsProc?.WaitForExitAsync(externalCt) ?? System.Threading.Tasks.Task.CompletedTask);
                     if (File.Exists(resizedPath))
-                    {
                         imageBytes = await File.ReadAllBytesAsync(resizedPath, externalCt);
-                        File.Delete(resizedPath);
-                    }
                 }
                 catch (Exception sipsEx)
                 {
                     Views.DebugWindow.Log("SCREEN_SIPS", $"sips resize failed — using original image: {sipsEx.Message}");
                     // imageBytes already holds the unresized capture; continue with it
+                }
+                finally
+                {
+                    // Clean up regardless of success/cancellation/exception — otherwise a
+                    // cancelled or failed resize leaves *_resized.png files behind forever.
+                    try { if (File.Exists(resizedPath)) File.Delete(resizedPath); } catch { }
                 }
 
                 Views.DebugWindow.Log("SCREEN", $"Captured {imageBytes.Length / 1024} KB");
@@ -329,7 +332,11 @@ namespace InterviewCopilotMac6
                 finally
                 {
                     string full = CleanContent(accumulated.ToString());
-                    if (!string.IsNullOrWhiteSpace(full))
+                    // Only a complete, non-empty result becomes the new "last screen"
+                    // context. A cancelled stream (partial/truncated text) or an empty
+                    // response must not overwrite it with misleading data — keep
+                    // whatever the last successful capture produced.
+                    if (!ct.IsCancellationRequested && !string.IsNullOrWhiteSpace(full))
                         // Cap stored context — avoids unbounded growth across many captures
                         LastScreenContext = full.Length > MaxContextChars
                             ? full.Substring(0, MaxContextChars) + "…"

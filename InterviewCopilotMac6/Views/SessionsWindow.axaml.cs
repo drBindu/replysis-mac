@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -98,7 +99,8 @@ namespace InterviewCopilotMac6.Views
                     int.TryParse(parts[0].Replace("SESSION", "").Trim(), out sessionNum);
                 if (parts.Length >= 2)
                     modelName = parts[1].Trim();
-                if (parts.Length >= 3 && DateTime.TryParse(parts[2].Trim(), out var parsed))
+                if (parts.Length >= 3 && DateTime.TryParseExact(parts[2].Trim(), "yyyy-MM-dd HH:mm:ss",
+                        CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
                     sessionDate = parsed;
                 if (parts.Length >= 4)
                     resumeTitle = parts[3].Trim().Replace("RESUME:", "").Trim();
@@ -451,6 +453,7 @@ namespace InterviewCopilotMac6.Views
                 CanResize = false,
                 SystemDecorations = SystemDecorations.BorderOnly
             };
+            dialog.KeyDown += (_, e) => { if (e.Key == Key.Escape) dialog.Close(); };
 
             var panel = new StackPanel { Margin = new Thickness(24) };
             panel.Children.Add(new TextBlock
@@ -493,6 +496,10 @@ namespace InterviewCopilotMac6.Views
                 };
                 yesBtn.Click += (_, _) => { result = true; dialog.Close(); };
                 btnRow.Children.Add(yesBtn);
+
+                // Default focus on Cancel so a stray Enter press doesn't trigger
+                // the destructive action — Tab/arrow keys can still reach Delete.
+                dialog.Opened += (_, _) => cancelBtn.Focus();
             }
             else
             {
@@ -507,6 +514,8 @@ namespace InterviewCopilotMac6.Views
                 };
                 okBtn.Click += (_, _) => dialog.Close();
                 btnRow.Children.Add(okBtn);
+
+                dialog.Opened += (_, _) => okBtn.Focus();
             }
 
             panel.Children.Add(btnRow);

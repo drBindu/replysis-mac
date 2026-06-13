@@ -61,8 +61,16 @@ namespace InterviewCopilotMac6
             var sb = new StringBuilder();
             foreach (var page in pdf.GetPages())
             {
-                sb.AppendLine(ContentOrderTextExtractor.GetText(page));
-                sb.AppendLine();
+                try
+                {
+                    sb.AppendLine(ContentOrderTextExtractor.GetText(page));
+                    sb.AppendLine();
+                }
+                catch (Exception ex)
+                {
+                    // A single malformed page shouldn't sink extraction of the rest of the resume.
+                    System.Diagnostics.Debug.WriteLine($"[RESUME] page {page.Number} text extraction failed: {ex.Message}");
+                }
             }
             return sb.ToString();
         }

@@ -153,13 +153,6 @@
 
           <Border Height="1" Background="#1e232d" Margin="0,4,0,16"/>
 
-          <TextBlock Text="SPOKEN LANGUAGE (SPEECH-TO-TEXT)" Classes="SectionLabel"/>
-          <ComboBox x:Name="SpeechLanguageCombo"/>
-          <TextBlock Text="Set this to the language you'll be speaking — improves transcription accuracy for non-English speech."
-                     Classes="HintLabel" Margin="4,2,0,16" TextWrapping="Wrap"/>
-
-          <Border Height="1" Background="#1e232d" Margin="0,4,0,16"/>
-
           <TextBlock Text="TRANSPARENCY" Classes="SectionLabel"/>
 
           <DockPanel Margin="0,4,0,4">

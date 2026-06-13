@@ -104,6 +104,7 @@ public partial class App : Application
     // ── Fetch appcast manually and do version comparison ourselves ──
     internal static async System.Threading.Tasks.Task<string> CheckForUpdatesAsync(Action<string>? onStatus = null)
     {
+        bool weClaimedDialog = false;
         try
         {
             var currentVersionStr = GetAppVersion();
@@ -126,6 +127,8 @@ public partial class App : Application
             if (remoteVersion <= currentVersion) { Log("no update needed"); LastUpdateStatus = $"You're up to date  (v{currentVersionStr})"; onStatus?.Invoke(LastUpdateStatus); return "uptodate"; }
 
             if (_updateDialogShowing) { Log("dialog already showing"); return "showing"; }
+            _updateDialogShowing = true;
+            weClaimedDialog = true;
 
             Log("update available — showing popup");
 
@@ -152,7 +155,6 @@ public partial class App : Application
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                _updateDialogShowing = true;
                 var win    = new UpdateWindow(Sparkle, item);
                 var parent = GetMainWindow();
                 win.Closed += (_, _) => _updateDialogShowing = false;
@@ -166,6 +168,7 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
+            if (weClaimedDialog) _updateDialogShowing = false;
             Log($"EXCEPTION: {ex}");
             onStatus?.Invoke("Check failed.");
             return "error";

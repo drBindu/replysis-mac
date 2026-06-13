@@ -123,7 +123,7 @@ namespace InterviewCopilotMac6
 
         public static bool IsGreeting(string q)
         {
-            string t = q.Trim().ToLower().TrimEnd('.', '!', '?', ' ');
+            string t = q.Trim().ToLower().TrimEnd('.', '!', '?', ',', ' ');
             return t is "hi" or "hello" or "hey" or "hi there" or
                    "good morning" or "good afternoon" or "good evening" or
                    "greetings" or "hey there";
@@ -329,8 +329,11 @@ namespace InterviewCopilotMac6
                     int idx = FindBoundaryMatch(aLow, kw);
                     if (idx >= 0)
                     {
-                        int start = Math.Max(0, idx - 15);
-                        int end   = Math.Min(answer.Length, idx + kw.Length + 50);
+                        // Clamp into [0, answer.Length] — ToLower() can change string
+                        // length for some Unicode characters (e.g. 'İ' → "i̇"), so an
+                        // index found in aLow isn't guaranteed valid against `answer`.
+                        int start = Math.Clamp(idx - 15, 0, answer.Length);
+                        int end   = Math.Clamp(idx + kw.Length + 50, start, answer.Length);
                         string snippet = answer.Substring(start, end - start).Trim();
                         if (snippet.Length > 80) snippet = snippet.Substring(0, 80) + "...";
                         LockedFacts[key] = $"{kw} (you said: \"{snippet}\")";
@@ -408,7 +411,7 @@ namespace InterviewCopilotMac6
                 return _cachedSystemPrompt;
 
             bool hasResume = !string.IsNullOrWhiteSpace(resumeFacts)
-                             && resumeFacts != "No resume provided.";
+                             && resumeFacts != ResumeParser.NoResumeMarker;
 
             var sb = new StringBuilder();
 
@@ -819,7 +822,7 @@ namespace InterviewCopilotMac6
             var qType    = qTypeHint ?? DetectType(rawQuestion);
             bool isDrill = drillDownHint ?? IsDrillDown(rawQuestion);
             bool hasResume = !string.IsNullOrWhiteSpace(resumeFacts)
-                             && resumeFacts != "No resume provided.";
+                             && resumeFacts != ResumeParser.NoResumeMarker;
 
             sb.AppendLine("=== ROLE: YOU ARE THE JOB CANDIDATE SPEAKING IN A LIVE INTERVIEW. ===");
             sb.AppendLine();
