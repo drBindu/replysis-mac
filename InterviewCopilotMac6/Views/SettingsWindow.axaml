@@ -105,13 +105,10 @@
 
           <TextBlock Text="AI MODEL" Classes="SectionLabel"/>
           <ComboBox x:Name="ModelCombo">
-            <ComboBoxItem Content="GPT-4.1 (OpenAI — Best Quality)" IsSelected="True"/>
-            <ComboBoxItem Content="GPT-4o-mini (OpenAI — Fast + Cheap)"/>
-            <ComboBoxItem Content="GPT-4o (OpenAI — Balanced)"/>
-            <ComboBoxItem Content="Llama 3.3 70B (Groq — Free)"/>
-            <ComboBoxItem Content="Gemini 2.0 Flash (Google)"/>
+            <ComboBoxItem Content="ChatGPT (GPT-4o — Best Quality)" IsSelected="True"/>
+            <ComboBoxItem Content="Llama 3.1 8B Instant (Groq — Free + Fast)"/>
           </ComboBox>
-          <TextBlock Text="GPT-4.1 recommended for interviews. Groq/Gemini = free but weaker."
+          <TextBlock Text="ChatGPT recommended for interviews. Llama Instant is free and faster."
                      Classes="HintLabel" Margin="4,2,0,16"/>
 
           <Border Height="1" Background="#1e232d" Margin="0,4,0,16"/>
@@ -243,7 +240,7 @@
                          FontSize="11" FontWeight="Bold" Margin="0,0,0,6"/>
               <TextBlock Foreground="#4b5563" FontSize="10.5"
                          TextWrapping="Wrap" LineHeight="18">
-                • For interviews: GPT-4.1 + temp 0.2 = sharp, consistent answers&#10;• For practice: GPT-4o-mini + temp 0.4 = fast and cheap&#10;• Free option: Groq Llama 3.3 (rate limited, weaker quality)&#10;• Transparency: lower main window opacity to blend into screen&#10;• CoopilotX email: enter to see your credits balance in the app&#10;• Keys saved locally — never sent anywhere except the AI provider
+                • For interviews: ChatGPT (GPT-4o) + temp 0.2 = sharp, consistent answers&#10;• Free option: Llama 3.1 8B Instant (Groq) — faster, slightly weaker quality&#10;• Transparency: lower main window opacity to blend into screen&#10;• CoopilotX email: enter to see your credits balance in the app&#10;• AI requests are routed securely through CoopilotX — no API keys needed
               </TextBlock>
             </StackPanel>
           </Border>

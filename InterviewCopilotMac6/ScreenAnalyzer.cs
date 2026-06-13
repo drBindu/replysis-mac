@@ -292,9 +292,7 @@ namespace InterviewCopilotMac6
             string base64 = await Task.Run(() => Convert.ToBase64String(imageBytes), ct);
 
             string prompt = BuildScreenPrompt(resumeContext);
-            string provider = Views.SettingsWindow.IsGemini() ? "gemini"
-                             : Views.SettingsWindow.IsGroq()   ? "groq"
-                             : "openai";
+            string provider = Views.SettingsWindow.IsGroq() ? "groq" : "openai";
 
             var (res, sendError) = await SendBackendVisionRequestSafeAsync(base64, prompt, provider, ct);
             if (res == null)

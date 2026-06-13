@@ -23,19 +23,13 @@ namespace InterviewCopilotMac6.Views
 
         // ── Model definitions ──
         public static readonly string[] ModelIds = {
-            "gpt-4.1",
-            "gpt-4o-mini",
             "gpt-4o",
-            "llama-3.3-70b-versatile",
-            "gemini-2.0-flash",
+            "llama-3.1-8b-instant",
         };
 
         public static readonly string[] ModelEndpoints = {
             "https://api.openai.com/v1/chat/completions",
-            "https://api.openai.com/v1/chat/completions",
-            "https://api.openai.com/v1/chat/completions",
             "https://api.groq.com/openai/v1/chat/completions",
-            "https://generativelanguage.googleapis.com/v1beta/",
         };
 
         // ═══════════════════════════════════════════════════════════════
@@ -330,8 +324,7 @@ namespace InterviewCopilotMac6.Views
         public static string GetBackendUrl() => LoadConfig().BackendUrl ?? "";
         public static string GetCoopilotEmail() => LoadConfig().CoopilotEmail ?? "";
         public static double GetTemperature() => LoadConfig().Temperature;
-        public static bool IsGemini() => LoadConfig().ModelIndex == 4;
-        public static bool IsGroq() => LoadConfig().ModelIndex == 3;
+        public static bool IsGroq() => LoadConfig().ModelIndex == 1;
 
         public static double GetMainWindowOpacity()
         {

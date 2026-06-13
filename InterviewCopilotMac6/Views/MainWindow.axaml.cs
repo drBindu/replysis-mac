@@ -1025,7 +1025,7 @@ namespace InterviewCopilotMac6.Views
             var (qType, isDrill) = PromptBuilder.ClassifyQuestion(question);
             var messages = PromptBuilder.BuildMessages(resumeFacts, question, qType, isDrill);
             string enhancedQuestion = PromptBuilder.BuildEnhancedQuestion(question, resumeFacts, qType, isDrill);
-            var payload = new { question = enhancedQuestion, resume = resume ?? "", provider = SettingsWindow.IsGroq() ? "groq" : SettingsWindow.IsGemini() ? "gemini" : "openai", messages };
+            var payload = new { question = enhancedQuestion, resume = resume ?? "", provider = SettingsWindow.IsGroq() ? "groq" : "openai", messages };
 
             using var request = new HttpRequestMessage(HttpMethod.Post,
                 $"{BackendUrl}/api/v1/interview/ask");
