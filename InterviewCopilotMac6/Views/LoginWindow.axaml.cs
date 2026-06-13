@@ -221,7 +221,7 @@ namespace InterviewCopilotMac6.Views
 
         private async Task DoGoogleSignIn()
         {
-            if (string.IsNullOrEmpty(SettingsWindow.GetGoogleClientId()))
+            if (string.IsNullOrEmpty(SettingsWindow.GetGoogleClientId()) || string.IsNullOrEmpty(SettingsWindow.GetGoogleClientSecret()))
             {
                 ShowError("Google sign-in isn't configured yet.");
                 return;

@@ -356,17 +356,15 @@ namespace InterviewCopilotMac6.Views
             return string.IsNullOrEmpty(key) ? _defaultFirebaseKey : key;
         }
         private static readonly string _defaultGoogleClientId = "745433477203-lvqmnnip9pb241vkfp628qmue8313cre.apps.googleusercontent.com";
-        private static readonly string _defaultGoogleClientSecret = "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";
         public static string GetGoogleClientId()
         {
             var id = LoadConfig().GoogleClientId;
             return string.IsNullOrEmpty(id) ? _defaultGoogleClientId : id;
         }
-        public static string GetGoogleClientSecret()
-        {
-            var secret = LoadConfig().GoogleClientSecret;
-            return string.IsNullOrEmpty(secret) ? _defaultGoogleClientSecret : secret;
-        }
+        // No compiled default: the client secret must come from config.json.
+        // Hardcoding it here gets caught by GitHub push protection / secret scanning
+        // and leads Google to revoke it, breaking sign-in for everyone.
+        public static string GetGoogleClientSecret() => LoadConfig().GoogleClientSecret ?? "";
 
         public static (string Email, string Name, string PhotoUrl, string Provider) GetLastAccount()
         {
