@@ -357,15 +357,15 @@
           <!-- Right Panel -->
           <Grid Grid.Column="2">
             <Grid.RowDefinitions>
-              <RowDefinition Height="1*"/>
               <RowDefinition Height="2*"/>
+              <RowDefinition Height="1*"/>
             </Grid.RowDefinitions>
 
             <!-- Transcript Box -->
-            <Border Grid.Row="0" Background="#CC0D1117" CornerRadius="14"
+            <Border Grid.Row="1" Background="#CC0D1117" CornerRadius="14"
                     BorderBrush="#22FFFFFF" BorderThickness="1"
                     BoxShadow="0 4 16 0 #30000000"
-                    Padding="22,18" Margin="0,0,0,14">
+                    Padding="22,18">
               <Grid>
                 <Grid.RowDefinitions>
                   <RowDefinition Height="Auto"/>
@@ -430,10 +430,10 @@
             </Border>
 
             <!-- AI Answer Box -->
-            <Border Grid.Row="1" Background="#CC080F1E" CornerRadius="14"
+            <Border Grid.Row="0" Background="#CC080F1E" CornerRadius="14"
                     BorderBrush="#441E3A8A" BorderThickness="1"
                     BoxShadow="0 4 16 0 #30000000"
-                    Padding="22,18">
+                    Padding="22,18" Margin="0,0,0,14">
               <Grid>
                 <Grid.RowDefinitions>
                   <RowDefinition Height="Auto"/>
