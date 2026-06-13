@@ -355,7 +355,7 @@ namespace InterviewCopilotMac6.Views
             var key = LoadConfig().FirebaseApiKey;
             return string.IsNullOrEmpty(key) ? _defaultFirebaseKey : key;
         }
-        private static readonly string _defaultGoogleClientId = "745433477203-lvqmnnip9pb241vkfp628qmue8313cre.apps.googleusercontent.com";
+        private static readonly string _defaultGoogleClientId = "442817370861-u77om39f2hj70optn51at6psrqr6b56k.apps.googleusercontent.com";
         public static string GetGoogleClientId()
         {
             var id = LoadConfig().GoogleClientId;
