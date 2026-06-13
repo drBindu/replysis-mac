@@ -62,6 +62,13 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore InterviewCopilotMac6/InterviewCopilotMac6.csproj
 
+      - name: Inject Google OAuth client secret (build-time only, never committed)
+        env:
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: |
+          sed -i '' "s|_defaultGoogleClientSecret = \"\"|_defaultGoogleClientSecret = \"$GOOGLE_CLIENT_SECRET\"|" \
+            InterviewCopilotMac6/Views/SettingsWindow.axaml.cs
+
       - name: Publish (ARM64 self-contained)
         run: |
           dotnet publish InterviewCopilotMac6/InterviewCopilotMac6.csproj \

@@ -361,10 +361,16 @@ namespace InterviewCopilotMac6.Views
             var id = LoadConfig().GoogleClientId;
             return string.IsNullOrEmpty(id) ? _defaultGoogleClientId : id;
         }
-        // No compiled default: the client secret must come from config.json.
-        // Hardcoding it here gets caught by GitHub push protection / secret scanning
-        // and leads Google to revoke it, breaking sign-in for everyone.
-        public static string GetGoogleClientSecret() => LoadConfig().GoogleClientSecret ?? "";
+        // Left empty in source (safe to commit — no secret pattern for GitHub to flag).
+        // CI replaces this placeholder with the real secret at build time from a
+        // GitHub Actions secret, so it's baked into release binaries without ever
+        // being committed to git.
+        private static readonly string _defaultGoogleClientSecret = "";
+        public static string GetGoogleClientSecret()
+        {
+            var secret = LoadConfig().GoogleClientSecret;
+            return string.IsNullOrEmpty(secret) ? _defaultGoogleClientSecret : secret;
+        }
 
         public static (string Email, string Name, string PhotoUrl, string Provider) GetLastAccount()
         {
