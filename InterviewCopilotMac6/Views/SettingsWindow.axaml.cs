@@ -48,7 +48,6 @@ namespace InterviewCopilotMac6.Views
 
             var cfg = LoadConfig();
             ModelCombo.SelectedIndex = Math.Clamp(cfg.ModelIndex, 0, ModelIds.Length - 1);
-            ApiKeyBox.Text = cfg.ApiKey ?? "";
             CoopilotEmailBox.Text = cfg.CoopilotEmail ?? "";
             TempSlider.Value = cfg.Temperature;
             TempLabel.Text = cfg.Temperature.ToString("F1");
@@ -64,54 +63,6 @@ namespace InterviewCopilotMac6.Views
             OverlayOpacitySlider.Value = Math.Clamp(overlayOpPct, 10, 100);
             MainOpacityLabel.Text = $"{(int)MainOpacitySlider.Value}%";
             OverlayOpacityLabel.Text = $"{(int)OverlayOpacitySlider.Value}%";
-
-            // Live API key validation feedback
-            ApiKeyBox.TextChanged += (s, e) => ValidateApiKeyLive();
-            ModelCombo.SelectionChanged += (s, e) => ValidateApiKeyLive();
-            ValidateApiKeyLive();
-        }
-
-        /// <summary>
-        /// Provides real-time coloured hint feedback on the API key format.
-        /// </summary>
-        private void ValidateApiKeyLive()
-        {
-            string key = ApiKeyBox.Text?.Trim() ?? "";
-            int modelIdx = ModelCombo.SelectedIndex;
-
-            if (string.IsNullOrEmpty(key))
-            {
-                ApiKeyHintLabel.Text = "Required — paste your API key above.";
-                ApiKeyHintLabel.Foreground = Avalonia.Media.Brush.Parse("#f59e0b");
-                return;
-            }
-
-            bool valid = modelIdx switch
-            {
-                0 or 1 or 2 => key.StartsWith("sk-", StringComparison.Ordinal),      // OpenAI
-                3            => key.StartsWith("gsk_", StringComparison.Ordinal),     // Groq
-                4            => key.StartsWith("AIza", StringComparison.Ordinal),     // Gemini
-                _            => true
-            };
-
-            string expectedFormat = modelIdx switch
-            {
-                0 or 1 or 2 => "OpenAI key should start with sk-",
-                3            => "Groq key should start with gsk_",
-                4            => "Gemini key should start with AIza",
-                _            => ""
-            };
-
-            if (valid)
-            {
-                ApiKeyHintLabel.Text = "✓ Key format looks correct.";
-                ApiKeyHintLabel.Foreground = Avalonia.Media.Brush.Parse("#4ade80");
-            }
-            else
-            {
-                ApiKeyHintLabel.Text = $"⚠ {expectedFormat}";
-                ApiKeyHintLabel.Foreground = Avalonia.Media.Brush.Parse("#ef4444");
-            }
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -184,15 +135,6 @@ namespace InterviewCopilotMac6.Views
 
         private void SaveBtn_Click(object? sender, RoutedEventArgs e)
         {
-            string apiKey = ApiKeyBox.Text?.Trim() ?? "";
-
-            // Warn if API key is empty — don't block save, but inform user
-            if (string.IsNullOrEmpty(apiKey))
-            {
-                UpdateStatusLabel.Text = "⚠ No API key entered — Screen Analysis won't work without one.";
-                UpdateStatusLabel.Foreground = Avalonia.Media.Brush.Parse("#f59e0b");
-            }
-
             if (AudioDeviceCombo.SelectedIndex > -1 && deviceIndices.Count > AudioDeviceCombo.SelectedIndex)
                 SelectedDeviceIndex = deviceIndices[AudioDeviceCombo.SelectedIndex];
 
@@ -201,7 +143,6 @@ namespace InterviewCopilotMac6.Views
             // mutating the shared in-memory cache before SaveConfig confirms the write.
             var cfg = CloneConfig(LoadConfig());
             cfg.ModelIndex = ModelCombo.SelectedIndex >= 0 ? ModelCombo.SelectedIndex : 0;
-            cfg.ApiKey = apiKey;
             cfg.CoopilotEmail = CoopilotEmailBox.Text?.Trim() ?? "";
             cfg.Temperature = Math.Round(TempSlider.Value, 1);
             cfg.MainWindowOpacity = Math.Round(MainOpacitySlider.Value / 100.0, 2);
@@ -253,7 +194,6 @@ namespace InterviewCopilotMac6.Views
         public class AppConfig
         {
             public int ModelIndex { get; set; } = 0;
-            public string ApiKey { get; set; } = "";
             public string SpeechmaticsKey { get; set; } = "";
             public string BackendUrl { get; set; } = "https://ai-powered-developer-assistance-platform.onrender.com/api/config/keys";
             public string CoopilotEmail { get; set; } = "";
@@ -349,7 +289,6 @@ namespace InterviewCopilotMac6.Views
 
         // FIX 6 — default key kept in a private field; not exposed as default property value
         private static readonly string _defaultFirebaseKey = "AIzaSyAGGmuFpR0qkCHLI3q2cPv_o3cQlbIU8lE";
-        public static string GetApiKey() => LoadConfig().ApiKey ?? "";
         public static string GetFirebaseApiKey()
         {
             var key = LoadConfig().FirebaseApiKey;

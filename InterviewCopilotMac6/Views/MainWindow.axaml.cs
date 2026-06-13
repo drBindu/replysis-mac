@@ -21,7 +21,7 @@ namespace InterviewCopilotMac6.Views
 {
     public partial class MainWindow : Window
     {
-        private const string BackendUrl = "https://coopilotxai.com";
+        internal const string BackendUrl = "https://coopilotxai.com";
 
         // ── Tunable constants ──────────────────────────────────────────
         private const int TranscriptPollMs         = 150;
@@ -532,6 +532,17 @@ namespace InterviewCopilotMac6.Views
             if (!UserSession.IsLoggedIn)
             {
                 AiAnswerBox.Text = "⚠ Please sign in to use Screen Analysis.\n\nClick the Sign In button in the top right.";
+                return;
+            }
+
+            // Check Screen Recording permission BEFORE capturing — a capture taken without
+            // this permission only shows the desktop wallpaper, wasting a vision call/credit.
+            if (!ScreenAnalyzer.EnsureScreenRecordingPermission())
+            {
+                AiAnswerBox.Text = "⚠ Screen Recording permission needed.\n\n" +
+                    "1. Open System Settings → Privacy & Security → Screen Recording\n" +
+                    "2. Enable the toggle for this app (it may be listed as \"Avalonia Application\")\n" +
+                    "3. Quit and reopen Interview Copilot, then try again";
                 return;
             }
 

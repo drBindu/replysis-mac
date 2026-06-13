@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Net;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -122,15 +122,31 @@ namespace InterviewCopilotMac6
         }
 
         // ═════════════════════════════════════════════════════════════════════
-        // VISION PROVIDER
+        // SCREEN RECORDING PERMISSION (macOS TCC)
         // ═════════════════════════════════════════════════════════════════════
 
-        private static (string Endpoint, string Model) GetVisionProvider()
+        [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
+        private static extern bool CGPreflightScreenCaptureAccess();
+
+        [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
+        private static extern bool CGRequestScreenCaptureAccess();
+
+        // Checks Screen Recording permission WITHOUT taking a screenshot — avoids wasting
+        // a vision API call/credit on a capture that would only show the desktop wallpaper.
+        // If permission was never requested, also triggers the system prompt + registers
+        // this app in System Settings → Privacy & Security → Screen Recording.
+        public static bool EnsureScreenRecordingPermission()
         {
-            if (Views.SettingsWindow.IsGroq())
-                return ("https://api.groq.com/openai/v1/chat/completions",
-                        "meta-llama/llama-4-scout-17b-16e-instruct");
-            return ("https://api.openai.com/v1/chat/completions", "gpt-4o");
+            try
+            {
+                if (CGPreflightScreenCaptureAccess()) return true;
+                CGRequestScreenCaptureAccess();
+                return false;
+            }
+            catch
+            {
+                return true; // API unavailable (old macOS) — don't block capture
+            }
         }
 
         // ═════════════════════════════════════════════════════════════════════
@@ -272,25 +288,15 @@ namespace InterviewCopilotMac6
             byte[] imageBytes, string? resumeContext = null,
             [EnumeratorCancellation] CancellationToken ct = default)
         {
-            string apiKey = Views.SettingsWindow.GetApiKey();
-            if (string.IsNullOrWhiteSpace(apiKey))
-            {
-                yield return "⚠ No API key set for Screen Analysis.\n\n" +
-                             "• Open ⚙ Settings → paste your key\n" +
-                             "• Groq key (gsk_…) → free, uses Llama 4 Scout vision\n" +
-                             "• OpenAI key (sk-…) → GPT-4o Vision";
-                yield break;
-            }
-
-            var (endpoint, visionModel) = GetVisionProvider();
-
             // Base64-encode off the calling thread — PNG for a Retina screen can be 5–8 MB
             string base64 = await Task.Run(() => Convert.ToBase64String(imageBytes), ct);
 
-            string prompt      = BuildScreenPrompt(resumeContext);
-            string payloadJson = BuildVisionPayloadJson(visionModel, base64, prompt);
+            string prompt = BuildScreenPrompt(resumeContext);
+            string provider = Views.SettingsWindow.IsGemini() ? "gemini"
+                             : Views.SettingsWindow.IsGroq()   ? "groq"
+                             : "openai";
 
-            var (res, sendError) = await SendVisionRequestSafeAsync(endpoint, apiKey, payloadJson, ct);
+            var (res, sendError) = await SendBackendVisionRequestSafeAsync(base64, prompt, provider, ct);
             if (res == null)
             {
                 yield return sendError;
@@ -300,10 +306,21 @@ namespace InterviewCopilotMac6
             // Use 'using' so res is disposed exactly once regardless of code path
             using (res)
             {
+                int status = (int)res.StatusCode;
+                if (status == 402)
+                {
+                    yield return "⚠ Not enough credits. Visit coopilotxai.com/pricing to upgrade.";
+                    yield break;
+                }
+                if (status == 401)
+                {
+                    UserSession.Clear();
+                    yield return "⚠ Session expired. Please sign in again.";
+                    yield break;
+                }
                 if (!res.IsSuccessStatusCode)
                 {
-                    string errMsg = await ParseVisionErrorSafeAsync(res, ct);
-                    yield return errMsg;
+                    yield return $"⚠ Screen analysis failed (HTTP {status}). Try again.";
                     yield break;
                 }
 
@@ -345,7 +362,7 @@ namespace InterviewCopilotMac6
 
                 // Guard: if the model returned nothing, tell the user clearly
                 if (accumulated.Length == 0)
-                    yield return "⚠ The vision model returned an empty response. Try again or check your API key and quota.";
+                    yield return "⚠ The vision model returned an empty response. Try again.";
 
             }
         }
@@ -394,15 +411,21 @@ namespace InterviewCopilotMac6
         // HELPERS
         // ═════════════════════════════════════════════════════════════════════
 
+        // Posts the captured screenshot + prompt to the backend's analyze-screen endpoint —
+        // server-side Groq/OpenAI keys + credits, same auth pattern as the normal chat /ask call.
         private static async Task<(HttpResponseMessage? Response, string Error)>
-            SendVisionRequestSafeAsync(
-                string endpoint, string apiKey, string payloadJson, CancellationToken ct)
+            SendBackendVisionRequestSafeAsync(
+                string base64Image, string prompt, string provider, CancellationToken ct)
         {
             try
             {
-                using var req = new HttpRequestMessage(HttpMethod.Post, endpoint);
-                req.Headers.Add("Authorization", $"Bearer {apiKey}");
-                req.Content = new StringContent(payloadJson, Encoding.UTF8, "application/json");
+                var payload = new { image = base64Image, prompt, provider };
+                using var req = new HttpRequestMessage(HttpMethod.Post,
+                    $"{Views.MainWindow.BackendUrl}/api/v1/interview/analyze-screen");
+                req.Headers.Add("Authorization", $"Bearer {UserSession.IdToken}");
+                req.Content = new StringContent(
+                    JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+
                 var response = await SharedHttpClient.Http.SendAsync(
                     req, HttpCompletionOption.ResponseHeadersRead, ct);
                 return (response, "");
@@ -423,42 +446,6 @@ namespace InterviewCopilotMac6
             }
         }
 
-        private static async Task<string> ParseVisionErrorSafeAsync(
-            HttpResponseMessage res, CancellationToken ct)
-        {
-            // Handle common HTTP status codes before parsing the body
-            if (res.StatusCode == HttpStatusCode.Unauthorized)
-                return "⚠ Invalid API key. Open ⚙ Settings → check your key.";
-            if (res.StatusCode == HttpStatusCode.TooManyRequests)
-                return "⚠ Rate limit hit. Wait a moment and try again.";
-            if (res.StatusCode == HttpStatusCode.PaymentRequired)
-                return "⚠ API quota exceeded. Check billing at your provider dashboard.";
-
-            try
-            {
-                string body = await res.Content.ReadAsStringAsync(ct);
-                Views.DebugWindow.Log("SCREEN_ERR", $"HTTP {(int)res.StatusCode}: {body}");
-
-                using var doc = JsonDocument.Parse(body);
-                string msg = "";
-                if (doc.RootElement.TryGetProperty("error", out var errEl) &&
-                    errEl.TryGetProperty("message", out var msgEl))
-                    msg = msgEl.GetString() ?? "";
-
-                if (string.IsNullOrEmpty(msg)) return $"⚠ Vision API error (HTTP {(int)res.StatusCode}).";
-                if (msg.Contains("API key"))    return "⚠ Invalid API key. Open ⚙ Settings → check your key.";
-                if (msg.Contains("quota") || msg.Contains("billing"))
-                    return "⚠ API quota exceeded. Check billing at your provider dashboard.";
-                if (msg.Contains("vision") || msg.Contains("image"))
-                    return $"⚠ This model doesn't support vision. Switch to GPT-4o in Settings.\n{msg}";
-                return $"⚠ API error: {msg}";
-            }
-            catch
-            {
-                return $"⚠ Vision API error (HTTP {(int)res.StatusCode}). Check your API key in Settings.";
-            }
-        }
-
         private static string ParseSseToken(string data)
         {
             try
@@ -476,39 +463,6 @@ namespace InterviewCopilotMac6
                 return delta.TryGetProperty("content", out var cp) ? cp.GetString() ?? "" : "";
             }
             catch { return ""; }
-        }
-
-        private static string BuildVisionPayloadJson(string model, string base64, string prompt)
-        {
-            // Groq's vision API does not support the "detail" parameter — omit it for Groq.
-            // OpenAI supports "auto" or "high"; use "high" for best accuracy on OpenAI.
-            bool isGroq = Views.SettingsWindow.IsGroq();
-
-            object imageContent = isGroq
-                ? (object)new { type = "image_url",
-                                image_url = new { url = $"data:image/png;base64,{base64}" } }
-                : (object)new { type = "image_url",
-                                image_url = new { url = $"data:image/png;base64,{base64}", detail = "high" } };
-
-            var payload = new
-            {
-                model,
-                max_tokens = 4096,
-                stream     = true,
-                messages   = new[]
-                {
-                    new
-                    {
-                        role    = "user",
-                        content = new object[]
-                        {
-                            new { type = "text", text = prompt },
-                            imageContent
-                        }
-                    }
-                }
-            };
-            return JsonSerializer.Serialize(payload);
         }
 
         // Shared markdown stripper — used by both PostProcess and CleanContent
