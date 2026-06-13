@@ -1203,6 +1203,11 @@ namespace InterviewCopilotMac6.Views
                 await clipboard.SetTextAsync(AiAnswerBox.Text);
         }
 
+        private void AiAnswerBox_TextChanged(object? sender, Avalonia.Controls.TextChangedEventArgs e)
+        {
+            AiAnswerHint.IsVisible = string.IsNullOrWhiteSpace(AiAnswerBox.Text);
+        }
+
         private void ClearAnswerBtn_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
             // Cancel any in-progress AI stream so it doesn't overwrite the cleared text
@@ -1212,7 +1217,9 @@ namespace InterviewCopilotMac6.Views
 
             TranscriptTextBlock.Text  = "";
             TranscriptHint.IsVisible  = true;
-            AiAnswerBox.Text = "Ready — press SPACE to start listening, then SPACE again to get your answer.";
+            AiAnswerHint.Text = "Ready. Press SPACE to start listening, then SPACE again to get your answer.";
+            AiAnswerBox.Text = "";
+            AiAnswerHint.IsVisible = true;
             if (_answerWindow != null) { _answerWindow.UpdateAnswer(""); _answerWindow.UpdateQuestion(""); }
             PromptBuilder.ClearHistory();
             try { File.WriteAllText(Path.Combine(AppDataFolder, "latest.txt"), ""); } catch (Exception ex) { DebugWindow.Log("FILE", $"latest.txt clear failed: {ex.Message}"); }
@@ -1226,7 +1233,9 @@ namespace InterviewCopilotMac6.Views
             // FIX 10 — removed duplicate sessionNumber++ here; StartNewSession scans for next free number
             TranscriptTextBlock.Text = "";
             TranscriptHint.IsVisible = true;
-            AiAnswerBox.Text = "New session started — press SPACE to begin.";
+            AiAnswerHint.Text = "New session started. Press SPACE to begin.";
+            AiAnswerBox.Text = "";
+            AiAnswerHint.IsVisible = true;
             if (_answerWindow != null) { _answerWindow.UpdateAnswer(""); _answerWindow.UpdateQuestion(""); }
             StartNewSession();
         }
