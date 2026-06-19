@@ -155,14 +155,34 @@ namespace InterviewCopilotMac6
         {
             YesNo, Intro, Technical, Behavioral, Situational,
             Weakness, WhyRole, Salary, Availability, FollowUp,
-            Preference, General
+            Preference, MemoryRecall, ContextStatement, General
         }
 
         private static QuestionType DetectType(string q)
         {
             string t = q.ToLower().Trim();
 
-            if (t.Contains("tell me more") || t.Contains("can you elaborate") ||
+            // Detect interviewer sharing context (statement, not a question)
+            bool hasQuestionMark = t.Contains('?');
+            bool startsWithInterviewerInfo =
+                t.StartsWith("my name is") || t.StartsWith("i am ") ||
+                t.StartsWith("i'm ") || t.StartsWith("we are ") || t.StartsWith("we're ") ||
+                t.StartsWith("this role") || t.StartsWith("this position") ||
+                t.StartsWith("our company") || t.StartsWith("the company") ||
+                t.StartsWith("i work at") || t.StartsWith("i work for") ||
+                t.StartsWith("i currently") || t.StartsWith("just so you know") ||
+                t.StartsWith("fyi") || t.StartsWith("by the way");
+            if (startsWithInterviewerInfo && !hasQuestionMark)
+                return QuestionType.ContextStatement;
+
+            // Detect memory recall -- interviewer asking candidate to recall what they said
+            if ((t.Contains("what") || t.Contains("tell me")) &&
+                (t.Contains("my name") || t.Contains("what i do") || t.Contains("what do i do") ||
+                 t.Contains("who am i") || t.Contains("where do i work") || t.Contains("what i said") ||
+                 t.Contains("what i told") || t.Contains("what did i say") || t.Contains("what i just said")))
+                return QuestionType.MemoryRecall;
+
+                        if (t.Contains("tell me more") || t.Contains("can you elaborate") ||
                 t.Contains("expand on that") || t.Contains("go deeper") ||
                 t.Contains("what do you mean by") || t.Contains("elaborate on") ||
                 t.Contains("go on") || t.Contains("continue"))
@@ -591,6 +611,7 @@ namespace InterviewCopilotMac6
 
             sb.AppendLine("PERMANENTLY BANNED (instant AI tell):");
             sb.AppendLine("  - Bullet symbols ( . • - * ) anywhere in output");
+            sb.AppendLine("  - Em-dashes or en-dashes ( — or – ) in output. Use a comma or period instead.");
             sb.AppendLine("  - Resume sentences quoted word-for-word");
             sb.AppendLine("  - Naked metrics without baseline/measurement");
             sb.AppendLine("  - Generic 'delivering solutions' / 'driving initiatives' / 'high-impact'");
@@ -744,7 +765,19 @@ namespace InterviewCopilotMac6
                            "P2: How that applies to the scenario. " +
                            "Concrete specifics, not abstract advice.";
 
-                case QuestionType.FollowUp:
+                case QuestionType.ContextStatement:
+                    return "1-2 SHORT conversational sentences acknowledging what the interviewer shared. " +
+                           "DO NOT launch into your own introduction or background. " +
+                           "Example: 'Nice to meet you, [name]! Really looking forward to the conversation.' " +
+                           "NO bullets. NO background. NO filler paragraphs.";
+
+                case QuestionType.MemoryRecall:
+                    return "1-2 SHORT sentences ONLY. Answer exactly what was asked -- nothing more. " +
+                           "DO NOT add your own background or intro after answering. " +
+                           "Example: 'Your name is Pavan and you work at a startup building AI tools.' " +
+                           "Stop there. No extra paragraphs.";
+
+                                case QuestionType.FollowUp:
                     return "1-2 SHORT paragraphs. NO bullets. Add NEW detail only — never repeat prior content. " +
                            "Cite the prior answer's specifics if drilling down.";
 
