@@ -139,7 +139,7 @@ namespace InterviewCopilotMac6
         }
 
         public static string GetGreetingResponse() =>
-            "Hey, great to be here — really looking forward to this conversation!";
+            "Hey, great to be here, really looking forward to this conversation!";
 
         public static string GetSmallTalkResponse() =>
             "Doing really well, thanks! Excited to be here and learn more about the role.";
@@ -182,7 +182,7 @@ namespace InterviewCopilotMac6
                  t.Contains("what i told") || t.Contains("what did i say") || t.Contains("what i just said")))
                 return QuestionType.MemoryRecall;
 
-                        if (t.Contains("tell me more") || t.Contains("can you elaborate") ||
+            if (t.Contains("tell me more") || t.Contains("can you elaborate") ||
                 t.Contains("expand on that") || t.Contains("go deeper") ||
                 t.Contains("what do you mean by") || t.Contains("elaborate on") ||
                 t.Contains("go on") || t.Contains("continue"))
@@ -350,7 +350,7 @@ namespace InterviewCopilotMac6
                     if (idx >= 0)
                     {
                         // Clamp into [0, answer.Length] — ToLower() can change string
-                        // length for some Unicode characters (e.g. 'İ' → "i̇"), so an
+                        // length for some Unicode characters (e.g. 'İ' -> "i̇"), so an
                         // index found in aLow isn't guaranteed valid against `answer`.
                         int start = Math.Clamp(idx - 15, 0, answer.Length);
                         int end   = Math.Clamp(idx + kw.Length + 50, start, answer.Length);
@@ -436,7 +436,7 @@ namespace InterviewCopilotMac6
             var sb = new StringBuilder();
 
             sb.AppendLine("You ARE the candidate in a live job interview right now.");
-            sb.AppendLine("You are a real professional — not an AI, not a bot.");
+            sb.AppendLine("You are a real professional, not an AI, not a bot.");
             sb.AppendLine("Speak in first person. Sound like a sharp human having a real conversation.");
             sb.AppendLine();
 
@@ -501,7 +501,7 @@ namespace InterviewCopilotMac6
             sb.AppendLine("RULE 4 — FORMAT (scannable but human, NO bullet symbols):");
             sb.AppendLine("  Write 3-4 SHORT paragraphs separated by ONE blank line.");
             sb.AppendLine("  Each paragraph = ONE theme (2-3 sentences max).");
-            sb.AppendLine("  NEVER use bullet symbols ( . • - * or numbers ).");
+            sb.AppendLine("  NEVER use bullet symbols ( . * or numbers ).");
             sb.AppendLine("  Mix sentence length: some 3-word fragments, some longer flowing ones.");
             sb.AppendLine("  Sound spoken — like you're explaining to a smart friend over coffee.");
             sb.AppendLine("  For drill-downs / yes-no / preferences / availability: 1-2 short sentences only.");
@@ -547,15 +547,15 @@ namespace InterviewCopilotMac6
             sb.AppendLine("    utilize, utilization, delve, deep dive, 'with a focus on', 'passionate about'.");
             sb.AppendLine();
             sb.AppendLine("  REPLACE corporate-speak with plain words:");
-            sb.AppendLine("    'facilitate' → 'help' / 'run' / 'set up'");
-            sb.AppendLine("    'utilize' → 'use'");
-            sb.AppendLine("    'leverage' → 'use' / 'lean on'");
-            sb.AppendLine("    'optimize' → 'make faster' / 'cut down'");
-            sb.AppendLine("    'spearheaded' → 'led' / 'ran'");
-            sb.AppendLine("    'robust' → 'solid' / 'reliable'");
-            sb.AppendLine("    'comprehensive' → 'full' / 'covers everything'");
-            sb.AppendLine("    'drive results' → 'get results' / 'ship stuff'");
-            sb.AppendLine("    'key stakeholders' → 'my manager and the client' / 'the people I worked with'");
+            sb.AppendLine("    'facilitate' -> 'help' / 'run' / 'set up'");
+            sb.AppendLine("    'utilize' -> 'use'");
+            sb.AppendLine("    'leverage' -> 'use' / 'lean on'");
+            sb.AppendLine("    'optimize' -> 'make faster' / 'cut down'");
+            sb.AppendLine("    'spearheaded' -> 'led' / 'ran'");
+            sb.AppendLine("    'robust' -> 'solid' / 'reliable'");
+            sb.AppendLine("    'comprehensive' -> 'full' / 'covers everything'");
+            sb.AppendLine("    'drive results' -> 'get results' / 'ship stuff'");
+            sb.AppendLine("    'key stakeholders' -> 'my manager and the client' / 'the people I worked with'");
             sb.AppendLine();
 
             sb.AppendLine("RULE 8 — FORCED SPECIFICITY (kill generic answers):");
@@ -605,13 +605,13 @@ namespace InterviewCopilotMac6
             sb.AppendLine("        delivering technology solutions, which improved overall operational efficiency by 15%'");
             sb.AppendLine();
             sb.AppendLine("  GOOD (same facts, paraphrased like a human): 'Yeah so my last gig was at Joules to Watts.");
-            sb.AppendLine("        I was running their project leadership team — basically owning delivery for a");
+            sb.AppendLine("        I was running their project leadership team, basically owning delivery for a");
             sb.AppendLine("        few client engagements. The big one was an IoT weather tool we shipped...'");
             sb.AppendLine();
 
             sb.AppendLine("PERMANENTLY BANNED (instant AI tell):");
-            sb.AppendLine("  - Bullet symbols ( . • - * ) anywhere in output");
-            sb.AppendLine("  - Em-dashes or en-dashes ( — or – ) in output. Use a comma or period instead.");
+            sb.AppendLine("  - Bullet symbols ( . * ) anywhere in output");
+            sb.AppendLine("  - Em-dashes or en-dashes ( — or – ) anywhere in output. Use a comma or period instead.");
             sb.AppendLine("  - Resume sentences quoted word-for-word");
             sb.AppendLine("  - Naked metrics without baseline/measurement");
             sb.AppendLine("  - Generic 'delivering solutions' / 'driving initiatives' / 'high-impact'");
@@ -777,7 +777,7 @@ namespace InterviewCopilotMac6
                            "Example: 'Your name is Pavan and you work at a startup building AI tools.' " +
                            "Stop there. No extra paragraphs.";
 
-                                case QuestionType.FollowUp:
+                case QuestionType.FollowUp:
                     return "1-2 SHORT paragraphs. NO bullets. Add NEW detail only — never repeat prior content. " +
                            "Cite the prior answer's specifics if drilling down.";
 
@@ -960,13 +960,17 @@ namespace InterviewCopilotMac6
             sb.AppendLine($"FORMAT RULE (obey exactly): {fmt}");
             sb.AppendLine();
 
+            sb.AppendLine("BANNED PUNCTUATION: Never use em-dashes (—) or en-dashes (–) in your answer. Use a comma or period instead.");
+            sb.AppendLine();
+
             sb.AppendLine("FINAL CHECK before you respond:");
-            sb.AppendLine("  1. No bullet symbols ( . • - * ) anywhere?");
+            sb.AppendLine("  1. No bullet symbols ( . * ) anywhere?");
             sb.AppendLine("  2. No banned corporate words?");
             sb.AppendLine("  3. Every metric has measurement context (baseline + after + period)?");
             sb.AppendLine("  4. Paraphrased resume facts, not quoted verbatim?");
             sb.AppendLine("  5. Natural fillers and varied sentence length?");
             sb.AppendLine("  6. For drill-downs: reused exact specifics from prior answers?");
+            sb.AppendLine("  7. No em-dashes or en-dashes anywhere?");
             sb.AppendLine();
 
             sb.AppendLine($"NOW ANSWER THIS QUESTION: {rawQuestion}");

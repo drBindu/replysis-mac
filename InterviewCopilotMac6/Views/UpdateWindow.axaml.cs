@@ -18,6 +18,9 @@ namespace InterviewCopilotMac6.Views
         private bool   _downloading = false;
         private string? _downloadedPath = null;
 
+        // ── Parameterless constructor required by Avalonia XAML loader ────
+        public UpdateWindow() : this(null!, null!) { }
+
         // ── Constructor ────────────────────────────────────────────
         public UpdateWindow(SparkleUpdater sparkle, AppCastItem item)
         {
