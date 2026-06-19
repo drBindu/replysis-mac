@@ -969,6 +969,7 @@ namespace InterviewCopilotMac6.Views
         {
             if (PromptBuilder.IsGreeting(question)) { yield return PromptBuilder.GetGreetingResponse(); yield break; }
             if (PromptBuilder.IsSmallTalk(question)) { yield return PromptBuilder.GetSmallTalkResponse(); yield break; }
+            if (PromptBuilder.IsOffTopic(question)) { yield return PromptBuilder.GetOffTopicResponse(); yield break; }
 
             HttpResponseMessage res = await SendBackendRequestAsync(question, resume, ct);
 

@@ -138,6 +138,40 @@ namespace InterviewCopilotMac6
                    t.Contains("pleasure to meet");
         }
 
+        /// <summary>
+        /// Returns true when the input is clearly off-topic / not an interview question.
+        /// Used to skip the AI call entirely and return a neutral non-answer.
+        /// </summary>
+        public static bool IsOffTopic(string q)
+        {
+            string t = q.ToLower().Trim();
+
+            // Too short to be a real question (1-2 words, no question mark)
+            string[] words = t.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length <= 2 && !t.Contains('?')) return true;
+
+            // Clearly non-interview content — talking about random objects, food, drinks, etc.
+            bool hasInterviewKeyword =
+                t.Contains("experience") || t.Contains("role") || t.Contains("job") ||
+                t.Contains("work") || t.Contains("project") || t.Contains("team") ||
+                t.Contains("skill") || t.Contains("salary") || t.Contains("company") ||
+                t.Contains("yourself") || t.Contains("background") || t.Contains("strength") ||
+                t.Contains("weakness") || t.Contains("why") || t.Contains("how do you") ||
+                t.Contains("tell me") || t.Contains("describe") || t.Contains("explain") ||
+                t.Contains("what is") || t.Contains("what are") || t.Contains("can you") ||
+                t.Contains("have you") || t.Contains("do you") || t.Contains("would you") ||
+                t.Contains("technology") || t.Contains("language") || t.Contains("framework") ||
+                t.Contains("start date") || t.Contains("visa") || t.Contains("relocat");
+
+            // If no interview keywords and no question mark, likely off-topic
+            if (!hasInterviewKeyword && !t.Contains('?')) return true;
+
+            return false;
+        }
+
+        public static string GetOffTopicResponse() =>
+            "Ha, I think that one's outside my lane for this interview. What's next?";
+
         public static string GetGreetingResponse() =>
             "Hey, great to be here, really looking forward to this conversation!";
 
