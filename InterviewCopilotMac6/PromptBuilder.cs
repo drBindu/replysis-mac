@@ -144,13 +144,11 @@ namespace InterviewCopilotMac6
         /// </summary>
         public static bool IsOffTopic(string q)
         {
-            string t = q.ToLower().Trim();
-
-            // Too short to be a real question (1-2 words, no question mark)
+            string t = q.ToLower().Trim().TrimEnd('.', '!', '?', ',');
             string[] words = t.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (words.Length <= 2 && !t.Contains('?')) return true;
 
-            // Clearly non-interview content — talking about random objects, food, drinks, etc.
+            // Very short with no interview keywords = off-topic
+            // e.g. "or really", "wow", "oh okay", "haha", "nice"
             bool hasInterviewKeyword =
                 t.Contains("experience") || t.Contains("role") || t.Contains("job") ||
                 t.Contains("work") || t.Contains("project") || t.Contains("team") ||
@@ -161,16 +159,30 @@ namespace InterviewCopilotMac6
                 t.Contains("what is") || t.Contains("what are") || t.Contains("can you") ||
                 t.Contains("have you") || t.Contains("do you") || t.Contains("would you") ||
                 t.Contains("technology") || t.Contains("language") || t.Contains("framework") ||
-                t.Contains("start date") || t.Contains("visa") || t.Contains("relocat");
+                t.Contains("start date") || t.Contains("visa") || t.Contains("relocat") ||
+                t.Contains("yourself") || t.Contains("introduce") || t.Contains("education") ||
+                t.Contains("degree") || t.Contains("hire") || t.Contains("interest") ||
+                t.Contains("available") || t.Contains("notice") || t.Contains("relocate");
 
-            // If no interview keywords and no question mark, likely off-topic
-            if (!hasInterviewKeyword && !t.Contains('?')) return true;
+            if (!hasInterviewKeyword && words.Length <= 4) return true;
+
+            // Filler/reaction phrases regardless of length
+            string[] fillers = {
+                "or really", "oh really", "really", "oh ok", "oh okay", "ok ok",
+                "haha", "lol", "wow", "hmm", "uh huh", "i see", "oh i see",
+                "got it", "sure sure", "alright", "ok cool", "cool cool",
+                "that's funny", "that's interesting", "interesting", "noted",
+                "sounds good", "makes sense", "fair enough", "no worries",
+                "never mind", "nevermind", "forget it", "my bad", "oops"
+            };
+            foreach (var f in fillers)
+                if (t == f || t.StartsWith(f + " ") || t.EndsWith(" " + f)) return true;
 
             return false;
         }
 
         public static string GetOffTopicResponse() =>
-            "Ha, I think that one's outside my lane for this interview. What's next?";
+            "Sorry, could you say that again?";
 
         public static string GetGreetingResponse() =>
             "Hey, great to be here, really looking forward to this conversation!";
@@ -643,6 +655,20 @@ namespace InterviewCopilotMac6
             sb.AppendLine("        few client engagements. The big one was an IoT weather tool we shipped...'");
             sb.AppendLine();
 
+            sb.AppendLine("RULE 12 — NEVER REPEAT THE SAME PHRASING TWICE (most important anti-detection rule):");
+            sb.AppendLine("  Every answer must feel freshly spoken in the moment, not recited.");
+            sb.AppendLine("  VARY your sentence starters, word choices, and story angles every time.");
+            sb.AppendLine("  If you told a story about a project before, approach it from a different angle now.");
+            sb.AppendLine("  Real humans don't say the exact same sentence twice. Neither should you.");
+            sb.AppendLine("  NEVER use the same opener twice in a conversation.");
+            sb.AppendLine("  Rotate naturally: 'Yeah so...' / 'Honestly...' / 'So basically...' / 'I mean...' / 'Actually...'");
+            sb.AppendLine();
+            sb.AppendLine("RULE 13 — IMPERFECT IS HUMAN:");
+            sb.AppendLine("  Occasionally self-correct mid-sentence: 'actually wait, let me rephrase that'");
+            sb.AppendLine("  Occasionally add small uncertainty: 'I think it was around 3 months, maybe 4'");
+            sb.AppendLine("  Occasionally trail off naturally: 'and yeah, it ended up working out really well'");
+            sb.AppendLine("  Real candidates aren't perfectly polished. Too perfect = AI.");
+            sb.AppendLine();
             sb.AppendLine("PERMANENTLY BANNED (instant AI tell):");
             sb.AppendLine("  - Bullet symbols ( . * ) anywhere in output");
             sb.AppendLine("  - Em-dashes or en-dashes ( — or – ) anywhere in output. Use a comma or period instead.");
@@ -653,6 +679,7 @@ namespace InterviewCopilotMac6
             sb.AppendLine("  - Perfect STAR structure (real humans ramble a bit)");
             sb.AppendLine("  - Inventing employers/schools not in your resume");
             sb.AppendLine("  - Agreeing with interviewer-suggested value that contradicts your prior answer");
+            sb.AppendLine("  - Repeating the same phrasing or sentence structure from a previous answer");
 
             _cachedSystemPrompt = sb.ToString();
             _cachedResumeFacts = resumeFacts;
@@ -1005,6 +1032,16 @@ namespace InterviewCopilotMac6
             sb.AppendLine("  5. Natural fillers and varied sentence length?");
             sb.AppendLine("  6. For drill-downs: reused exact specifics from prior answers?");
             sb.AppendLine("  7. No em-dashes or en-dashes anywhere?");
+            sb.AppendLine();
+
+            // Random variation seed — forces different phrasing each call
+            string[] openerHints = {
+                "Start with 'Yeah so'", "Start with 'Honestly'", "Start with 'So basically'",
+                "Start with 'I mean'", "Start with 'Actually'", "Start with 'Right so'",
+                "Start with 'So'", "Start with 'Yeah honestly'"
+            };
+            string hint = openerHints[new Random().Next(openerHints.Length)];
+            sb.AppendLine($"VARIATION HINT: {hint} — use fresh wording, not the same phrases as any prior answer.");
             sb.AppendLine();
 
             sb.AppendLine($"NOW ANSWER THIS QUESTION: {rawQuestion}");
