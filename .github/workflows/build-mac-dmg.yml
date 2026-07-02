@@ -95,6 +95,40 @@ jobs:
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
             -exportPath "$RUNNER_TEMP/export"
 
+      - name: Re-sign bundled helper binaries with Hardened Runtime
+        run: |
+          IDENTITY=$(security find-identity -v -p codesigning "$RUNNER_TEMP/build.keychain" \
+            | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.+)"/\1/')
+          APP="$RUNNER_TEMP/export/InterviewCopilot.app"
+          # Write entitlements for PyInstaller-based speechmatics_engine
+          # (needs unsigned-memory + library-validation bypass for embedded Python runtime)
+          cat > "$RUNNER_TEMP/helper.entitlements" << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+            <key>com.apple.security.cs.disable-library-validation</key><true/>
+          </dict></plist>
+          EOF
+          # Sign helper binaries — Xcode copies them as Resources but doesn't re-sign them
+          for BIN in speechmatics_engine SystemAudioCapture; do
+            BIN_PATH="$APP/Contents/Resources/$BIN"
+            [ -f "$BIN_PATH" ] || continue
+            codesign --force --options runtime \
+              --entitlements "$RUNNER_TEMP/helper.entitlements" \
+              --sign "$IDENTITY" \
+              --keychain "$RUNNER_TEMP/build.keychain" \
+              "$BIN_PATH"
+            echo "Signed: $BIN ($(codesign -dv "$BIN_PATH" 2>&1 | grep Identifier || echo 'ok'))"
+          done
+          # Re-seal the whole .app after modifying internals
+          codesign --force --options runtime \
+            --sign "$IDENTITY" \
+            --keychain "$RUNNER_TEMP/build.keychain" \
+            "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
       - name: Create .dmg
         run: |
           DMG_CONTENT=$(mktemp -d)
@@ -124,7 +158,18 @@ jobs:
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
-            --wait
+            --wait 2>&1 | tee /tmp/notary.log
+          # Fail loudly if Apple rejected it (notarytool exits 0 on "Invalid")
+          if ! grep -q "status: Accepted" /tmp/notary.log; then
+            echo "Notarization FAILED. Apple rejection log:"
+            SUB_ID=$(grep "  id: " /tmp/notary.log | head -1 | awk '{print $2}')
+            [ -n "$SUB_ID" ] && xcrun notarytool log "$SUB_ID" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" || true
+            exit 1
+          fi
+          echo "Notarization accepted!"
 
       - name: Staple notarization ticket
         run: |
