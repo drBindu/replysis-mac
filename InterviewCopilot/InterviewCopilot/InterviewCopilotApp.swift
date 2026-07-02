@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import AVFoundation
 
 @main
 struct InterviewCopilotApp: App {
@@ -36,20 +35,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let vm = MainViewModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let opts: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-        AXIsProcessTrustedWithOptions(opts)
-
-        // Request Microphone permission up front. The speechmatics_engine runs as a
-        // CHILD process; macOS attributes its mic use to THIS app, so the app must hold
-        // the TCC grant — otherwise the engine opens the mic but only receives silence
-        // (the cause of empty transcripts). This also registers the app in
-        // System Settings → Privacy & Security → Microphone.
-        AVCaptureDevice.requestAccess(for: .audio) { granted in
-            Task { @MainActor in dlog("Microphone permission granted=\(granted)", tag: "PERM") }
-        }
-
-        // Regular app: normal window management — clicking other apps brings them
-        // forward, IC goes behind. It does NOT dominate other apps.
+        // Permission requests are handled by the in-app setup screen (PermissionSetupView),
+        // not raw macOS dialogs here. This gives new users clear guidance.
         NSApp.setActivationPolicy(.regular)
         buildPanel()
     }

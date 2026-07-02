@@ -69,6 +69,13 @@ class MainViewModel {
     var isWatchMode = false         // continuous screen watch mode
     var useGroq = true
 
+    // MARK: - Permission onboarding
+    var needsPermissionSetup = false
+    var permAccessibility   = false
+    var permMicrophone      = false
+    var permScreenRecording = false
+    private var permTimer: Timer?
+
     // MARK: - Timers (not tracked by @Observable)
     private var transcriptTimer: Timer?
     private var thinkingTimer: Timer?
@@ -95,13 +102,11 @@ class MainViewModel {
 
     private var didAppear = false
     func onAppear() {
-        // Guard against SwiftUI firing onAppear more than once — otherwise we'd register
-        // a second global event tap and duplicate every polling timer.
         guard !didAppear else { return }
         didAppear = true
         loadResume()
         loadJob()
-        setupHotkeys()
+        checkAndRequestPermissions()
         startTranscriptTimer()
         startThinkingTimer()
         startCreditsTimer()
@@ -132,6 +137,64 @@ class MainViewModel {
                     aiAnswer = "Ready — speech service temporarily unavailable. Retrying automatically.\n\nClick NO MIC badge to retry, or use F9 to analyze screen."
                     engine.startRetryTimer()
                 }
+            }
+        }
+    }
+
+    // MARK: - Permission Setup
+
+    private func checkAndRequestPermissions() {
+        permAccessibility   = AXIsProcessTrusted()
+        permMicrophone      = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        permScreenRecording = CGPreflightScreenCaptureAccess()
+
+        if permAccessibility {
+            // All good — register hotkeys immediately and skip the setup screen.
+            setupHotkeys()
+            // Still request microphone silently if not yet granted (won't show a dialog if denied).
+            if !permMicrophone {
+                AVCaptureDevice.requestAccess(for: .audio) { granted in
+                    Task { @MainActor in self.permMicrophone = granted }
+                }
+            }
+            return
+        }
+
+        // Accessibility not granted — show the setup screen and start polling.
+        needsPermissionSetup = true
+        startPermissionPolling()
+    }
+
+    func requestMicrophonePermission() {
+        AVCaptureDevice.requestAccess(for: .audio) { granted in
+            Task { @MainActor in self.permMicrophone = granted }
+        }
+    }
+
+    private func startPermissionPolling() {
+        permTimer?.invalidate()
+        permTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                let axNow  = AXIsProcessTrusted()
+                let micNow = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+                let scrNow = CGPreflightScreenCaptureAccess()
+                self.permAccessibility   = axNow
+                self.permMicrophone      = micNow
+                self.permScreenRecording = scrNow
+            }
+        }
+    }
+
+    /// Called when the user taps "Get Started" on the setup screen.
+    func permissionGrantedContinue() {
+        permTimer?.invalidate(); permTimer = nil
+        setupHotkeys()
+        needsPermissionSetup = false
+        // Request mic now if they skipped it on the setup screen.
+        if !permMicrophone {
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                Task { @MainActor in self.permMicrophone = granted }
             }
         }
     }

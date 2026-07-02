@@ -37,6 +37,12 @@ struct MainView: View {
                 bodyArea
             }
 
+            // Permission onboarding — shown on first launch until Accessibility is granted.
+            if vm.needsPermissionSetup {
+                PermissionSetupView()
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .transition(.opacity)
+            }
         }
         .ignoresSafeArea()
         .onAppear {
