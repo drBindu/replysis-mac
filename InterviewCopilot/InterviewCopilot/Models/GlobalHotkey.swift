@@ -65,14 +65,32 @@ class GlobalHotkey {
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         )
         guard let tap = eventTap else {
-            Task { @MainActor in dlog("GlobalHotkey: CGEvent tap creation FAILED — check Accessibility permission", tag: "HOTKEY") }
+            // tapCreate returns nil when Accessibility trust isn't fully wired up for
+            // this process YET — very common in the first moment after launch, even
+            // when the permission is granted. Without a retry the hotkey stays dead
+            // until the next relaunch (the "Space bar does nothing on the main screen"
+            // bug). Retry on a short timer until it succeeds.
+            tapRetryCount += 1
+            if tapRetryCount <= maxTapRetries {
+                Task { @MainActor in dlog("GlobalHotkey: tap not ready, retry \(self.tapRetryCount)/\(self.maxTapRetries) in 1s", tag: "HOTKEY") }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    self?.setupEventTap()
+                }
+            } else {
+                Task { @MainActor in dlog("GlobalHotkey: CGEvent tap creation FAILED after \(self.maxTapRetries) retries — Accessibility not trusted", tag: "HOTKEY") }
+            }
             return
         }
+        tapRetryCount = 0
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         if let src = runLoopSource { CFRunLoopAddSource(CFRunLoopGetMain(), src, .commonModes) }
         CGEvent.tapEnable(tap: tap, enable: true)
         Task { @MainActor in dlog("GlobalHotkey: event tap started OK", tag: "HOTKEY") }
     }
+
+    // Retry state for the launch-time race where Accessibility trust isn't ready yet.
+    private var tapRetryCount = 0
+    private let maxTapRetries = 20
 
     private func handleEvent(_ event: CGEvent) {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
