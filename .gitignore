@@ -1,9 +1,12 @@
-bin/
-obj/
-publish/
-dist/
-*.user
+# macOS
 .DS_Store
-__MACOSX/
-*.pkg
-*.zip
+
+# Xcode build artifacts
+DerivedData/
+xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+.swiftpm/
+
+# Build output
+build/
