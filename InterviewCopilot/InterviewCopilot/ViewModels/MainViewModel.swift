@@ -176,9 +176,10 @@ class MainViewModel {
     private func startPermissionPolling() {
         permTimer?.invalidate()
         permPollCount = 0
-        permTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+        permTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
+                let wasAccessible = self.permAccessibility
                 let axNow  = AXIsProcessTrusted()
                 let micNow = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
                 let scrNow = CGPreflightScreenCaptureAccess()
@@ -187,10 +188,24 @@ class MainViewModel {
                 self.permScreenRecording = scrNow
                 self.permPollCount += 1
 
-                // After 8 polls (~12 s) with accessibility still false, check whether
-                // the user already granted it in System Settings (TCC recorded it) but
-                // macOS hasn't propagated it to this running process. If so, show the
-                // Relaunch button — the only reliable fix is a process restart.
+                // AUTO-ENTER the moment Accessibility is granted — do NOT make the user
+                // hunt for a "Get Started" button (they granted the permission, that IS
+                // their intent). This is the #1 onboarding trap: users grant everything,
+                // see green checks, then sit on the setup screen not knowing to click.
+                if axNow && !wasAccessible {
+                    // Brief beat so the green checkmark animation is visible, then go.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+                        Task { @MainActor in
+                            guard let self = self, self.needsPermissionSetup else { return }
+                            self.permissionGrantedContinue()
+                        }
+                    }
+                }
+
+                // After 8 polls (~8 s) with accessibility still false, check whether the
+                // user already granted it in System Settings (TCC recorded it) but macOS
+                // hasn't propagated it to this running process. If so, show the Relaunch
+                // button — the only reliable fix is a process restart.
                 if !axNow && self.permPollCount >= 8 {
                     self.needsRelaunch = self.tccHasAccessibilityGrant()
                 }
