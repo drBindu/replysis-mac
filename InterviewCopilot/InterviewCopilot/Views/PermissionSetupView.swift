@@ -71,47 +71,96 @@ struct PermissionSetupView: View {
 
                 Spacer()
 
-                // ── Status hint ──────────────────────────────────────────────
-                if !vm.permAccessibility {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 11))
-                            .foregroundColor(Color.white.opacity(0.3))
-                        Text("Checking automatically every 1.5 s — no need to relaunch.")
-                            .font(.system(size: 11))
-                            .foregroundColor(Color.white.opacity(0.3))
+                // ── Bottom action area ───────────────────────────────────────
+                if vm.permAccessibility {
+                    // Permission detected — go straight in
+                    Button(action: { vm.permissionGrantedContinue() }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
+                            Text("Get Started").fontWeight(.semibold)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(LinearGradient(colors: [Color(hex: "#1d4ed8"), Color(hex: "#1e40af")],
+                                                   startPoint: .top, endPoint: .bottom))
+                        .cornerRadius(11)
+                        .foregroundColor(.white)
                     }
-                    .padding(.bottom, 10)
-                }
-
-                // ── Get Started button ───────────────────────────────────────
-                Button(action: { vm.permissionGrantedContinue() }) {
-                    HStack(spacing: 8) {
-                        Image(systemName: vm.permAccessibility ? "checkmark.circle.fill" : "lock.fill")
-                        Text(vm.permAccessibility ? "Get Started" : "Waiting for Accessibility…")
-                            .fontWeight(.semibold)
+                    .padding(.horizontal, 44)
+                    .padding(.bottom, 36)
+                    .transition(.opacity)
+                } else if vm.needsRelaunch {
+                    // macOS granted the permission but this process can't pick it up
+                    // without a restart — show a clear relaunch button.
+                    VStack(spacing: 10) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
+                                .font(.system(size: 13))
+                            Text("Accessibility granted — a relaunch is needed to activate it.")
+                                .font(.system(size: 12))
+                                .foregroundColor(Color.white.opacity(0.55))
+                        }
+                        Button(action: relaunchApp) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "arrow.clockwise")
+                                Text("Relaunch Interview Copilot").fontWeight(.semibold)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(LinearGradient(colors: [Color(hex: "#1d4ed8"), Color(hex: "#1e40af")],
+                                                       startPoint: .top, endPoint: .bottom))
+                            .cornerRadius(11)
+                            .foregroundColor(.white)
+                        }
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(
-                        vm.permAccessibility
-                            ? LinearGradient(colors: [Color(hex: "#1d4ed8"), Color(hex: "#1e40af")],
-                                             startPoint: .top, endPoint: .bottom)
-                            : LinearGradient(colors: [Color.white.opacity(0.06), Color.white.opacity(0.06)],
-                                             startPoint: .top, endPoint: .bottom)
-                    )
-                    .cornerRadius(11)
-                    .foregroundColor(vm.permAccessibility ? .white : Color.white.opacity(0.3))
+                    .padding(.horizontal, 44)
+                    .padding(.bottom, 36)
+                    .transition(.opacity)
+                } else {
+                    // Still waiting — show a subtle hint
+                    VStack(spacing: 10) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 11))
+                                .foregroundColor(Color.white.opacity(0.25))
+                            Text("Checking automatically — or relaunch if you already enabled it.")
+                                .font(.system(size: 11))
+                                .foregroundColor(Color.white.opacity(0.25))
+                        }
+                        Button(action: {}) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "lock.fill")
+                                Text("Waiting for Accessibility…").fontWeight(.semibold)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(Color.white.opacity(0.06))
+                            .cornerRadius(11)
+                            .foregroundColor(Color.white.opacity(0.25))
+                        }
+                        .disabled(true)
+                    }
+                    .padding(.horizontal, 44)
+                    .padding(.bottom, 36)
                 }
-                .disabled(!vm.permAccessibility)
-                .padding(.horizontal, 44)
-                .padding(.bottom, 36)
-                .animation(.easeInOut(duration: 0.2), value: vm.permAccessibility)
             }
         }
+        .animation(.easeInOut(duration: 0.25), value: vm.permAccessibility)
+        .animation(.easeInOut(duration: 0.25), value: vm.needsRelaunch)
     }
 
     // MARK: - Actions
+
+    private func relaunchApp() {
+        // Reopen the app bundle and quit this process — clean relaunch.
+        let url = Bundle.main.bundleURL
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, _ in }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            NSApplication.shared.terminate(nil)
+        }
+    }
 
     private func openAccessibilitySettings() {
         NSWorkspace.shared.open(

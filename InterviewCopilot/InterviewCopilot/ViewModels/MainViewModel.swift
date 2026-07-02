@@ -71,10 +71,12 @@ class MainViewModel {
 
     // MARK: - Permission onboarding
     var needsPermissionSetup = false
+    var needsRelaunch        = false   // true when TCC granted but running process can't see it
     var permAccessibility   = false
     var permMicrophone      = false
     var permScreenRecording = false
     private var permTimer: Timer?
+    private var permPollCount = 0
 
     // MARK: - Timers (not tracked by @Observable)
     private var transcriptTimer: Timer?
@@ -173,6 +175,7 @@ class MainViewModel {
 
     private func startPermissionPolling() {
         permTimer?.invalidate()
+        permPollCount = 0
         permTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
@@ -182,8 +185,40 @@ class MainViewModel {
                 self.permAccessibility   = axNow
                 self.permMicrophone      = micNow
                 self.permScreenRecording = scrNow
+                self.permPollCount += 1
+
+                // After 8 polls (~12 s) with accessibility still false, check whether
+                // the user already granted it in System Settings (TCC recorded it) but
+                // macOS hasn't propagated it to this running process. If so, show the
+                // Relaunch button — the only reliable fix is a process restart.
+                if !axNow && self.permPollCount >= 8 {
+                    self.needsRelaunch = self.tccHasAccessibilityGrant()
+                }
             }
         }
+    }
+
+    // Check whether TCC.db already has an accessibility grant for this bundle ID.
+    // This is readable without root — the user-scoped TCC.db lives in ~/Library.
+    private func tccHasAccessibilityGrant() -> Bool {
+        let bundleID = Bundle.main.bundleIdentifier ?? ""
+        guard !bundleID.isEmpty else { return false }
+        let dbPath = NSString("~/Library/Application Support/com.apple.TCC/TCC.db")
+            .expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: dbPath) else { return false }
+        // Use sqlite3 CLI to avoid linking SQLite directly.
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        proc.arguments = [dbPath,
+            "SELECT auth_value FROM access WHERE service='kTCCServiceAccessibility' AND client='\(bundleID)' LIMIT 1;"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = Pipe()
+        do { try proc.run() } catch { return false }
+        proc.waitUntilExit()
+        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        // auth_value 2 = allowed
+        return out.trimmingCharacters(in: .whitespacesAndNewlines) == "2"
     }
 
     /// Called when the user taps "Get Started" on the setup screen.
