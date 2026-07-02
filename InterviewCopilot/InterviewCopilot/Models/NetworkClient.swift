@@ -1,5 +1,6 @@
 import Foundation
 
+@MainActor
 class NetworkClient {
     static let shared = NetworkClient()
 

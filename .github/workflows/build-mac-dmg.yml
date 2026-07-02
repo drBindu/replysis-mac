@@ -85,6 +85,7 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             DEVELOPMENT_TEAM=687K9LK6N4 \
             ENABLE_APP_SANDBOX=NO \
+            MACOSX_DEPLOYMENT_TARGET=14.0 \
             OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/build.keychain"
 
       - name: Export signed .app

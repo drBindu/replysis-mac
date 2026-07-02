@@ -30,6 +30,7 @@ extension NSView {
     }
 }
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     var panel: FloatingPanel?
     let vm = MainViewModel()

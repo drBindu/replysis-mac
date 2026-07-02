@@ -236,7 +236,7 @@ enum AppConfig {
             dlog("AppConfig: GoogleClientSecret not in response — keys: \(obj.keys.joined(separator: ","))", tag: "CONFIG")
         }
         if let smKey = obj["SpeechmaticsKey"] as? String, !smKey.isEmpty {
-            UserSession.shared.speechmaticsKey = smKey
+            await MainActor.run { UserSession.shared.speechmaticsKey = smKey }
             dlog("AppConfig: got SpeechmaticsKey from remote config", tag: "CONFIG")
         }
     }
