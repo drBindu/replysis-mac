@@ -13,22 +13,8 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Round app icon corners (macOS standard)
-        run: |
-          python3 -m venv /tmp/icon-venv
-          source /tmp/icon-venv/bin/activate
-          pip install Pillow --quiet
-          python3 round_icon.py
-
-      - name: Setup .NET 8
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
 
       - name: Import Developer ID Certificate
         env:
@@ -37,160 +23,107 @@ jobs:
         run: |
           KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
           KEYCHAIN_PWD=$(openssl rand -base64 20)
-          echo "$MAC_CERT_BASE64" | base64 --decode -o $RUNNER_TEMP/certificate.p12
+          echo "$MAC_CERT_BASE64" | base64 --decode -o "$RUNNER_TEMP/certificate.p12"
           security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
           security import "$RUNNER_TEMP/certificate.p12" \
-            -k "$KEYCHAIN_PATH" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
+            -k "$KEYCHAIN_PATH" \
+            -P "$MAC_CERT_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/xcodebuild
           security list-keychain -d user -s "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-      - name: Set version number
+      - name: Set version
         id: version
         run: echo "VERSION=1.0.${{ github.run_number }}" >> $GITHUB_OUTPUT
 
-      - name: Update Info.plist version
+      - name: Make bundled binaries executable
         run: |
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.VERSION }}" \
-            InterviewCopilotMac6/Assets/Info.plist
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" \
-            InterviewCopilotMac6/Assets/Info.plist
-          echo "Info.plist updated to ${{ steps.version.outputs.VERSION }}"
+          [ -f InterviewCopilot/InterviewCopilot/Resources/speechmatics_engine ] && \
+            chmod +x InterviewCopilot/InterviewCopilot/Resources/speechmatics_engine || true
+          [ -f InterviewCopilot/InterviewCopilot/Resources/SystemAudioCapture ] && \
+            chmod +x InterviewCopilot/InterviewCopilot/Resources/SystemAudioCapture || true
 
-      - name: Restore dependencies
-        run: dotnet restore InterviewCopilotMac6/InterviewCopilotMac6.csproj
-
-      - name: Inject Google OAuth client secret (build-time only, never committed)
-        env:
-          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      - name: Write ExportOptions.plist
         run: |
-          sed -i '' "s|_defaultGoogleClientSecret = \"\"|_defaultGoogleClientSecret = \"$GOOGLE_CLIENT_SECRET\"|" \
-            InterviewCopilotMac6/Views/SettingsWindow.axaml.cs
-
-      - name: Publish (ARM64 self-contained)
-        run: |
-          dotnet publish InterviewCopilotMac6/InterviewCopilotMac6.csproj \
-            -r osx-arm64 \
-            --self-contained true \
-            -c Release \
-            -p:Version=${{ steps.version.outputs.VERSION }} \
-            -o publish/arm64
-
-      - name: Build speechmatics_engine binary (bundles Python + pyaudio + deps)
-        run: |
-          brew install portaudio python@3.11
-          python3.11 -m venv /tmp/build-venv
-          source /tmp/build-venv/bin/activate
-          pip install pyaudio numpy speechmatics-python pyinstaller
-          cd InterviewCopilotMac6
-          pyinstaller --onefile --name speechmatics_engine speechmatics_engine.py
-          echo "Engine binary size: $(du -sh dist/speechmatics_engine | cut -f1)"
-
-      - name: Assemble .app bundle
-        run: |
-          APP="InterviewCopilot.app"
-          mkdir -p "$APP/Contents/MacOS"
-          mkdir -p "$APP/Contents/Resources"
-          cp InterviewCopilotMac6/Assets/Info.plist "$APP/Contents/Info.plist"
-          source /tmp/icon-venv/bin/activate
-          python3 create_iconset.py
-          iconutil -c icns AppIcon.iconset -o AppIcon.icns
-          cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-          cp publish/arm64/* "$APP/Contents/MacOS/" 2>/dev/null || true
-          # Copy bundled engine binary (includes Python + pyaudio + all deps)
-          cp InterviewCopilotMac6/dist/speechmatics_engine "$APP/Contents/MacOS/speechmatics_engine"
-          chmod +x "$APP/Contents/MacOS/speechmatics_engine"
-          echo "Engine binary copied: $(du -sh "$APP/Contents/MacOS/speechmatics_engine" | cut -f1)"
-          if [ -f "$APP/Contents/MacOS/InterviewCopilotMac6" ]; then
-            mv "$APP/Contents/MacOS/InterviewCopilotMac6" "$APP/Contents/MacOS/InterviewCopilot"
-          fi
-          chmod +x "$APP/Contents/MacOS/InterviewCopilot"
-          [ -f "$APP/Contents/MacOS/ScreenOCR" ]          && chmod +x "$APP/Contents/MacOS/ScreenOCR"
-          [ -f "$APP/Contents/MacOS/SystemAudioCapture" ] && chmod +x "$APP/Contents/MacOS/SystemAudioCapture"
-          chmod +x "$APP/Contents/MacOS/"*.dylib 2>/dev/null || true
-
-      - name: Create entitlements.plist
-        run: |
-          cat > entitlements.plist << 'EOF'
+          cat > "$RUNNER_TEMP/ExportOptions.plist" << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-            <key>com.apple.security.device.audio-input</key>
-            <true/>
-            <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-            <true/>
-            <key>com.apple.security.cs.disable-library-validation</key>
-            <true/>
-                        <key>com.apple.security.screen-capture</key>
-                                    <true/>
+            <key>method</key>
+            <string>developer-id</string>
+            <key>teamID</key>
+            <string>687K9LK6N4</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>signingCertificate</key>
+            <string>Developer ID Application</string>
+            <key>manageAppVersionAndBuildNumber</key>
+            <false/>
           </dict>
           </plist>
           EOF
 
-      - name: Sign .app
+      - name: Archive (xcodebuild)
         run: |
-          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.+)"/\1/')
-          echo "Signing with: $IDENTITY"
-          find InterviewCopilot.app/Contents/MacOS -name "*.pdb" -delete
-          find InterviewCopilot.app/Contents/MacOS -name "*.xml" -delete
-          find InterviewCopilot.app/Contents/MacOS -name "*.py" -exec mv {} InterviewCopilot.app/Contents/Resources/ \;
-          find InterviewCopilot.app/Contents/MacOS -name "*.sh" -exec mv {} InterviewCopilot.app/Contents/Resources/ \;
-          find InterviewCopilot.app/Contents/MacOS -name "*.json" -exec mv {} InterviewCopilot.app/Contents/Resources/ \;
-          find InterviewCopilot.app/Contents/MacOS -name "*.dylib" | while read f; do
-            codesign --force --options runtime --sign "$IDENTITY" "$f"
-          done
-          find InterviewCopilot.app/Contents/MacOS -name "*.dll" | while read f; do
-            codesign --force --options runtime --sign "$IDENTITY" "$f" 2>/dev/null || true
-          done
-          find InterviewCopilot.app/Contents/MacOS -type f ! -name "*.dylib" ! -name "*.dll" ! -name "*.py" ! -name "*.sh" ! -name "*.json" ! -name "*.xml" ! -name "*.pdb" | while read f; do
-            codesign --force --options runtime --entitlements entitlements.plist --sign "$IDENTITY" "$f" 2>/dev/null || true
-          done
-          codesign --force --options runtime \
-            --entitlements entitlements.plist \
-            --sign "$IDENTITY" \
-            "InterviewCopilot.app"
-          codesign --verify --verbose=2 "InterviewCopilot.app"
-          spctl --assess --verbose=2 "InterviewCopilot.app" || true
+          xcodebuild archive \
+            -project InterviewCopilot/InterviewCopilot.xcodeproj \
+            -scheme InterviewCopilot \
+            -configuration Release \
+            -archivePath "$RUNNER_TEMP/InterviewCopilot.xcarchive" \
+            MARKETING_VERSION="${{ steps.version.outputs.VERSION }}" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            CODE_SIGN_STYLE=Manual \
+            "CODE_SIGN_IDENTITY=Developer ID Application" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            DEVELOPMENT_TEAM=687K9LK6N4 \
+            ENABLE_APP_SANDBOX=NO \
+            OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/build.keychain"
 
-      - name: Create .zip for auto-updates (NetSparkle)
+      - name: Export signed .app
         run: |
-          ditto -c -k --sequesterRsrc --keepParent \
-            "InterviewCopilot.app" "InterviewCopilot-update.zip"
-          echo "Update zip size: $(du -sh InterviewCopilot-update.zip | cut -f1)"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/InterviewCopilot.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export"
 
-      - name: Create .dmg for first-time installs
+      - name: Create .dmg
         run: |
-          hdiutil detach "/Volumes/Interview Copilot" 2>/dev/null || true
-          rm -f InterviewCopilot-raw.dmg
-          mkdir -p dmg_contents
-          cp -R "InterviewCopilot.app" dmg_contents/
-          ln -s /Applications dmg_contents/Applications
+          DMG_CONTENT=$(mktemp -d)
+          cp -R "$RUNNER_TEMP/export/InterviewCopilot.app" "$DMG_CONTENT/"
+          ln -s /Applications "$DMG_CONTENT/Applications"
           hdiutil create \
             -volname "Interview Copilot" \
-            -srcfolder dmg_contents \
+            -srcfolder "$DMG_CONTENT" \
             -ov -format UDBZ \
-            "InterviewCopilot-raw.dmg"
-          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.+)"/\1/')
-          codesign --force --sign "$IDENTITY" "InterviewCopilot-raw.dmg"
-          mv "InterviewCopilot-raw.dmg" "InterviewCopilot-mac.dmg"
+            "$RUNNER_TEMP/InterviewCopilot-raw.dmg"
+          IDENTITY=$(security find-identity -v -p codesigning "$RUNNER_TEMP/build.keychain" \
+            | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.+)"/\1/')
+          codesign --force --sign "$IDENTITY" \
+            --keychain "$RUNNER_TEMP/build.keychain" \
+            "$RUNNER_TEMP/InterviewCopilot-raw.dmg"
+          cp "$RUNNER_TEMP/InterviewCopilot-raw.dmg" "InterviewCopilot-mac.dmg"
           echo "DMG size: $(du -sh InterviewCopilot-mac.dmg | cut -f1)"
 
-      - name: Notarize .dmg
+      - name: Notarize
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        timeout-minutes: 120
+        timeout-minutes: 30
         run: |
           xcrun notarytool submit "InterviewCopilot-mac.dmg" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
             --wait
-          echo "Notarization accepted!"
 
       - name: Staple notarization ticket
         run: |
@@ -198,18 +131,12 @@ jobs:
           xcrun stapler validate "InterviewCopilot-mac.dmg"
           echo "Notarization stapled OK"
 
-      - name: Sign update .zip and generate appcast.xml
-        env:
-          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
-          VERSION: ${{ steps.version.outputs.VERSION }}
+      - name: Create update .zip
         run: |
-          export DOWNLOAD_URL="https://github.com/moto123a/interview-copilot-mac/releases/download/v${VERSION}/InterviewCopilot-update.zip"
-          export FILE_SIZE=$(stat -f%z "InterviewCopilot-update.zip")
-          export PUB_DATE=$(date -u +"%a, %d %b %Y %H:%M:%S +0000")
-          python3 -m venv /tmp/sign-venv
-          source /tmp/sign-venv/bin/activate
-          pip install cryptography --quiet
-          python3 sign_sparkle.py
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$RUNNER_TEMP/export/InterviewCopilot.app" \
+            "InterviewCopilot-update.zip"
+          echo "Update zip size: $(du -sh InterviewCopilot-update.zip | cut -f1)"
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -217,22 +144,13 @@ jobs:
           tag_name: v${{ steps.version.outputs.VERSION }}
           name: Interview Copilot v${{ steps.version.outputs.VERSION }}
           body: |
-            ## Install on macOS ✓
+            ## Install on macOS
             **First time?** Download **InterviewCopilot-mac.dmg** → drag to Applications.
-            **Already installed?** The app will notify you automatically — just click "Update Now".
+            **Already installed?** The app updates automatically.
 
-            Signed and notarized by Apple. No security prompts.
+            Signed and notarized by Apple. No security warnings on install.
           files: |
             InterviewCopilot-mac.dmg
             InterviewCopilot-update.zip
           draft: false
           prerelease: false
-
-      - name: Commit appcast.xml back to repo
-        run: |
-          git config user.name  "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add appcast.xml
-          git diff --staged --quiet || \
-            git commit -m "chore: update appcast to v${{ steps.version.outputs.VERSION }} [skip ci]"
-          git push
