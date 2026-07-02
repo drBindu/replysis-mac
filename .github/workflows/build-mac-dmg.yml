@@ -11,6 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: macos-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -152,24 +153,44 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        timeout-minutes: 30
         run: |
-          xcrun notarytool submit "InterviewCopilot-mac.dmg" \
+          # Submit and grab the submission ID immediately (no --wait, avoids infinite hang)
+          SUBMIT=$(xcrun notarytool submit "InterviewCopilot-mac.dmg" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait 2>&1 | tee /tmp/notary.log
-          # Fail loudly if Apple rejected it (notarytool exits 0 on "Invalid")
-          if ! grep -q "status: Accepted" /tmp/notary.log; then
-            echo "Notarization FAILED. Apple rejection log:"
-            SUB_ID=$(grep "  id: " /tmp/notary.log | head -1 | awk '{print $2}')
-            [ -n "$SUB_ID" ] && xcrun notarytool log "$SUB_ID" \
+            --team-id "$APPLE_TEAM_ID" 2>&1)
+          echo "$SUBMIT"
+          SUB_ID=$(echo "$SUBMIT" | grep -E "^\s+id: " | head -1 | awk '{print $2}')
+          echo "Submission ID: $SUB_ID"
+          [ -z "$SUB_ID" ] && { echo "Failed to get submission ID"; exit 1; }
+
+          # Poll for up to 15 minutes (30 x 30s)
+          for i in $(seq 1 30); do
+            sleep 30
+            INFO=$(xcrun notarytool info "$SUB_ID" \
               --apple-id "$APPLE_ID" \
               --password "$APPLE_APP_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" || true
-            exit 1
-          fi
-          echo "Notarization accepted!"
+              --team-id "$APPLE_TEAM_ID" 2>&1)
+            echo "[$i/30] $INFO"
+            STATUS=$(echo "$INFO" | grep -E "^\s+status: " | awk '{print $2}')
+            if [ "$STATUS" = "Accepted" ]; then
+              echo "Notarization accepted!"
+              exit 0
+            elif [ "$STATUS" = "Invalid" ] || [ "$STATUS" = "Rejected" ]; then
+              echo "Notarization FAILED — fetching Apple log:"
+              xcrun notarytool log "$SUB_ID" \
+                --apple-id "$APPLE_ID" \
+                --password "$APPLE_APP_PASSWORD" \
+                --team-id "$APPLE_TEAM_ID" || true
+              exit 1
+            fi
+          done
+          echo "Timed out after 15 min — fetching partial log:"
+          xcrun notarytool log "$SUB_ID" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" || true
+          exit 1
 
       - name: Staple notarization ticket
         run: |
