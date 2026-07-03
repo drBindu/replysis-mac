@@ -8,10 +8,15 @@ class SpeechmaticsEngine {
     var isRunning = false
     var statusText = "READY"
 
+    /// Fired when Speechmatics rejects the key (not_authorised / invalid key). Lets the
+    /// UI show an honest "speech unavailable" message instead of silently doing nothing.
+    var onKeyError: (() -> Void)?
+
     private var process: Process?
     private var monitorTimer: Timer?
     private var retryTimer: Timer?
     private var engineCancelled = false
+    private var authErrorHandled = false
     private var selectedDeviceId = -1
 
     let appDataFolder: URL = {
@@ -40,6 +45,7 @@ class SpeechmaticsEngine {
         }
 
         engineCancelled = false
+        authErrorHandled = false   // fresh start → allow a new auth error to be reported
         nukePreviousProcesses()
         killAndDispose()
 
@@ -120,48 +126,50 @@ class SpeechmaticsEngine {
     }
 
     private func monitorStderr(proc: Process) {
-        guard let stderr = proc.standardError as? Pipe else { return }
-        let handle = stderr.fileHandleForReading
-        handle.readabilityHandler = { fh in
+        // One handler for BOTH streams. The Speechmatics auth rejection ("not_authorised")
+        // arrives on STDOUT, not stderr — the previous code only inspected stderr, so a
+        // dead key was never detected and the engine silently retried forever with an
+        // empty transcript. Now either stream can surface the failure.
+        let onData: @Sendable (FileHandle, String) -> Void = { fh, source in
             let data = fh.availableData
             guard !data.isEmpty, let line = String(data: data, encoding: .utf8) else { return }
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                Task { @MainActor in dlog("SM stderr: \(trimmed)", tag: "SM") }
+                Task { @MainActor in dlog("SM \(source): \(trimmed)", tag: "SM") }
             }
-            // Only a GENUINE auth/key failure should permanently stop the engine.
-            // Match specific phrases — bare "401"/"Invalid" would false-positive on
-            // transient log noise ("Invalid audio frame", a timestamp with 401) and
-            // wrongly kill transcription for the rest of the interview.
-            let low = line.lowercased()
-            let isAuthError =
-                low.contains("invalid api key") || low.contains("invalid_api_key") ||
-                low.contains("authentication failed") || low.contains("unauthorized") ||
-                low.contains("invalid token") || low.contains("not authorized") ||
-                low.contains("403 forbidden")
-            if isAuthError {
-                Task { @MainActor in
-                    dlog("SM KEY ERROR detected — stopping (a bad key won't fix itself on restart)", tag: "SM")
-                    self.statusText = "KEY ERROR"
-                    // Stop the monitor so it doesn't respawn the engine every 3s in a loop.
-                    self.engineCancelled = true
-                    self.monitorTimer?.invalidate()
-                    self.monitorTimer = nil
-                    self.killAndDispose()
-                }
+            if Self.isAuthFailure(line) {
+                Task { @MainActor in self.handleAuthError() }
             }
         }
-        // Also monitor stdout
-        if let stdout = proc.standardOutput as? Pipe {
-            stdout.fileHandleForReading.readabilityHandler = { fh in
-                let data = fh.availableData
-                guard !data.isEmpty, let line = String(data: data, encoding: .utf8) else { return }
-                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    Task { @MainActor in dlog("SM stdout: \(trimmed)", tag: "SM") }
-                }
-            }
-        }
+        (proc.standardError as? Pipe)?.fileHandleForReading.readabilityHandler = { onData($0, "stderr") }
+        (proc.standardOutput as? Pipe)?.fileHandleForReading.readabilityHandler = { onData($0, "stdout") }
+    }
+
+    /// A GENUINE auth/key failure. Phrases are specific so transient noise
+    /// ("Invalid audio frame", a timestamp containing 401) can't false-positive and
+    /// wrongly kill transcription mid-interview.
+    nonisolated static func isAuthFailure(_ line: String) -> Bool {
+        let low = line.lowercased()
+        return low.contains("invalid api key")   || low.contains("invalid_api_key")
+            || low.contains("authentication failed")
+            || low.contains("unauthorized")       || low.contains("unauthorised")
+            || low.contains("not_authorised")     || low.contains("not_authorized")
+            || low.contains("not authorised")     || low.contains("not authorized")
+            || low.contains("invalid token")      || low.contains("403 forbidden")
+    }
+
+    /// Speechmatics rejected the key. Stop the futile fast-retry loop, tell the UI, and
+    /// switch to a slow 60s re-fetch so we auto-recover the moment the server key is fixed.
+    private func handleAuthError() {
+        guard !authErrorHandled else { return }   // report once per engine start
+        authErrorHandled = true
+        dlog("SM KEY ERROR — Speechmatics rejected the speech key. Pausing fast retries; will re-fetch every 60s.", tag: "SM")
+        statusText = "KEY ERROR"
+        engineCancelled = true
+        monitorTimer?.invalidate(); monitorTimer = nil
+        killAndDispose()
+        onKeyError?()
+        startRetryTimer()   // re-fetch a fresh key periodically; auto-recovers if the server key is renewed
     }
 
     private func startMonitorTimer() {

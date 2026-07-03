@@ -72,7 +72,6 @@ class MainViewModel {
 
     // MARK: - Permission onboarding
     var needsPermissionSetup = false
-    var needsRelaunch        = false   // true when TCC granted but running process can't see it
     var permInputMonitoring = false    // REQUIRED for the global Space/F8/F9 hotkey (CGEventTap)
     var permAccessibility   = false
     var permMicrophone      = false
@@ -113,6 +112,9 @@ class MainViewModel {
     func onAppear() {
         guard !didAppear else { return }
         didAppear = true
+        // Surface a clear message if the speech service rejects the key, instead of
+        // silently showing an empty transcript forever.
+        engine.onKeyError = { [weak self] in self?.handleSpeechKeyError() }
         loadResume()
         loadJob()
         checkAndRequestPermissions()
@@ -219,29 +221,6 @@ class MainViewModel {
                 }
             }
         }
-    }
-
-    // Check whether TCC.db already has an accessibility grant for this bundle ID.
-    // This is readable without root — the user-scoped TCC.db lives in ~/Library.
-    private func tccHasAccessibilityGrant() -> Bool {
-        let bundleID = Bundle.main.bundleIdentifier ?? ""
-        guard !bundleID.isEmpty else { return false }
-        let dbPath = NSString("~/Library/Application Support/com.apple.TCC/TCC.db")
-            .expandingTildeInPath
-        guard FileManager.default.fileExists(atPath: dbPath) else { return false }
-        // Use sqlite3 CLI to avoid linking SQLite directly.
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-        proc.arguments = [dbPath,
-            "SELECT auth_value FROM access WHERE service='kTCCServiceAccessibility' AND client='\(bundleID)' LIMIT 1;"]
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = Pipe()
-        do { try proc.run() } catch { return false }
-        proc.waitUntilExit()
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        // auth_value 2 = allowed
-        return out.trimmingCharacters(in: .whitespacesAndNewlines) == "2"
     }
 
     /// Called when the user taps "Get Started" on the setup screen. The hotkey permissions
@@ -893,15 +872,39 @@ class MainViewModel {
     }
 
     func retryMic() {
-        guard session.isLoggedIn && session.speechmaticsKey.isEmpty else { return }
+        // Manual retry from the NO MIC badge. Always re-fetch + restart (even if a key
+        // exists) — the existing key may be the rejected one we're trying to replace.
+        guard session.isLoggedIn else { return }
+        micStatus = "…"; micColor = Color(white: 0.42)
         Task {
             let ok = await session.fetchSpeechmaticsKeyAsync()
             if ok {
                 engine.start(smKey: session.speechmaticsKey)
                 micStatus = "READY"
                 micColor = Color(red: 239/255, green: 68/255, blue: 68/255)
+            } else {
+                micStatus = "NO MIC"; micColor = Color(white: 0.42)
             }
         }
+    }
+
+    /// Speechmatics rejected the speech key (server-side config). Be honest about it and
+    /// keep the app fully usable via typed questions + screen analysis. The engine keeps
+    /// re-fetching in the background, so this clears itself the moment the key is fixed.
+    private func handleSpeechKeyError() {
+        isListening = false; isMuted = true
+        micStatus = "NO MIC"; micColor = Color(white: 0.42)
+        aiAnswer = """
+        ⚠ Live transcription is paused
+
+        The speech service isn't accepting connections right now (a server-side key issue). \
+        Everything else still works:
+
+        • Type your question in the Ask bar below to get an instant answer
+        • Press F9 to analyze whatever is on your screen
+
+        Transcription resumes automatically as soon as the service is restored — no action needed.
+        """
     }
 
     private func extractLatestQuestion(from text: String) -> String {
