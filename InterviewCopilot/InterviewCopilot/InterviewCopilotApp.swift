@@ -37,6 +37,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
 
+        // Startup diagnostics — first lines in the debug log for supporting real users.
+        dlog("=== LAUNCH === v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") | path=\(Bundle.main.bundlePath)", tag: "BOOT")
+        dlog("AXIsProcessTrusted=\(AXIsProcessTrusted())", tag: "BOOT")
+
         // If we're running from a DMG or an App-Translocation path (random
         // read-only /private/var/folders/…), macOS keys Accessibility/Mic grants
         // to that throwaway path so they never persist. Show password-free guidance
