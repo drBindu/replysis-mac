@@ -44,7 +44,15 @@ class GlobalHotkey {
         eventTap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .listenOnly,
+            // .defaultTap (an ACTIVE tap) is authorized by ACCESSIBILITY — the permission
+            // we already request. The previous .listenOnly value required the SEPARATE
+            // "Input Monitoring" permission on macOS 10.15+, which the app never asked for,
+            // so tapCreate() always returned nil and the global Space/F8/F9 hotkeys never
+            // worked — even with Accessibility granted (confirmed in the debug log). We
+            // still pass every event straight through below, so behavior is unchanged; this
+            // only changes which permission authorizes the tap. This is exactly how Raycast,
+            // Rectangle, Alfred et al. create their global hotkeys.
+            options: .defaultTap,
             eventsOfInterest: mask,
             callback: { _, type, event, refcon in
                 // Pass-through tap: return the event UNRETAINED. passRetained would add a
