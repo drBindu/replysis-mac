@@ -10,3 +10,8 @@ xcuserdata/
 
 # Build output
 build/
+
+# Legacy .NET app (replaced by the Swift app) — build artifacts must never be committed
+InterviewCopilotMac6/
+*.dll
+*.pdb
