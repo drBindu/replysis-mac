@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import Observation
 import AVFoundation
+import IOKit.hid
 
 @MainActor
 @Observable
@@ -72,11 +73,17 @@ class MainViewModel {
     // MARK: - Permission onboarding
     var needsPermissionSetup = false
     var needsRelaunch        = false   // true when TCC granted but running process can't see it
+    var permInputMonitoring = false    // REQUIRED for the global Space/F8/F9 hotkey (CGEventTap)
     var permAccessibility   = false
     var permMicrophone      = false
     var permScreenRecording = false
     private var permTimer: Timer?
     private var permPollCount = 0
+
+    // Input Monitoring is what actually authorizes a keyboard CGEventTap on modern macOS.
+    static func inputMonitoringGranted() -> Bool {
+        IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
+    }
 
     // MARK: - Timers (not tracked by @Observable)
     private var transcriptTimer: Timer?
@@ -146,14 +153,16 @@ class MainViewModel {
     // MARK: - Permission Setup
 
     private func checkAndRequestPermissions() {
+        permInputMonitoring = MainViewModel.inputMonitoringGranted()
         permAccessibility   = AXIsProcessTrusted()
         permMicrophone      = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         permScreenRecording = CGPreflightScreenCaptureAccess()
 
-        if permAccessibility {
-            // All good — register hotkeys immediately and skip the setup screen.
+        // The global Space/F8/F9 hotkey (a keyboard CGEventTap) needs Input Monitoring;
+        // AXIsProcessTrusted alone is NOT enough on modern macOS. Require both before we
+        // even try to register the tap — otherwise it fails and the Space bar is dead.
+        if permInputMonitoring && permAccessibility {
             setupHotkeys()
-            // Still request microphone silently if not yet granted (won't show a dialog if denied).
             if !permMicrophone {
                 AVCaptureDevice.requestAccess(for: .audio) { granted in
                     Task { @MainActor in self.permMicrophone = granted }
@@ -162,7 +171,10 @@ class MainViewModel {
             return
         }
 
-        // Accessibility not granted — show the setup screen and start polling.
+        // Something required is missing — show the setup screen. Proactively prompt for
+        // Input Monitoring so the app is registered in that Settings pane (the system
+        // shows its one-time prompt and the app appears in the list to toggle on).
+        if !permInputMonitoring { IOHIDRequestAccess(kIOHIDRequestTypeListenEvent) }
         needsPermissionSetup = true
         startPermissionPolling()
     }
@@ -179,36 +191,31 @@ class MainViewModel {
         permTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
-                let wasAccessible = self.permAccessibility
+                let hotkeyWasReady = self.permInputMonitoring && self.permAccessibility
+                let imNow  = MainViewModel.inputMonitoringGranted()
                 let axNow  = AXIsProcessTrusted()
                 let micNow = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
                 let scrNow = CGPreflightScreenCaptureAccess()
+                self.permInputMonitoring = imNow
                 self.permAccessibility   = axNow
                 self.permMicrophone      = micNow
                 self.permScreenRecording = scrNow
                 self.permPollCount += 1
 
-                // Accessibility JUST got granted while we were running. Critical macOS
-                // fact: a global CGEventTap CANNOT be created by a process that was
-                // launched before it was trusted — AXIsProcessTrusted() flips true but
-                // tapCreate() keeps returning nil forever (confirmed in the debug log:
-                // "tap not ready, retry 1..20"). The ONLY reliable fix is to relaunch so
-                // the fresh process is trusted from birth. So we auto-relaunch — the app
-                // blinks once and comes back with a working Space bar.
-                if axNow && !wasAccessible {
+                // Both hotkey permissions (Input Monitoring + Accessibility) just became
+                // granted while we were running. Critical macOS fact: a global CGEventTap
+                // CANNOT be created by a process that launched before it was authorized —
+                // the grant flips true but tapCreate() keeps returning nil forever
+                // (confirmed in the debug log). The ONLY reliable fix is to relaunch so the
+                // fresh process is authorized from birth. Auto-relaunch: the app blinks
+                // once and comes back with a working Space bar.
+                let hotkeyReadyNow = imNow && axNow
+                if hotkeyReadyNow && !hotkeyWasReady {
                     self.permTimer?.invalidate(); self.permTimer = nil
-                    dlog("Accessibility granted while running → relaunching to activate hotkey", tag: "PERM")
+                    dlog("Hotkey permissions granted while running → relaunching to activate", tag: "PERM")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                         MainViewModel.relaunchApp()
                     }
-                }
-
-                // After 8 polls (~8 s) with accessibility still false, check whether the
-                // user already granted it in System Settings (TCC recorded it) but macOS
-                // hasn't propagated it to this running process. If so, show the Relaunch
-                // button — the only reliable fix is a process restart.
-                if !axNow && self.permPollCount >= 8 {
-                    self.needsRelaunch = self.tccHasAccessibilityGrant()
                 }
             }
         }
@@ -237,15 +244,15 @@ class MainViewModel {
         return out.trimmingCharacters(in: .whitespacesAndNewlines) == "2"
     }
 
-    /// Called when the user taps "Get Started" on the setup screen. Like the auto-enter
-    /// path, Accessibility was granted AFTER launch, so the event tap can't be created in
-    /// this process — relaunch so the fresh process is trusted from birth and Space works.
+    /// Called when the user taps "Get Started" on the setup screen. The hotkey permissions
+    /// were granted AFTER launch, so the event tap can't be created in this process —
+    /// relaunch so the fresh process is authorized from birth and Space works.
     func permissionGrantedContinue() {
         permTimer?.invalidate(); permTimer = nil
-        if AXIsProcessTrusted() {
+        if MainViewModel.inputMonitoringGranted() && AXIsProcessTrusted() {
             MainViewModel.relaunchApp()
         } else {
-            // Accessibility not actually granted yet — just proceed without hotkeys.
+            // Required permissions not fully granted yet — just proceed without hotkeys.
             needsPermissionSetup = false
         }
     }

@@ -37,9 +37,20 @@ struct PermissionSetupView: View {
                     PermCard(
                         icon: "keyboard",
                         iconColor: Color(hex: "#38bdf8"),
+                        title: "Input Monitoring",
+                        badge: "REQUIRED",
+                        detail: "Lets the Space bar and F8/F9 keys work as hotkeys while Zoom or your browser is in front. This is what makes the Space bar start listening.",
+                        isGranted: vm.permInputMonitoring,
+                        buttonLabel: "Open Settings",
+                        action: openInputMonitoringSettings
+                    )
+
+                    PermCard(
+                        icon: "figure.wave",
+                        iconColor: Color(hex: "#a78bfa"),
                         title: "Accessibility",
                         badge: "REQUIRED",
-                        detail: "Lets the Space bar work as a global hotkey — even when another app is in front.",
+                        detail: "Works together with Input Monitoring so the global hotkeys register reliably.",
                         isGranted: vm.permAccessibility,
                         buttonLabel: "Open Settings",
                         action: openAccessibilitySettings
@@ -72,12 +83,13 @@ struct PermissionSetupView: View {
                 Spacer()
 
                 // ── Bottom action area ───────────────────────────────────────
-                if vm.permAccessibility {
-                    // Permission detected — go straight in
+                if vm.permInputMonitoring && vm.permAccessibility {
+                    // Both hotkey permissions granted — enter (this relaunches so the tap
+                    // registers in a freshly-authorized process).
                     Button(action: { vm.permissionGrantedContinue() }) {
                         HStack(spacing: 8) {
                             Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
-                            Text("Get Started").fontWeight(.semibold)
+                            Text("Activate & Start").fontWeight(.semibold)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
@@ -89,54 +101,27 @@ struct PermissionSetupView: View {
                     .padding(.horizontal, 44)
                     .padding(.bottom, 36)
                     .transition(.opacity)
-                } else if vm.needsRelaunch {
-                    // macOS granted the permission but this process can't pick it up
-                    // without a restart — show a clear relaunch button.
-                    VStack(spacing: 10) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
-                                .font(.system(size: 13))
-                            Text("Accessibility granted — a relaunch is needed to activate it.")
-                                .font(.system(size: 12))
-                                .foregroundColor(Color.white.opacity(0.55))
-                        }
-                        Button(action: relaunchApp) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "arrow.clockwise")
-                                Text("Relaunch Interview Copilot").fontWeight(.semibold)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background(LinearGradient(colors: [Color(hex: "#1d4ed8"), Color(hex: "#1e40af")],
-                                                       startPoint: .top, endPoint: .bottom))
-                            .cornerRadius(11)
-                            .foregroundColor(.white)
-                        }
-                    }
-                    .padding(.horizontal, 44)
-                    .padding(.bottom, 36)
-                    .transition(.opacity)
                 } else {
-                    // Still waiting — show a subtle hint
+                    // Still waiting on a required permission — name exactly which one.
                     VStack(spacing: 10) {
                         HStack(spacing: 6) {
                             Image(systemName: "arrow.triangle.2.circlepath")
                                 .font(.system(size: 11))
-                                .foregroundColor(Color.white.opacity(0.25))
-                            Text("Checking automatically — or relaunch if you already enabled it.")
+                                .foregroundColor(Color.white.opacity(0.3))
+                            Text("Grant the REQUIRED permissions above — this updates automatically.")
                                 .font(.system(size: 11))
-                                .foregroundColor(Color.white.opacity(0.25))
+                                .foregroundColor(Color.white.opacity(0.3))
                         }
                         Button(action: {}) {
                             HStack(spacing: 8) {
                                 Image(systemName: "lock.fill")
-                                Text("Waiting for Accessibility…").fontWeight(.semibold)
+                                Text(waitingLabel).fontWeight(.semibold)
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
                             .background(Color.white.opacity(0.06))
                             .cornerRadius(11)
-                            .foregroundColor(Color.white.opacity(0.25))
+                            .foregroundColor(Color.white.opacity(0.3))
                         }
                         .disabled(true)
                     }
@@ -145,11 +130,22 @@ struct PermissionSetupView: View {
                 }
             }
         }
+        .animation(.easeInOut(duration: 0.25), value: vm.permInputMonitoring)
         .animation(.easeInOut(duration: 0.25), value: vm.permAccessibility)
-        .animation(.easeInOut(duration: 0.25), value: vm.needsRelaunch)
+    }
+
+    private var waitingLabel: String {
+        if !vm.permInputMonitoring { return "Waiting for Input Monitoring…" }
+        if !vm.permAccessibility  { return "Waiting for Accessibility…" }
+        return "Waiting…"
     }
 
     // MARK: - Actions
+
+    private func openInputMonitoringSettings() {
+        NSWorkspace.shared.open(
+            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
+    }
 
     private func relaunchApp() {
         // Reopen the app bundle and quit this process — clean relaunch.
