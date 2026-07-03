@@ -188,17 +188,18 @@ class MainViewModel {
                 self.permScreenRecording = scrNow
                 self.permPollCount += 1
 
-                // AUTO-ENTER the moment Accessibility is granted — do NOT make the user
-                // hunt for a "Get Started" button (they granted the permission, that IS
-                // their intent). This is the #1 onboarding trap: users grant everything,
-                // see green checks, then sit on the setup screen not knowing to click.
+                // Accessibility JUST got granted while we were running. Critical macOS
+                // fact: a global CGEventTap CANNOT be created by a process that was
+                // launched before it was trusted — AXIsProcessTrusted() flips true but
+                // tapCreate() keeps returning nil forever (confirmed in the debug log:
+                // "tap not ready, retry 1..20"). The ONLY reliable fix is to relaunch so
+                // the fresh process is trusted from birth. So we auto-relaunch — the app
+                // blinks once and comes back with a working Space bar.
                 if axNow && !wasAccessible {
-                    // Brief beat so the green checkmark animation is visible, then go.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
-                        Task { @MainActor in
-                            guard let self = self, self.needsPermissionSetup else { return }
-                            self.permissionGrantedContinue()
-                        }
+                    self.permTimer?.invalidate(); self.permTimer = nil
+                    dlog("Accessibility granted while running → relaunching to activate hotkey", tag: "PERM")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                        MainViewModel.relaunchApp()
                     }
                 }
 
@@ -236,16 +237,29 @@ class MainViewModel {
         return out.trimmingCharacters(in: .whitespacesAndNewlines) == "2"
     }
 
-    /// Called when the user taps "Get Started" on the setup screen.
+    /// Called when the user taps "Get Started" on the setup screen. Like the auto-enter
+    /// path, Accessibility was granted AFTER launch, so the event tap can't be created in
+    /// this process — relaunch so the fresh process is trusted from birth and Space works.
     func permissionGrantedContinue() {
         permTimer?.invalidate(); permTimer = nil
-        setupHotkeys()
-        needsPermissionSetup = false
-        // Request mic now if they skipped it on the setup screen.
-        if !permMicrophone {
-            AVCaptureDevice.requestAccess(for: .audio) { granted in
-                Task { @MainActor in self.permMicrophone = granted }
-            }
+        if AXIsProcessTrusted() {
+            MainViewModel.relaunchApp()
+        } else {
+            // Accessibility not actually granted yet — just proceed without hotkeys.
+            needsPermissionSetup = false
+        }
+    }
+
+    /// Relaunch the app cleanly: open a fresh instance, then quit this one. Used after
+    /// Accessibility is granted so the global hotkey (CGEventTap) can register — it only
+    /// works in a process that was already trusted at launch.
+    static func relaunchApp() {
+        let url = Bundle.main.bundleURL
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, _ in }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            NSApp.terminate(nil)
         }
     }
 
