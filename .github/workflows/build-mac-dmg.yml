@@ -114,13 +114,16 @@ jobs:
             <key>com.apple.security.cs.disable-library-validation</key><true/>
           </dict></plist>
           EOF
-          # Sign helper binaries — Xcode copies them as Resources but doesn't re-sign them
+          # Sign helper binaries with the SAME identifier as the main app so macOS treats
+          # them as the same TCC principal. Without --identifier they get their own identity
+          # ("speechmatics_engine") and macOS feeds them silence even when the app has mic.
           for BIN in speechmatics_engine SystemAudioCapture; do
             BIN_PATH="$APP/Contents/Resources/$BIN"
             [ -f "$BIN_PATH" ] || continue
             codesign --force --options runtime \
               --entitlements "$RUNNER_TEMP/helper.entitlements" \
               --sign "$IDENTITY" \
+              --identifier "com.bindualekhya.InterviewCopilot" \
               --keychain "$RUNNER_TEMP/build.keychain" \
               "$BIN_PATH"
             echo "Signed: $BIN ($(codesign -dv "$BIN_PATH" 2>&1 | grep Identifier || echo 'ok'))"
