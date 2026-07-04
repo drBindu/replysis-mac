@@ -230,7 +230,8 @@ struct LoginView: View {
                 }
             }
         }
-        .frame(width: 400, height: hasSavedAccount ? 640 : 560)
+        // Tall enough that the Cancel button is always visible without scrolling.
+        .frame(width: 400, height: hasSavedAccount ? 700 : 620)
     }
 
     // MARK: — Actions

@@ -208,8 +208,7 @@ class UserSession {
 
 // MARK: - App Config
 enum AppConfig {
-    static let backendUrl         = "https://coopilotxai.com"
-    static let dotnetBackendUrl   = "https://ai-powered-developer-assistance-platform.onrender.com"
+    static let backendUrl         = "https://coopilotxai.com"   // Oracle Cloud — the only backend
     static let firebaseApiKey     = "AIzaSyAGGmuFpR0qkCHLI3q2cPv_o3cQlbIU8lE"
     static let googleClientId     = "745433477203-lvqmnnip9pb241vkfp628qmue8313cre.apps.googleusercontent.com"
     static var googleClientSecret  = ""   // fetched from backend via fetchRemoteConfig()
@@ -218,7 +217,10 @@ enum AppConfig {
     // Fetches GoogleClientSecret (and optionally other keys) from the original backend.
     // Must be called once before Google sign-in.
     static func fetchRemoteConfig() async {
-        guard let url = URL(string: "\(dotnetBackendUrl)/api/config/keys") else { return }
+        // Optional config (e.g. GoogleClientSecret) from the Oracle backend. Until that
+        // endpoint exists it 404s harmlessly and Google sign-in stays disabled — email/
+        // password sign-in is completely independent of this.
+        guard let url = URL(string: "\(backendUrl)/api/config/keys") else { return }
         var configReq = URLRequest(url: url)
         configReq.timeoutInterval = 8
         guard let (data, _) = try? await URLSession.shared.data(for: configReq) else {

@@ -124,6 +124,7 @@ class MainViewModel {
     private var sessionNumber = 1
     private var sessionLogPath: URL?
     private var hotkey: GlobalHotkey?
+    private var localKeyMonitor: Any?
 
     let engine = SpeechmaticsEngine.shared
     let session = UserSession.shared
@@ -141,6 +142,9 @@ class MainViewModel {
         // Best-effort: pull the Google client secret so "Continue with Google" can work.
         // Harmless if that config backend is down — email/password sign-in is independent.
         Task { await AppConfig.fetchRemoteConfig() }
+        // Reliable focused-window hotkeys (Space / F8 / F9) even BEFORE the global
+        // Accessibility hotkey is enabled — and more dependable than SwiftUI .onKeyPress.
+        setupLocalKeyMonitor()
         loadResume()
         loadJob()
         checkAndRequestPermissions()
@@ -293,6 +297,30 @@ class MainViewModel {
     }
 
     // MARK: - Hotkeys
+
+    /// Local key monitor: catches Space / F8 / F9 while OUR main window is focused. This
+    /// works with NO special permission (unlike the global CGEventTap, which needs
+    /// Accessibility) and is more reliable than SwiftUI's .onKeyPress (which silently does
+    /// nothing unless a control is focused). It NEVER interferes with sheets (login,
+    /// settings, permission setup) or text fields. When the global tap is also active, the
+    /// debounce inside handleSpacePress absorbs the duplicate so the mic toggles once.
+    private func setupLocalKeyMonitor() {
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            return MainActor.assumeIsolated {
+                // Only act when the MAIN window is key — never a sheet or the camera overlay.
+                guard event.window is FloatingPanel else { return event }
+                // Let text editors (resume / ask boxes) receive a real space.
+                if let fr = event.window?.firstResponder, fr is NSText { return event }
+                switch event.keyCode {
+                case 49:        self.handleSpacePress(source: "LOCAL"); return nil   // Space
+                case 100, 101:  self.runScreenAnalysis();              return nil   // F8 / F9
+                default:        return event
+                }
+            }
+        }
+    }
+
     private func setupHotkeys() {
         hotkey = GlobalHotkey(
             onSpacePressed: { [weak self] in self?.handleSpacePress(source: "GLOBAL") },
@@ -475,7 +503,10 @@ class MainViewModel {
 
     func runScreenAnalysis() {
         guard !isProcessing && !isScreenAnalyzing else { return }
-        guard session.isLoggedIn else { aiAnswer = "⚠ Please sign in to use Screen Analysis."; return }
+        // Same gate as Space: signed-out → take them to sign-in, not a dead-end message.
+        guard session.isLoggedIn else {
+            NotificationCenter.default.post(name: .showLogin, object: nil); return
+        }
 
         // Check Screen Recording permission BEFORE capturing — a capture without it only
         // shows the desktop wallpaper, wasting a vision call/credit (matches .NET).
