@@ -1,5 +1,7 @@
 import Foundation
-import CoreGraphics   // CGPreflightScreenCaptureAccess — gate system-audio on permission
+import AVFoundation      // AVCaptureDevice — log the app's mic authorization for diagnostics
+import CoreGraphics      // CGPreflightScreenCaptureAccess — gate system-audio on permission
+import Darwin            // posix_spawn, pipe, kill, waitpid, dlsym
 
 @MainActor
 class SpeechmaticsEngine {
@@ -12,7 +14,14 @@ class SpeechmaticsEngine {
     /// UI show an honest "speech unavailable" message instead of silently doing nothing.
     var onKeyError: (() -> Void)?
 
-    private var process: Process?
+    // The engine is launched with posix_spawn (NOT Process/NSTask) so we can DISCLAIM its
+    // TCC responsibility — see spawnEngineDisclaimed(). We therefore track a raw pid and
+    // the two pipe read-handles ourselves instead of a Process object.
+    private var enginePid: pid_t = 0
+    private var outHandle: FileHandle?
+    private var errHandle: FileHandle?
+    private var exitSource: DispatchSourceProcess?
+
     private var monitorTimer: Timer?
     private var retryTimer: Timer?
     private var engineCancelled = false
@@ -74,62 +83,123 @@ class SpeechmaticsEngine {
         guard let engineURL = hasBinary ? binaryPath : (hasDevBinary ? devBinary : nil) else {
             statusText = "NO ENGINE"
             dlog("SM FATAL: speechmatics_engine binary NOT FOUND in any location", tag: "SM")
-            dlog("Copy the speechmatics_engine binary into the app Resources folder", tag: "SM")
             return
         }
 
         dlog("SM using binary: \(engineURL.path)", tag: "SM")
 
-        let proc = Process()
-        proc.executableURL = engineURL
-
-        // Key is passed ONLY via the SPEECHMATICS_API_KEY env var (set below) — the
-        // working .NET app never passes -key on the command line, and the extra arg can
-        // confuse the binary's parser. Arg order matches .NET: device, mode, syscapture, delay.
+        // Args match .NET order: device (optional), mode, syscapture (optional), delay.
         var args: [String] = []
         if selectedDeviceId >= 0 { args += ["-device", "\(selectedDeviceId)"] }
-        // Use system-audio capture (hear the interviewer DIRECTLY — far more accurate
-        // than picking them up through the mic) ONLY when the binary is bundled AND
-        // Screen Recording is granted. Gating on the permission = no regression: until
-        // the user grants it we stay mic-only and always work; once granted, the
-        // interviewer's questions are transcribed cleanly.
+        // System-audio capture (hear the interviewer DIRECTLY) only when the helper is
+        // bundled AND Screen Recording is granted; otherwise mic-only. No regression.
         let useSysAudio = hasSysCapture && CGPreflightScreenCaptureAccess()
         args += ["-mode", useSysAudio ? "both" : "mic"]
         if useSysAudio { args += ["-syscapture", syscapturePath.path] }
         dlog("  Audio mode: \(useSysAudio ? "BOTH (system+mic)" : "mic only") — bundled=\(hasSysCapture) screenOK=\(CGPreflightScreenCaptureAccess())", tag: "SM")
         args += ["-max-delay", "0.7"]
 
-        proc.arguments = args
+        // Key ONLY via env var (matches the working .NET app); APP_DATA_DIR points the
+        // engine at the same folder the UI polls.
         var env = ProcessInfo.processInfo.environment
         env["SPEECHMATICS_API_KEY"] = smKey
         env["APP_DATA_DIR"] = appDataFolder.path
-        proc.environment = env
-
-        proc.standardOutput = Pipe()
-        proc.standardError = Pipe()
 
         dlog("SM launching with args: \(args.joined(separator: " "))", tag: "SM")
         dlog("SM API key length: \(smKey.count) chars", tag: "SM")
+        dlog("SM app mic authorizationStatus=\(AVCaptureDevice.authorizationStatus(for: .audio).rawValue) (0=undetermined,2=denied,3=authorized)", tag: "SM")
 
-        do {
-            try proc.run()
-            process = proc
-            isRunning = true
-            statusText = "READY"
-            dlog("SM engine started successfully (pid=\(proc.processIdentifier))", tag: "SM")
-            monitorStderr(proc: proc)
-            startMonitorTimer()
-        } catch {
+        // Launch DISCLAIMED so the engine (and the worker it forks) inherit OUR mic/screen
+        // TCC grant instead of needing their own. Root fix for "engine opens the mic but
+        // gets only silence" (macOS feeds zeros to a helper without its own permission).
+        guard let pid = spawnEngineDisclaimed(path: engineURL.path, args: args, env: env) else {
             statusText = "ENGINE ERR"
-            dlog("SM launch failed: \(error.localizedDescription)", tag: "SM")
+            dlog("SM launch FAILED (posix_spawn returned error)", tag: "SM")
+            return
         }
+        enginePid = pid
+        isRunning = true
+        statusText = "READY"
+        dlog("SM engine started successfully (pid=\(pid)) [TCC-disclaimed → inherits app mic]", tag: "SM")
+        monitorPipes()
+        watchForExit(pid: pid)
+        startMonitorTimer()
     }
 
-    private func monitorStderr(proc: Process) {
-        // One handler for BOTH streams. The Speechmatics auth rejection ("not_authorised")
-        // arrives on STDOUT, not stderr — the previous code only inspected stderr, so a
-        // dead key was never detected and the engine silently retried forever with an
-        // empty transcript. Now either stream can surface the failure.
+    // MARK: - posix_spawn with TCC responsibility disclaim
+
+    /// Spawn the engine so it DISCLAIMS its own TCC responsibility → the main app becomes
+    /// the responsible process and the engine uses the app's Microphone / Screen Recording
+    /// grant. This is why there's no second "InterviewCopilot" permission row and why the
+    /// engine finally receives real audio. Returns the child pid, or nil on spawn failure.
+    private func spawnEngineDisclaimed(path: String, args: [String], env: [String: String]) -> pid_t? {
+        var outP: [Int32] = [0, 0]
+        var errP: [Int32] = [0, 0]
+        guard pipe(&outP) == 0 else { return nil }
+        guard pipe(&errP) == 0 else { close(outP[0]); close(outP[1]); return nil }
+
+        var fa: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&fa)
+        posix_spawn_file_actions_adddup2(&fa, outP[1], 1)   // child stdout → outP write end
+        posix_spawn_file_actions_adddup2(&fa, errP[1], 2)   // child stderr → errP write end
+        posix_spawn_file_actions_addclose(&fa, outP[0])
+        posix_spawn_file_actions_addclose(&fa, errP[0])
+
+        var attr: posix_spawnattr_t?
+        posix_spawnattr_init(&attr)
+        setSpawnDisclaim(&attr)   // the whole point
+
+        let argv: [UnsafeMutablePointer<CChar>?] = ([path] + args).map { strdup($0) } + [nil]
+        let envp: [UnsafeMutablePointer<CChar>?] = env.map { strdup("\($0.key)=\($0.value)") } + [nil]
+
+        var pid: pid_t = 0
+        let rc = posix_spawn(&pid, path, &fa, &attr, argv, envp)
+
+        // Parent no longer needs the write ends; close so EOF propagates when the child exits.
+        close(outP[1]); close(errP[1])
+        posix_spawn_file_actions_destroy(&fa)
+        posix_spawnattr_destroy(&attr)
+        for p in argv where p != nil { free(p) }
+        for p in envp where p != nil { free(p) }
+
+        guard rc == 0 else {
+            close(outP[0]); close(errP[0])
+            return nil
+        }
+        outHandle = FileHandle(fileDescriptor: outP[0], closeOnDealloc: true)
+        errHandle = FileHandle(fileDescriptor: errP[0], closeOnDealloc: true)
+        return pid
+    }
+
+    /// Look up the private `responsibility_spawnattrs_setdisclaim` at runtime (via dlsym so
+    /// a missing symbol can never crash us) and set disclaim=1 on the spawn attributes.
+    private func setSpawnDisclaim(_ attr: UnsafeMutablePointer<posix_spawnattr_t?>) {
+        typealias DisclaimFn = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>?, Int32) -> Int32
+        // RTLD_DEFAULT
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_spawnattrs_setdisclaim") else {
+            dlog("SM: responsibility_spawnattrs_setdisclaim not found — engine may need its own mic grant", tag: "SM")
+            return
+        }
+        let fn = unsafeBitCast(sym, to: DisclaimFn.self)
+        _ = fn(attr, 1)
+    }
+
+    private func watchForExit(pid: pid_t) {
+        let src = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .global())
+        src.setEventHandler {
+            var st: Int32 = 0
+            waitpid(pid, &st, WNOHANG)   // reap the zombie so it doesn't linger
+            src.cancel()
+        }
+        src.resume()
+        exitSource = src
+    }
+
+    // MARK: - Pipe monitoring (auth-error detection on BOTH streams)
+
+    private func monitorPipes() {
+        // The Speechmatics auth rejection ("not_authorised") arrives on STDOUT, not stderr,
+        // so we watch both. Either stream can surface the failure.
         let onData: @Sendable (FileHandle, String) -> Void = { fh, source in
             let data = fh.availableData
             guard !data.isEmpty, let line = String(data: data, encoding: .utf8) else { return }
@@ -141,13 +211,12 @@ class SpeechmaticsEngine {
                 Task { @MainActor in self.handleAuthError() }
             }
         }
-        (proc.standardError as? Pipe)?.fileHandleForReading.readabilityHandler = { onData($0, "stderr") }
-        (proc.standardOutput as? Pipe)?.fileHandleForReading.readabilityHandler = { onData($0, "stdout") }
+        outHandle?.readabilityHandler = { onData($0, "stdout") }
+        errHandle?.readabilityHandler = { onData($0, "stderr") }
     }
 
-    /// A GENUINE auth/key failure. Phrases are specific so transient noise
-    /// ("Invalid audio frame", a timestamp containing 401) can't false-positive and
-    /// wrongly kill transcription mid-interview.
+    /// A GENUINE auth/key failure. Phrases are specific so transient noise can't
+    /// false-positive and wrongly kill transcription mid-interview.
     nonisolated static func isAuthFailure(_ line: String) -> Bool {
         let low = line.lowercased()
         return low.contains("invalid api key")   || low.contains("invalid_api_key")
@@ -169,7 +238,7 @@ class SpeechmaticsEngine {
         monitorTimer?.invalidate(); monitorTimer = nil
         killAndDispose()
         onKeyError?()
-        startRetryTimer()   // re-fetch a fresh key periodically; auto-recovers if the server key is renewed
+        startRetryTimer()
     }
 
     private func startMonitorTimer() {
@@ -181,7 +250,8 @@ class SpeechmaticsEngine {
 
     private func checkEngine() {
         guard !engineCancelled else { return }
-        if process == nil || process?.isRunning == false {
+        // kill(pid, 0) == 0 → process still alive; non-zero (ESRCH) → it died, restart it.
+        if enginePid <= 0 || kill(enginePid, 0) != 0 {
             let key = UserSession.shared.speechmaticsKey
             guard !key.isEmpty else {
                 statusText = "NO MIC"
@@ -196,22 +266,25 @@ class SpeechmaticsEngine {
 
     func stop() {
         engineCancelled = true
-        monitorTimer?.invalidate()
-        monitorTimer = nil
-        retryTimer?.invalidate()
-        retryTimer = nil
+        monitorTimer?.invalidate(); monitorTimer = nil
+        retryTimer?.invalidate();   retryTimer = nil
         killAndDispose()
     }
 
     private func killAndDispose() {
-        // Clear the pipe readers BEFORE terminating — a dangling readabilityHandler
-        // keeps the file handle alive and can keep firing after the process dies.
-        if let proc = process {
-            (proc.standardOutput as? Pipe)?.fileHandleForReading.readabilityHandler = nil
-            (proc.standardError  as? Pipe)?.fileHandleForReading.readabilityHandler = nil
-            proc.terminate()
+        // Clear the pipe readers BEFORE terminating so a dangling handler can't keep firing.
+        outHandle?.readabilityHandler = nil
+        errHandle?.readabilityHandler = nil
+        outHandle = nil
+        errHandle = nil
+        exitSource?.cancel(); exitSource = nil
+        if enginePid > 0 {
+            let pid = enginePid
+            kill(pid, SIGTERM)
+            // Reap off the main thread so we never block, and never leave a zombie.
+            DispatchQueue.global(qos: .utility).async { var st: Int32 = 0; waitpid(pid, &st, 0) }
         }
-        process = nil
+        enginePid = 0
         isRunning = false
     }
 
@@ -230,12 +303,8 @@ class SpeechmaticsEngine {
                 let parts = line.trimmingCharacters(in: .whitespaces)
                     .split(separator: " ", omittingEmptySubsequences: true).map(String.init)
                 guard parts.count >= 2, let pid = Int32(parts[0]), let ppid = Int32(parts[1]) else { continue }
-                // Kill ONLY true orphans — processes reparented to launchd (ppid == 1)
-                // because a PREVIOUS app instance crashed without cleaning up. Our live
-                // engine (ppid == this app) AND the worker it forks (ppid == the engine)
-                // both have ppid != 1, so this can never kill our own running tree. The
-                // earlier "skip our direct child" rule missed the engine's worker child
-                // and would kill it in the spawn race, breaking live transcription.
+                // Kill ONLY true orphans (ppid == 1, reparented to launchd after a crash) —
+                // never our live engine tree.
                 guard ppid == 1 else { continue }
                 kill(pid, SIGTERM)
             }
