@@ -4,6 +4,14 @@ struct SettingsView: View {
     @Environment(MainViewModel.self) var vm
     @Environment(\.dismiss) var dismiss
 
+    // Real app version from the bundle (was hardcoded "1.0.0", so it always showed the
+    // wrong number — the CI stamps 1.0.<build> into MARKETING_VERSION).
+    static var appVersion: String {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
+        return b.isEmpty ? v : "\(v) (\(b))"
+    }
+
     var body: some View {
         ZStack {
             Color(hex: "#0d1117").ignoresSafeArea()
@@ -43,7 +51,7 @@ struct SettingsView: View {
                         // About
                         settingsSection("ABOUT") {
                             VStack(alignment: .leading, spacing: 6) {
-                                infoRow("Version", "1.0.0")
+                                infoRow("Version", Self.appVersion)
                                 infoRow("Backend", AppConfig.backendUrl)
                                 if UserSession.shared.isLoggedIn {
                                     infoRow("Account", UserSession.shared.email)
