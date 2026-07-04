@@ -146,6 +146,16 @@ struct PermissionSetupView: View {
             }
         }
         .frame(width: 520, height: 570)
+        .onAppear {
+            // Pre-register the app in the Screen Recording list the moment the
+            // sheet opens — so when the user clicks "Open Settings" the app is
+            // already in the list and they just flip the switch (no "+" needed).
+            vm.registerScreenRecording()
+            // Fire the mic popup immediately if it hasn't been decided yet.
+            if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+                vm.requestMicrophonePermission()
+            }
+        }
         .animation(.easeInOut(duration: 0.22), value: vm.permMicrophone)
         .animation(.easeInOut(duration: 0.22), value: vm.permAccessibility)
         .animation(.easeInOut(duration: 0.22), value: vm.permScreenRecording)
