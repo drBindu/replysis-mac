@@ -161,19 +161,16 @@ struct PermissionSetupView: View {
 
     private var statusColor: Color {
         if !vm.hotkeyReadyToActivate { return Color.white.opacity(0.35) }
-        if !vm.permScreenRecording { return Color(hex: "#f59e0b") }
+        if !vm.permMicrophone || !vm.permScreenRecording { return Color(hex: "#f59e0b") }
         return Color(hex: "#4ade80")
     }
 
     private var statusMessage: String {
         if !vm.hotkeyReadyToActivate {
-            if !vm.permMicrophone && !vm.permAccessibility {
-                return "Grant Microphone and Accessibility to continue."
-            } else if !vm.permMicrophone {
-                return "Grant Microphone access to continue."
-            } else {
-                return "Grant Accessibility access to continue."
-            }
+            return "Grant Accessibility access to continue."
+        }
+        if !vm.permMicrophone {
+            return "Click Relaunch — microphone permission will be asked on startup."
         }
         if !vm.permScreenRecording {
             return "Ready to launch — also grant Screen Recording for F9 screen analysis."

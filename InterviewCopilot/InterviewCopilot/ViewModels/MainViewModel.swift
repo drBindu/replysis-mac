@@ -291,22 +291,27 @@ class MainViewModel {
         }
     }
 
-    /// Mic + Accessibility granted → enable the "Relaunch & Start Session" button.
-    /// Screen Recording is shown upfront but not blocking — macOS Tahoe (16) moved it
-    /// into a separate "System Audio Recording Only" section that CGPreflightScreenCaptureAccess
-    /// doesn't track, so requiring it would permanently disable the button on that OS.
-    /// F9 prompts for it at use-time if still missing.
-    var hotkeyReadyToActivate: Bool { permMicrophone && permAccessibility }
+    /// Accessibility granted → enable the "Relaunch & Start Session" button.
+    /// Accessibility is the ONLY permission that truly requires a relaunch (the CGEventTap
+    /// must be registered in a process that was trusted from birth). Mic and Screen Recording
+    /// are shown upfront but never block this button — mic is requested at click-time if still
+    /// undetermined, and Screen Recording is prompted when F9 is used.
+    var hotkeyReadyToActivate: Bool { permAccessibility }
 
-    /// Called when the user taps "I've granted them — Relaunch". Accessibility was granted
-    /// AFTER launch, so the CGEventTap can't attach in THIS process — relaunch so the fresh
-    /// process is trusted from birth and the Space bar works.
+    /// Called when the user taps "Relaunch & Start Session".
+    /// If mic is still undetermined, request it first then relaunch.
+    /// If mic is denied, relaunch anyway — the Space bar press will prompt again.
     func permissionGrantedContinue() {
         permTimer?.invalidate(); permTimer = nil
-        if AXIsProcessTrusted() {
+        let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+        if micStatus == .notDetermined {
+            // Ask for mic now; relaunch immediately after regardless of outcome.
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] _ in
+                Task { @MainActor [weak self] in MainViewModel.relaunchApp() }
+            }
+        } else if AXIsProcessTrusted() {
             MainViewModel.relaunchApp()
         } else {
-            // Not actually granted yet — just close the sheet; app stays fully usable.
             needsPermissionSetup = false
         }
     }
