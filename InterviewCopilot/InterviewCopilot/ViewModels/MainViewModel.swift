@@ -253,6 +253,15 @@ class MainViewModel {
         needsPermissionSetup = false
     }
 
+    /// Open the permission setup sheet and start polling so cards flip to green
+    /// the moment each permission is granted.
+    func openPermissionSetup() {
+        if !permAccessibility { requestAccessibilityPrompt() }
+        needsPermissionSetup = true
+        showHotkeyBanner = false
+        startPermissionPolling()
+    }
+
     func requestMicrophonePermission() {
         AVCaptureDevice.requestAccess(for: .audio) { granted in
             Task { @MainActor in self.permMicrophone = granted }
@@ -350,16 +359,35 @@ class MainViewModel {
 
     // MARK: - Space Logic
     func handleSpacePress(source: String = "KEYBOARD") {
-        // If the user is typing in a text field, Space must type a space, NOT toggle the
-        // mic. The global key tap fires for every keystroke, so guard it here.
         if isEditingText { return }
 
-        // Sign-in gate: the app's whole value is AI answers, which require an account. If
-        // the user presses Space (or taps the mic) while signed out, send them straight to
-        // sign-in instead of silently "listening" to nothing.
         if !session.isLoggedIn {
             dlog("SPACE from \(source): not signed in → prompting sign-in", tag: "SPACE")
             NotificationCenter.default.post(name: .showLogin, object: nil)
+            return
+        }
+
+        // Permission gate — mic + accessibility required before first session.
+        // Triggered on the user's first Space/mic press so the app is immediately
+        // usable after install, but permissions are only requested when actually needed.
+        let micAuth = AVCaptureDevice.authorizationStatus(for: .audio)
+        if micAuth == .notDetermined {
+            // Fire the system mic popup right now. If granted, retry this call.
+            // If denied or Accessibility still missing, open the setup sheet.
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                Task { @MainActor in
+                    self.permMicrophone = granted
+                    if granted && AXIsProcessTrusted() {
+                        self.handleSpacePress(source: source)
+                    } else {
+                        self.openPermissionSetup()
+                    }
+                }
+            }
+            return
+        }
+        if micAuth != .authorized || !AXIsProcessTrusted() {
+            openPermissionSetup()
             return
         }
 
