@@ -290,10 +290,12 @@ class MainViewModel {
         }
     }
 
-    /// All three permissions granted → enable the "Relaunch & Start Session" button.
-    /// Mic and Accessibility are required; Screen Recording is needed for F9 screen
-    /// analysis. Requiring all three upfront prevents mid-interview permission gaps.
-    var hotkeyReadyToActivate: Bool { permMicrophone && permAccessibility && permScreenRecording }
+    /// Mic + Accessibility granted → enable the "Relaunch & Start Session" button.
+    /// Screen Recording is shown upfront but not blocking — macOS Tahoe (16) moved it
+    /// into a separate "System Audio Recording Only" section that CGPreflightScreenCaptureAccess
+    /// doesn't track, so requiring it would permanently disable the button on that OS.
+    /// F9 prompts for it at use-time if still missing.
+    var hotkeyReadyToActivate: Bool { permMicrophone && permAccessibility }
 
     /// Called when the user taps "I've granted them — Relaunch". Accessibility was granted
     /// AFTER launch, so the CGEventTap can't attach in THIS process — relaunch so the fresh

@@ -44,7 +44,7 @@ struct PermissionSetupView: View {
                     Text("Set Up Permissions")
                         .font(.system(size: 21, weight: .bold))
                         .foregroundColor(.white)
-                    Text("Grant all three now — so nothing blocks you mid-interview.")
+                    Text("Grant these now — so nothing blocks you mid-interview.")
                         .font(.system(size: 12))
                         .foregroundColor(Color.white.opacity(0.38))
                 }
@@ -89,12 +89,12 @@ struct PermissionSetupView: View {
                         icon: "rectangle.dashed",
                         iconColor: Color(hex: "#f59e0b"),
                         title: "Screen Recording",
-                        badge: "REQUIRED",
-                        description: "Analyze code or questions on your screen with F9 — essential mid-interview.",
+                        badge: "RECOMMENDED",
+                        description: "Analyze code or questions on your screen with F9 — highly recommended.",
                         isGranted: vm.permScreenRecording,
                         buttonLabel: "Open Settings",
                         extraInfo: vm.permScreenRecording ? nil :
-                            "① Click Open Settings  ② Find InterviewCopilot → toggle ON  ③ Return here",
+                            "① Click Open Settings  ② Find InterviewCopilot → toggle ON  (not listed? click + to add it)  ③ Return here",
                         action: openScreenSettings
                     )
                 }
@@ -104,13 +104,9 @@ struct PermissionSetupView: View {
 
                 // ── Bottom action ─────────────────────────────────────
                 VStack(spacing: 10) {
-                    Text(vm.hotkeyReadyToActivate
-                         ? "All set — click Relaunch to start your first session."
-                         : "Grant all three permissions above to continue.")
+                    Text(statusMessage)
                         .font(.system(size: 11))
-                        .foregroundColor(vm.hotkeyReadyToActivate
-                                         ? Color(hex: "#4ade80")
-                                         : Color.white.opacity(0.35))
+                        .foregroundColor(statusColor)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 16)
@@ -159,6 +155,30 @@ struct PermissionSetupView: View {
         .animation(.easeInOut(duration: 0.22), value: vm.permMicrophone)
         .animation(.easeInOut(duration: 0.22), value: vm.permAccessibility)
         .animation(.easeInOut(duration: 0.22), value: vm.permScreenRecording)
+    }
+
+    // MARK: - Helpers
+
+    private var statusColor: Color {
+        if !vm.hotkeyReadyToActivate { return Color.white.opacity(0.35) }
+        if !vm.permScreenRecording { return Color(hex: "#f59e0b") }
+        return Color(hex: "#4ade80")
+    }
+
+    private var statusMessage: String {
+        if !vm.hotkeyReadyToActivate {
+            if !vm.permMicrophone && !vm.permAccessibility {
+                return "Grant Microphone and Accessibility to continue."
+            } else if !vm.permMicrophone {
+                return "Grant Microphone access to continue."
+            } else {
+                return "Grant Accessibility access to continue."
+            }
+        }
+        if !vm.permScreenRecording {
+            return "Ready to launch — also grant Screen Recording for F9 screen analysis."
+        }
+        return "All set — click Relaunch to start your first session."
     }
 
     // MARK: - Actions
