@@ -3,6 +3,7 @@ import AppKit
 import Observation
 import AVFoundation
 import IOKit.hid
+import ScreenCaptureKit
 
 @MainActor
 @Observable
@@ -107,17 +108,17 @@ class MainViewModel {
         _ = AXIsProcessTrustedWithOptions(opts)
     }
 
-    // Force the app to appear in the Screen Recording list so the user only flips a switch
-    // (never has to click "+" and add it by hand — the recurring complaint). Just calling
-    // CGRequestScreenCaptureAccess sometimes doesn't persist the entry, and running the
-    // `screencapture` tool registers THAT tool, not us. Having OUR OWN process attempt a
-    // real capture via CoreGraphics is what registers the app itself.
+    // Register the app in "Screen & System Audio Recording" (the full section).
+    // On macOS Tahoe (16), CGDisplayCreateImage lands in "System Audio Recording Only"
+    // instead — the correct API is ScreenCaptureKit's SCShareableContent which triggers
+    // the proper full-screen-capture permission entry.
     func registerScreenRecording() {
-        CGRequestScreenCaptureAccess()   // shows the system prompt + registers us
-        DispatchQueue.global(qos: .utility).async {
-            // A throwaway capture from our process guarantees the Screen Recording entry.
-            _ = CGDisplayCreateImage(CGMainDisplayID())
-            Task { @MainActor in self.permScreenRecording = CGPreflightScreenCaptureAccess() }
+        // SCShareableContent.getExcludingDesktopWindows registers the app in
+        // "Screen & System Audio Recording" on macOS 12.3+ (including Tahoe).
+        SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                self?.permScreenRecording = CGPreflightScreenCaptureAccess()
+            }
         }
     }
 
