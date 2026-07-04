@@ -84,6 +84,22 @@ class MainViewModel {
         IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
     }
 
+    // Ask macOS for Input Monitoring. This is what REGISTERS the app in the Input
+    // Monitoring list (and shows the system prompt with its own "Open System Settings"
+    // button). Called both at launch and again when the user taps the card's button, so
+    // the app is guaranteed to be in the list they're looking at.
+    func requestInputMonitoring() {
+        _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+    }
+
+    // Fire the Accessibility prompt. This REGISTERS the app in the Accessibility list
+    // (and shows the "would like to control this computer" prompt with its own "Open
+    // System Settings" button). Without this the app never appears in that list to toggle.
+    func requestAccessibilityPrompt() {
+        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(opts)
+    }
+
     // MARK: - Timers (not tracked by @Observable)
     private var transcriptTimer: Timer?
     private var thinkingTimer: Timer?
@@ -173,9 +189,11 @@ class MainViewModel {
             return
         }
 
-        // Something required is missing — show the setup screen. Proactively prompt for
-        // Input Monitoring so the app is registered in that Settings pane (the system
-        // shows its one-time prompt and the app appears in the list to toggle on).
+        // Something required is missing — show the setup screen. Proactively fire BOTH
+        // prompts so the app is REGISTERED in each Settings pane (otherwise the user opens
+        // the list and the app isn't there to toggle — the #1 onboarding blocker). Each
+        // system prompt also has its own "Open System Settings" button.
+        if !permAccessibility   { requestAccessibilityPrompt() }
         if !permInputMonitoring { IOHIDRequestAccess(kIOHIDRequestTypeListenEvent) }
         needsPermissionSetup = true
         startPermissionPolling()

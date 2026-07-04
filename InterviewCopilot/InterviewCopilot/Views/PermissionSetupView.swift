@@ -143,6 +143,10 @@ struct PermissionSetupView: View {
     // MARK: - Actions
 
     private func openInputMonitoringSettings() {
+        // Fire the access request FIRST so macOS registers the app in the Input Monitoring
+        // list (and shows its prompt) — otherwise the user opens the pane and the app
+        // isn't there to toggle. Then open the pane as a fallback path.
+        vm.requestInputMonitoring()
         NSWorkspace.shared.open(
             URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
     }
@@ -159,6 +163,8 @@ struct PermissionSetupView: View {
     }
 
     private func openAccessibilitySettings() {
+        // Fire the prompt first so the app is registered in the Accessibility list.
+        vm.requestAccessibilityPrompt()
         NSWorkspace.shared.open(
             URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }
