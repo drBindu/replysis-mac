@@ -147,7 +147,9 @@ class SpeechmaticsEngine {
 
         var attr: posix_spawnattr_t?
         posix_spawnattr_init(&attr)
-        setSpawnDisclaim(&attr)   // the whole point
+        // disclaim removed: engine is now signed --identifier "com.bindualekhya.InterviewCopilot"
+        // so it shares the main app's TCC identity. No disclaim = engine inherits parent's mic
+        // grant directly, and only ONE "InterviewCopilot" entry appears in System Settings.
 
         let argv: [UnsafeMutablePointer<CChar>?] = ([path] + args).map { strdup($0) } + [nil]
         let envp: [UnsafeMutablePointer<CChar>?] = env.map { strdup("\($0.key)=\($0.value)") } + [nil]
