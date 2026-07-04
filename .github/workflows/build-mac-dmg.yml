@@ -141,8 +141,12 @@ jobs:
             echo "GOOGLE_CLIENT_SECRET not set — Google sign-in stays disabled (email/password works)"
           fi
 
-          # Re-seal the whole .app after modifying internals
+          # Re-seal the whole .app after modifying internals.
+          # MUST pass --entitlements explicitly: without it codesign may strip the
+          # audio-input and camera entitlements that Xcode embedded, causing macOS
+          # to return AVAuthorizationStatus.denied (.denied) for mic on every install.
           codesign --force --options runtime \
+            --entitlements "InterviewCopilot/InterviewCopilot/InterviewCopilot.entitlements" \
             --sign "$IDENTITY" \
             --keychain "$RUNNER_TEMP/build.keychain" \
             "$APP"
