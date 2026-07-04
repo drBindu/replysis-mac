@@ -83,6 +83,7 @@ class MainViewModel {
     var permInputMonitoring = false    // needed (with Accessibility) for the global hotkey
     var permAccessibility   = false
     var permMicrophone      = false
+    var micDenied           = false   // true when user explicitly denied mic (not just undetermined)
     var permScreenRecording = false
     private var permTimer: Timer?
     private var permPollCount = 0
@@ -282,7 +283,9 @@ class MainViewModel {
                 // the button themselves once everything is granted (their requested flow).
                 self.permInputMonitoring = MainViewModel.inputMonitoringGranted()
                 self.permAccessibility   = AXIsProcessTrusted()
-                self.permMicrophone      = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+                let micStatus            = AVCaptureDevice.authorizationStatus(for: .audio)
+                self.permMicrophone      = micStatus == .authorized
+                self.micDenied           = micStatus == .denied
                 self.permScreenRecording = CGPreflightScreenCaptureAccess()
                 self.permPollCount += 1
                 // Stop after ~5 min so a forgotten-open sheet doesn't poll forever.
@@ -304,15 +307,23 @@ class MainViewModel {
     func permissionGrantedContinue() {
         permTimer?.invalidate(); permTimer = nil
         let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-        if micStatus == .notDetermined {
-            // Ask for mic now; relaunch immediately after regardless of outcome.
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] _ in
-                Task { @MainActor [weak self] in MainViewModel.relaunchApp() }
+        switch micStatus {
+        case .notDetermined:
+            // Show the system mic popup now; relaunch after user responds.
+            AVCaptureDevice.requestAccess(for: .audio) { _ in
+                Task { @MainActor in MainViewModel.relaunchApp() }
             }
-        } else if AXIsProcessTrusted() {
-            MainViewModel.relaunchApp()
-        } else {
-            needsPermissionSetup = false
+        case .denied:
+            // Cannot show popup — send user to System Settings to toggle it on.
+            // Do NOT relaunch; that just loops back to this same state.
+            NSWorkspace.shared.open(
+                URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+        default: // .authorized
+            if AXIsProcessTrusted() {
+                MainViewModel.relaunchApp()
+            } else {
+                needsPermissionSetup = false
+            }
         }
     }
 

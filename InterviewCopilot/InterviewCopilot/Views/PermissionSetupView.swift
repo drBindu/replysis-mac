@@ -113,12 +113,9 @@ struct PermissionSetupView: View {
 
                     Button(action: { vm.permissionGrantedContinue() }) {
                         HStack(spacing: 8) {
-                            Image(systemName: vm.hotkeyReadyToActivate
-                                  ? "arrow.clockwise" : "lock.fill")
+                            Image(systemName: vm.hotkeyReadyToActivate ? "arrow.clockwise" : "lock.fill")
                                 .font(.system(size: 13, weight: .semibold))
-                            Text(vm.hotkeyReadyToActivate
-                                 ? "Relaunch & Start Session"
-                                 : "Waiting for permissions…")
+                            Text(relaunchButtonLabel)
                                 .fontWeight(.semibold)
                         }
                         .frame(maxWidth: .infinity)
@@ -159,6 +156,12 @@ struct PermissionSetupView: View {
 
     // MARK: - Helpers
 
+    private var relaunchButtonLabel: String {
+        if !vm.hotkeyReadyToActivate { return "Waiting for Accessibility…" }
+        if vm.micDenied { return "Open Mic Settings" }
+        return "Relaunch & Start Session"
+    }
+
     private var statusColor: Color {
         if !vm.hotkeyReadyToActivate { return Color.white.opacity(0.35) }
         if !vm.permMicrophone || !vm.permScreenRecording { return Color(hex: "#f59e0b") }
@@ -169,11 +172,14 @@ struct PermissionSetupView: View {
         if !vm.hotkeyReadyToActivate {
             return "Grant Accessibility access to continue."
         }
+        if vm.micDenied {
+            return "Microphone was denied — click Relaunch to open Mic settings, toggle ON, then click Relaunch again."
+        }
         if !vm.permMicrophone {
-            return "Click Relaunch — microphone permission will be asked on startup."
+            return "Click Relaunch — a microphone permission popup will appear."
         }
         if !vm.permScreenRecording {
-            return "Ready to launch — also grant Screen Recording for F9 screen analysis."
+            return "Ready — also grant Screen Recording for F9 screen analysis."
         }
         return "All set — click Relaunch to start your first session."
     }
