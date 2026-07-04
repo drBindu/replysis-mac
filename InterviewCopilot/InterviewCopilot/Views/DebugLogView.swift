@@ -29,6 +29,14 @@ struct DebugLogView: View {
                 .font(.system(size: 11))
                 .foregroundColor(Color(hex: "#38bdf8"))
                 .buttonStyle(.plain)
+                // Reveal the full persistent log file (has the whole session, beyond the
+                // 500-line in-memory cap) so it can be shared for support.
+                Button("Reveal") {
+                    NSWorkspace.shared.activateFileViewerSelecting([DebugLog.logFileURL])
+                }
+                .font(.system(size: 11))
+                .foregroundColor(Color(hex: "#38bdf8"))
+                .buttonStyle(.plain)
                 Button("Close") { dismiss() }
                     .font(.system(size: 11))
                     .foregroundColor(Color(hex: "#6b7280"))
