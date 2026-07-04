@@ -34,10 +34,13 @@ struct MainView: View {
                     .background(Color(red: 13/255, green: 17/255, blue: 23/255).opacity(0.85))
                     .clipShape(UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
                 Divider().background(Color.white.opacity(0.1))
+                if vm.showHotkeyBanner { hotkeyUpsellBanner }
                 bodyArea
             }
 
-            // Permission onboarding — shown on first launch until Accessibility is granted.
+            // OPTIONAL hotkey setup — only shown when the user taps "Enable Space bar".
+            // The app is fully usable without it (click the mic button), so this is a
+            // dismissible upgrade, never a wall.
             if vm.needsPermissionSetup {
                 PermissionSetupView()
                     .clipShape(RoundedRectangle(cornerRadius: 14))
@@ -68,6 +71,41 @@ struct MainView: View {
         .sheet(isPresented: $showSessions)  { SessionsView() }
         .sheet(isPresented: $showLogin)     { LoginView() }
         .sheet(isPresented: $showDebugLog)  { DebugLogView() }
+    }
+
+    // ── Optional "enable Space bar" upsell — subtle, dismissible, never blocks ──
+    var hotkeyUpsellBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "keyboard")
+                .font(.system(size: 12))
+                .foregroundColor(Color(hex: "#38bdf8"))
+            Text("Tip: enable the Space bar to start listening hands-free — without clicking.")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(Color(hex: "#cbd5e1"))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+            Spacer(minLength: 8)
+            Button(action: { vm.beginHotkeyUpgrade() }) {
+                Text("Enable")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12).padding(.vertical, 5)
+                    .background(LinearGradient(colors: [Color(hex: "#1d4ed8"), Color(hex: "#1e40af")],
+                                               startPoint: .leading, endPoint: .trailing))
+                    .cornerRadius(6)
+            }
+            .buttonStyle(.plain)
+            Button(action: { vm.dismissHotkeyBanner() }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(Color(hex: "#64748b"))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 8)
+        .background(Color(hex: "#0c2033"))
+        .overlay(Rectangle().fill(Color(hex: "#38bdf8").opacity(0.15)).frame(height: 1), alignment: .bottom)
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 
     // ══════════════════════════════════════════════

@@ -71,8 +71,15 @@ class MainViewModel {
     var useGroq = true
 
     // MARK: - Permission onboarding
-    var needsPermissionSetup = false
-    var permInputMonitoring = false    // REQUIRED for the global Space/F8/F9 hotkey (CGEventTap)
+    // The app is NEVER blocked on permissions. Microphone is a one-tap popup (all that's
+    // needed to transcribe). The global Space/F8/F9 hotkey is an OPTIONAL upgrade — until
+    // it's enabled the user just clicks the mic button. This is what makes the app usable
+    // the instant it's downloaded, with no System Settings wall.
+    var needsPermissionSetup = false   // true only while the OPTIONAL hotkey setup sheet is up
+    var hotkeyActive = false           // is the global hotkey currently working?
+    var showHotkeyBanner = false       // subtle "enable Space bar" upsell in the main UI
+    private var hotkeyBannerDismissed = false
+    var permInputMonitoring = false    // needed (with Accessibility) for the global hotkey
     var permAccessibility   = false
     var permMicrophone      = false
     var permScreenRecording = false
@@ -168,7 +175,7 @@ class MainViewModel {
         }
     }
 
-    // MARK: - Permission Setup
+    // MARK: - Permission Setup (NON-blocking)
 
     private func checkAndRequestPermissions() {
         permInputMonitoring = MainViewModel.inputMonitoringGranted()
@@ -176,27 +183,49 @@ class MainViewModel {
         permMicrophone      = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         permScreenRecording = CGPreflightScreenCaptureAccess()
 
-        // The global Space/F8/F9 hotkey (a keyboard CGEventTap) needs Input Monitoring;
-        // AXIsProcessTrusted alone is NOT enough on modern macOS. Require both before we
-        // even try to register the tap — otherwise it fails and the Space bar is dead.
-        if permInputMonitoring && permAccessibility {
-            setupHotkeys()
-            if !permMicrophone {
-                AVCaptureDevice.requestAccess(for: .audio) { granted in
-                    Task { @MainActor in self.permMicrophone = granted }
-                }
+        // Microphone is the ONLY permission needed to use the app, and it's a simple
+        // one-tap popup (never System Settings). Request it up front if undecided.
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                Task { @MainActor in self.permMicrophone = granted }
             }
-            return
         }
 
-        // Something required is missing — show the setup screen. Proactively fire BOTH
-        // prompts so the app is REGISTERED in each Settings pane (otherwise the user opens
-        // the list and the app isn't there to toggle — the #1 onboarding blocker). Each
-        // system prompt also has its own "Open System Settings" button.
+        // The global Space/F8/F9 hotkey needs Input Monitoring + Accessibility. If they're
+        // already granted, turn it on silently. If NOT, we do NOT block the app — the user
+        // works via the mic button and we show a small, dismissible "enable Space bar"
+        // upsell they can act on whenever they want.
+        if permInputMonitoring && permAccessibility {
+            setupHotkeys()
+            hotkeyActive = true
+        } else {
+            hotkeyActive = false
+            showHotkeyBanner = !hotkeyBannerDismissed
+        }
+        // needsPermissionSetup stays false — the main app is always usable.
+    }
+
+    /// User tapped "Enable Space bar" (the optional upgrade). Fire the registration prompts
+    /// so the app appears in the Settings lists, open the setup sheet, and poll for the
+    /// grant so we can relaunch to activate the hotkey.
+    func beginHotkeyUpgrade() {
         if !permAccessibility   { requestAccessibilityPrompt() }
-        if !permInputMonitoring { IOHIDRequestAccess(kIOHIDRequestTypeListenEvent) }
-        needsPermissionSetup = true
+        if !permInputMonitoring { requestInputMonitoring() }
+        needsPermissionSetup = true      // shows the (now optional) setup sheet
+        showHotkeyBanner = false
         startPermissionPolling()
+    }
+
+    /// User dismissed the upsell banner — don't nag again this session.
+    func dismissHotkeyBanner() {
+        hotkeyBannerDismissed = true
+        showHotkeyBanner = false
+    }
+
+    /// Close the optional hotkey setup sheet without enabling it — app stays fully usable.
+    func closeHotkeySetup() {
+        permTimer?.invalidate(); permTimer = nil
+        needsPermissionSetup = false
     }
 
     func requestMicrophonePermission() {
