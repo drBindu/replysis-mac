@@ -11,16 +11,21 @@ struct PermissionSetupView: View {
 
             VStack(spacing: 0) {
 
-                // ── Close button ─────────────────────────────────────
+                // ── Close button — only visible once all permissions are granted ──
                 HStack {
                     Spacer()
-                    Button(action: { vm.closeHotkeySetup() }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 18))
-                            .foregroundColor(Color.white.opacity(0.18))
+                    if vm.hotkeyReadyToActivate {
+                        Button(action: { vm.closeHotkeySetup() }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 18))
+                                .foregroundColor(Color.white.opacity(0.18))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Close")
+                    } else {
+                        // Placeholder so layout doesn't jump
+                        Color.clear.frame(width: 18, height: 18)
                     }
-                    .buttonStyle(.plain)
-                    .help("Close — the app still works without global Space bar")
                 }
                 .padding([.top, .trailing], 16)
 
@@ -39,7 +44,7 @@ struct PermissionSetupView: View {
                     Text("Set Up Permissions")
                         .font(.system(size: 21, weight: .bold))
                         .foregroundColor(.white)
-                    Text("One-time setup — takes about 30 seconds.")
+                    Text("Grant all three now — so nothing blocks you mid-interview.")
                         .font(.system(size: 12))
                         .foregroundColor(Color.white.opacity(0.38))
                 }
@@ -84,11 +89,12 @@ struct PermissionSetupView: View {
                         icon: "rectangle.dashed",
                         iconColor: Color(hex: "#f59e0b"),
                         title: "Screen Recording",
-                        badge: "OPTIONAL",
-                        description: "Analyze code or questions shown on your screen with F9.",
+                        badge: "REQUIRED",
+                        description: "Analyze code or questions on your screen with F9 — essential mid-interview.",
                         isGranted: vm.permScreenRecording,
                         buttonLabel: "Open Settings",
-                        extraInfo: nil,
+                        extraInfo: vm.permScreenRecording ? nil :
+                            "① Click Open Settings  ② Find InterviewCopilot → toggle ON  ③ Return here",
                         action: openScreenSettings
                     )
                 }
@@ -99,8 +105,8 @@ struct PermissionSetupView: View {
                 // ── Bottom action ─────────────────────────────────────
                 VStack(spacing: 10) {
                     Text(vm.hotkeyReadyToActivate
-                         ? "All set — click Relaunch to activate the global Space bar."
-                         : "Grant Microphone and Accessibility above to continue.")
+                         ? "All set — click Relaunch to start your first session."
+                         : "Grant all three permissions above to continue.")
                         .font(.system(size: 11))
                         .foregroundColor(vm.hotkeyReadyToActivate
                                          ? Color(hex: "#4ade80")

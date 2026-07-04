@@ -66,7 +66,10 @@ struct MainView: View {
         // OPTIONAL hotkey setup (fixed-size sheet so it can never stretch the window).
         // Shown only when the user taps "Enable Space bar" — the app is fully usable
         // without it via the mic button, so this is a dismissible upgrade, never a wall.
-        .sheet(isPresented: Bindable(vm).needsPermissionSetup) { PermissionSetupView() }
+        .sheet(isPresented: Bindable(vm).needsPermissionSetup) {
+            PermissionSetupView()
+                .interactiveDismissDisabled(!vm.hotkeyReadyToActivate)
+        }
     }
 
     // ══════════════════════════════════════════════

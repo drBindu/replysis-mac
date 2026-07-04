@@ -196,7 +196,7 @@ class MainViewModel {
         }
     }
 
-    // MARK: - Permission Setup (NON-blocking)
+    // MARK: - Permission Setup
 
     private func checkAndRequestPermissions() {
         permInputMonitoring = MainViewModel.inputMonitoringGranted()
@@ -204,27 +204,28 @@ class MainViewModel {
         permMicrophone      = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         permScreenRecording = CGPreflightScreenCaptureAccess()
 
-        // Microphone is the ONLY permission needed to use the app, and it's a simple
-        // one-tap popup (never System Settings). Request it up front if undecided.
+        // Fire the mic popup immediately so the user doesn't have to click a button.
         if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
             AVCaptureDevice.requestAccess(for: .audio) { granted in
                 Task { @MainActor in self.permMicrophone = granted }
             }
         }
 
-        // The global Space/F8/F9 hotkey is an ACTIVE CGEventTap, authorized SOLELY by
-        // ACCESSIBILITY (not Input Monitoring — the app can't reliably register in that
-        // list on every Mac, which is why the Space bar was dead in the background). If
-        // Accessibility is granted, turn it on now. If not, the app is STILL fully usable
-        // via the mic button; we just show a dismissible "enable Space bar" upsell.
+        // Show the permission setup gate on launch whenever any required permission
+        // is missing. This ensures every user configures mic, accessibility, and
+        // screen recording before their first interview — no mid-session surprises.
+        if !permMicrophone || !permAccessibility || !permScreenRecording {
+            if !permAccessibility { requestAccessibilityPrompt() }
+            needsPermissionSetup = true
+            startPermissionPolling()
+        }
+
         if permAccessibility {
             setupHotkeys()
             hotkeyActive = true
         } else {
             hotkeyActive = false
-            showHotkeyBanner = !hotkeyBannerDismissed
         }
-        // needsPermissionSetup stays false — the main app is always usable.
     }
 
     /// User tapped "Enable Space bar" (the optional upgrade). Fire the Accessibility prompt
@@ -289,12 +290,10 @@ class MainViewModel {
         }
     }
 
-    /// The Space bar is a global keyboard hotkey → it needs ACCESSIBILITY (and a relaunch)
-    /// and nothing else. Microphone is for transcription and is handled by its own one-tap
-    /// prompt, so it must NOT gate this button — otherwise a mic-permission quirk (the
-    /// bundled engine's SEPARATE TCC entry showing a second "InterviewCopilot" row) would
-    /// wrongly keep the user from ever activating the Space bar. That was the stuck button.
-    var hotkeyReadyToActivate: Bool { permAccessibility }
+    /// All three permissions granted → enable the "Relaunch & Start Session" button.
+    /// Mic and Accessibility are required; Screen Recording is needed for F9 screen
+    /// analysis. Requiring all three upfront prevents mid-interview permission gaps.
+    var hotkeyReadyToActivate: Bool { permMicrophone && permAccessibility && permScreenRecording }
 
     /// Called when the user taps "I've granted them — Relaunch". Accessibility was granted
     /// AFTER launch, so the CGEventTap can't attach in THIS process — relaunch so the fresh
