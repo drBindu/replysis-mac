@@ -138,6 +138,9 @@ class MainViewModel {
         // Surface a clear message if the speech service rejects the key, instead of
         // silently showing an empty transcript forever.
         engine.onKeyError = { [weak self] in self?.handleSpeechKeyError() }
+        // Best-effort: pull the Google client secret so "Continue with Google" can work.
+        // Harmless if that config backend is down — email/password sign-in is independent.
+        Task { await AppConfig.fetchRemoteConfig() }
         loadResume()
         loadJob()
         checkAndRequestPermissions()
@@ -191,11 +194,12 @@ class MainViewModel {
             }
         }
 
-        // The global Space/F8/F9 hotkey needs Input Monitoring + Accessibility. If they're
-        // already granted, turn it on silently. If NOT, we do NOT block the app — the user
-        // works via the mic button and we show a small, dismissible "enable Space bar"
-        // upsell they can act on whenever they want.
-        if permInputMonitoring && permAccessibility {
+        // The global Space/F8/F9 hotkey is an ACTIVE CGEventTap, authorized SOLELY by
+        // ACCESSIBILITY (not Input Monitoring — the app can't reliably register in that
+        // list on every Mac, which is why the Space bar was dead in the background). If
+        // Accessibility is granted, turn it on now. If not, the app is STILL fully usable
+        // via the mic button; we just show a dismissible "enable Space bar" upsell.
+        if permAccessibility {
             setupHotkeys()
             hotkeyActive = true
         } else {
@@ -205,13 +209,16 @@ class MainViewModel {
         // needsPermissionSetup stays false — the main app is always usable.
     }
 
-    /// User tapped "Enable Space bar" (the optional upgrade). Fire the registration prompts
-    /// so the app appears in the Settings lists, open the setup sheet, and poll for the
-    /// grant so we can relaunch to activate the hotkey.
+    /// User tapped "Enable Space bar" (the optional upgrade). Fire the Accessibility prompt
+    /// so the app is REGISTERED in that Settings list (otherwise it isn't there to toggle),
+    /// nudge the mic if still undecided, open the setup sheet, and poll so the sheet's
+    /// cards flip to green and the Relaunch button enables the instant they're granted.
     func beginHotkeyUpgrade() {
-        if !permAccessibility   { requestAccessibilityPrompt() }
-        if !permInputMonitoring { requestInputMonitoring() }
-        needsPermissionSetup = true      // shows the (now optional) setup sheet
+        if !permAccessibility { requestAccessibilityPrompt() }
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+            requestMicrophonePermission()
+        }
+        needsPermissionSetup = true      // shows the (optional) setup sheet
         showHotkeyBanner = false
         startPermissionPolling()
     }
@@ -240,45 +247,34 @@ class MainViewModel {
         permTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
-                let hotkeyWasReady = self.permInputMonitoring && self.permAccessibility
-                let imNow  = MainViewModel.inputMonitoringGranted()
-                let axNow  = AXIsProcessTrusted()
-                let micNow = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-                let scrNow = CGPreflightScreenCaptureAccess()
-                self.permInputMonitoring = imNow
-                self.permAccessibility   = axNow
-                self.permMicrophone      = micNow
-                self.permScreenRecording = scrNow
+                // Keep the live permission state fresh so the setup sheet's cards flip to
+                // green and the "I've granted them — Relaunch" button ENABLES the moment the
+                // user grants them. We deliberately do NOT auto-relaunch — the user clicks
+                // the button themselves once everything is granted (their requested flow).
+                self.permInputMonitoring = MainViewModel.inputMonitoringGranted()
+                self.permAccessibility   = AXIsProcessTrusted()
+                self.permMicrophone      = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+                self.permScreenRecording = CGPreflightScreenCaptureAccess()
                 self.permPollCount += 1
-
-                // Both hotkey permissions (Input Monitoring + Accessibility) just became
-                // granted while we were running. Critical macOS fact: a global CGEventTap
-                // CANNOT be created by a process that launched before it was authorized —
-                // the grant flips true but tapCreate() keeps returning nil forever
-                // (confirmed in the debug log). The ONLY reliable fix is to relaunch so the
-                // fresh process is authorized from birth. Auto-relaunch: the app blinks
-                // once and comes back with a working Space bar.
-                let hotkeyReadyNow = imNow && axNow
-                if hotkeyReadyNow && !hotkeyWasReady {
-                    self.permTimer?.invalidate(); self.permTimer = nil
-                    dlog("Hotkey permissions granted while running → relaunching to activate", tag: "PERM")
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                        MainViewModel.relaunchApp()
-                    }
-                }
+                // Stop after ~5 min so a forgotten-open sheet doesn't poll forever.
+                if self.permPollCount > 300 { self.permTimer?.invalidate(); self.permTimer = nil }
             }
         }
     }
 
-    /// Called when the user taps "Get Started" on the setup screen. The hotkey permissions
-    /// were granted AFTER launch, so the event tap can't be created in this process —
-    /// relaunch so the fresh process is authorized from birth and Space works.
+    /// Whether the setup sheet's required permissions (Accessibility + Microphone) are all
+    /// granted — the Relaunch button is enabled only when this is true.
+    var hotkeyReadyToActivate: Bool { permAccessibility && permMicrophone }
+
+    /// Called when the user taps "I've granted them — Relaunch". Accessibility was granted
+    /// AFTER launch, so the CGEventTap can't attach in THIS process — relaunch so the fresh
+    /// process is trusted from birth and the Space bar works.
     func permissionGrantedContinue() {
         permTimer?.invalidate(); permTimer = nil
-        if MainViewModel.inputMonitoringGranted() && AXIsProcessTrusted() {
+        if AXIsProcessTrusted() {
             MainViewModel.relaunchApp()
         } else {
-            // Required permissions not fully granted yet — just proceed without hotkeys.
+            // Not actually granted yet — just close the sheet; app stays fully usable.
             needsPermissionSetup = false
         }
     }
@@ -313,6 +309,15 @@ class MainViewModel {
         // mic. The global key tap fires for every keystroke, so guard it here.
         if isEditingText { return }
 
+        // Sign-in gate: the app's whole value is AI answers, which require an account. If
+        // the user presses Space (or taps the mic) while signed out, send them straight to
+        // sign-in instead of silently "listening" to nothing.
+        if !session.isLoggedIn {
+            dlog("SPACE from \(source): not signed in → prompting sign-in", tag: "SPACE")
+            NotificationCenter.default.post(name: .showLogin, object: nil)
+            return
+        }
+
         dlog("SPACE pressed from \(source) | loggedIn=\(session.isLoggedIn) | engineRunning=\(engine.isRunning) | isMuted=\(isMuted) | isProcessing=\(isProcessing)", tag: "SPACE")
 
         guard !isProcessing else {
@@ -323,10 +328,6 @@ class MainViewModel {
             dlog("SPACE debounced", tag: "SPACE"); return
         }
         lastSpaceTime = now
-
-        if !session.isLoggedIn {
-            dlog("SPACE: user NOT logged in — spacebar works but no speechmatics (sign in first)", tag: "SPACE")
-        }
 
         if session.isLoggedIn && !engine.isRunning && isMuted {
             let key = session.speechmaticsKey

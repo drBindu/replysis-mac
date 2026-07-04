@@ -94,8 +94,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func buildPanel() {
-        let w: CGFloat = 1120, h: CGFloat = 740
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        // Desired size, clamped so it always fits the display — never taller than the
+        // screen, which also prevents the "window is too long" overshoot on smaller Macs.
+        let w = min(1120, screen.width  - 40)
+        let h = min(740,  screen.height - 40)
         let origin = NSPoint(x: screen.midX - w / 2, y: screen.midY - h / 2)
 
         // Borderless → no native traffic-light buttons (custom ✕ lives in the header).
@@ -121,8 +124,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
 
+        // Bound the window so nothing (a tall SwiftUI layout or a sheet appearing) can blow
+        // it up or shrink it away — keeps a sane, fixed-feel size.
+        panel.contentMinSize = CGSize(width: 820, height: 560)
+        panel.contentMaxSize = CGSize(width: screen.width, height: screen.height)
+
         // Plain NSHostingView — DO NOT override hitTest, it breaks SwiftUI event routing.
         let hosting = NSHostingView(rootView: MainView().environment(vm))
+        // CRITICAL fix for the "window keeps getting longer/bigger" bug: stop the hosting
+        // view from driving the window size. By default NSHostingView reports SwiftUI's
+        // fitting size and AppKit grows the borderless window to match — and this layout
+        // uses maxHeight:.infinity everywhere, so that size can balloon (especially when a
+        // sheet appears). Empty options = SwiftUI fits INTO the window, never the reverse.
+        hosting.sizingOptions = []
         panel.contentView = hosting
         panel.contentView?.clearLayerBackgrounds()
 

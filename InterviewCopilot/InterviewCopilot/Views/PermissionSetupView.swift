@@ -9,9 +9,8 @@ struct PermissionSetupView: View {
         ZStack {
             Color(red: 9/255, green: 13/255, blue: 21/255).ignoresSafeArea()
 
-            // Close (×) — this is an OPTIONAL upgrade, so the user can always back out
-            // and keep using the app via the mic button.
-            VStack {
+            VStack(spacing: 0) {
+                // ── Top bar with close (×) — optional upgrade, always dismissible ──
                 HStack {
                     Spacer()
                     Button(action: { vm.closeHotkeySetup() }) {
@@ -20,55 +19,41 @@ struct PermissionSetupView: View {
                             .foregroundColor(Color.white.opacity(0.25))
                     }
                     .buttonStyle(.plain)
+                    .help("Close — the app still works without the Space bar")
                 }
-                Spacer()
-            }
-            .padding(20)
-
-            VStack(spacing: 0) {
-                Spacer()
+                .padding([.top, .trailing], 16)
 
                 // ── Logo + headline ──────────────────────────────────────────
-                VStack(spacing: 10) {
+                VStack(spacing: 9) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 16)
                             .fill(LinearGradient(colors: [Color(hex: "#0e3a5a"), Color(hex: "#0a2236")],
                                                  startPoint: .topLeading, endPoint: .bottomTrailing))
-                            .frame(width: 56, height: 56)
+                            .frame(width: 54, height: 54)
                         Image(systemName: "keyboard")
-                            .font(.system(size: 26, weight: .semibold))
+                            .font(.system(size: 25, weight: .semibold))
                             .foregroundColor(Color(hex: "#38bdf8"))
                     }
                     Text("Enable the Space Bar")
-                        .font(.system(size: 26, weight: .bold))
+                        .font(.system(size: 23, weight: .bold))
                         .foregroundColor(.white)
-                    Text("Optional. The app already works — just click the mic button. This lets you\nstart listening by pressing Space, even while Zoom or your browser is in front.")
+                    Text("Grant the two permissions below, then press Relaunch. After it\nreopens, Space starts listening hands-free — even while Zoom is in front.")
                         .font(.system(size: 12))
                         .foregroundColor(Color.white.opacity(0.45))
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.bottom, 28)
+                .padding(.top, 4)
+                .padding(.bottom, 22)
 
                 // ── Permission cards ────────────────────────────────────────
-                VStack(spacing: 10) {
-                    PermCard(
-                        icon: "keyboard",
-                        iconColor: Color(hex: "#38bdf8"),
-                        title: "Input Monitoring",
-                        badge: "REQUIRED",
-                        detail: "Lets the Space bar and F8/F9 keys work as hotkeys while Zoom or your browser is in front. This is what makes the Space bar start listening.",
-                        isGranted: vm.permInputMonitoring,
-                        buttonLabel: "Open Settings",
-                        action: openInputMonitoringSettings
-                    )
-
+                VStack(spacing: 9) {
                     PermCard(
                         icon: "figure.wave",
                         iconColor: Color(hex: "#a78bfa"),
                         title: "Accessibility",
                         badge: "REQUIRED",
-                        detail: "Works together with Input Monitoring so the global hotkeys register reliably.",
+                        detail: "This is what lets the Space bar and F8/F9 keys work as global hotkeys while Zoom or your browser is in front.",
                         isGranted: vm.permAccessibility,
                         buttonLabel: "Open Settings",
                         action: openAccessibilitySettings
@@ -90,107 +75,73 @@ struct PermissionSetupView: View {
                         iconColor: Color(hex: "#f59e0b"),
                         title: "Screen Recording",
                         badge: "OPTIONAL",
-                        detail: "Needed only for F9 screen analysis — solve coding problems from your screen.",
+                        detail: "Only for F9 screen analysis — solve coding problems shown on your screen.",
                         isGranted: vm.permScreenRecording,
                         buttonLabel: "Open Settings",
                         action: openScreenSettings
                     )
                 }
-                .padding(.horizontal, 44)
+                .padding(.horizontal, 40)
 
-                Spacer()
+                Spacer(minLength: 18)
 
                 // ── Bottom action area ───────────────────────────────────────
-                if vm.permInputMonitoring && vm.permAccessibility {
-                    // Both hotkey permissions granted — enter (this relaunches so the tap
-                    // registers in a freshly-authorized process).
+                // The button is DISABLED until BOTH required permissions are granted —
+                // exactly the requested flow: grant everything first, then Relaunch.
+                VStack(spacing: 10) {
+                    Text(vm.hotkeyReadyToActivate
+                         ? "All set. Relaunch to activate the Space bar."
+                         : "Turn ON the switches above in System Settings — this button activates once both are green.")
+                        .font(.system(size: 11))
+                        .foregroundColor(vm.hotkeyReadyToActivate ? Color(hex: "#4ade80") : Color.white.opacity(0.4))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 20)
+
                     Button(action: { vm.permissionGrantedContinue() }) {
                         HStack(spacing: 8) {
-                            Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
-                            Text("Activate & Start").fontWeight(.semibold)
+                            Image(systemName: vm.hotkeyReadyToActivate ? "arrow.clockwise" : "lock.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                            Text(vm.hotkeyReadyToActivate ? "I've granted them — Relaunch" : "Waiting for permissions…")
+                                .fontWeight(.semibold)
                         }
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(LinearGradient(colors: [Color(hex: "#1d4ed8"), Color(hex: "#1e40af")],
-                                                   startPoint: .top, endPoint: .bottom))
+                        .padding(.vertical, 13)
+                        .background(
+                            vm.hotkeyReadyToActivate
+                            ? AnyView(LinearGradient(colors: [Color(hex: "#1d4ed8"), Color(hex: "#1e40af")],
+                                                     startPoint: .top, endPoint: .bottom))
+                            : AnyView(Color.white.opacity(0.06))
+                        )
                         .cornerRadius(11)
-                        .foregroundColor(.white)
+                        .foregroundColor(vm.hotkeyReadyToActivate ? .white : Color.white.opacity(0.35))
                     }
-                    .padding(.horizontal, 44)
-                    .padding(.bottom, 36)
-                    .transition(.opacity)
-                } else {
-                    // Still waiting on a required permission. IMPORTANT: macOS does NOT tell
-                    // a running app when Input Monitoring / Accessibility get granted — the
-                    // app only sees them on a fresh launch. So "updates automatically" can't
-                    // catch those; we always offer a one-click Relaunch to pick them up.
-                    VStack(spacing: 12) {
-                        Text("After you flip the switches ON in System Settings, click below — macOS only applies these permissions when the app restarts.")
-                            .font(.system(size: 11))
-                            .foregroundColor(Color.white.opacity(0.4))
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.horizontal, 20)
-
-                        Button(action: { relaunchApp() }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "arrow.clockwise")
-                                Text("I've granted them — Relaunch").fontWeight(.semibold)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background(LinearGradient(colors: [Color(hex: "#1d4ed8"), Color(hex: "#1e40af")],
-                                                       startPoint: .top, endPoint: .bottom))
-                            .cornerRadius(11)
-                            .foregroundColor(.white)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.horizontal, 44)
-                    .padding(.bottom, 36)
+                    .buttonStyle(.plain)
+                    .disabled(!vm.hotkeyReadyToActivate)
                 }
+                .padding(.horizontal, 40)
+                .padding(.bottom, 26)
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: vm.permInputMonitoring)
+        .frame(width: 560, height: 600)
         .animation(.easeInOut(duration: 0.25), value: vm.permAccessibility)
-    }
-
-    private var waitingLabel: String {
-        if !vm.permInputMonitoring { return "Waiting for Input Monitoring…" }
-        if !vm.permAccessibility  { return "Waiting for Accessibility…" }
-        return "Waiting…"
+        .animation(.easeInOut(duration: 0.25), value: vm.permMicrophone)
+        .animation(.easeInOut(duration: 0.25), value: vm.permScreenRecording)
     }
 
     // MARK: - Actions
 
-    private func openInputMonitoringSettings() {
-        // Fire the access request FIRST so macOS registers the app in the Input Monitoring
-        // list (and shows its prompt) — otherwise the user opens the pane and the app
-        // isn't there to toggle. Then open the pane as a fallback path.
-        vm.requestInputMonitoring()
-        NSWorkspace.shared.open(
-            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
-    }
-
-    private func relaunchApp() {
-        // Reopen the app bundle and quit this process — clean relaunch.
-        let url = Bundle.main.bundleURL
-        let config = NSWorkspace.OpenConfiguration()
-        config.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, _ in }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            NSApplication.shared.terminate(nil)
-        }
-    }
-
     private func openAccessibilitySettings() {
-        // Fire the prompt first so the app is registered in the Accessibility list.
+        // Fire the prompt first so the app is REGISTERED in the Accessibility list (without
+        // this it never appears there to toggle), then open the pane.
         vm.requestAccessibilityPrompt()
         NSWorkspace.shared.open(
             URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }
 
     private func openScreenSettings() {
+        // Registers the app in the Screen Recording list, then opens the pane.
+        CGRequestScreenCaptureAccess()
         NSWorkspace.shared.open(
             URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
     }
@@ -251,6 +202,7 @@ private struct PermCard: View {
                     .font(.system(size: 11))
                     .foregroundColor(Color.white.opacity(0.38))
                     .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 6)

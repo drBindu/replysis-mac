@@ -44,13 +44,16 @@ class GlobalHotkey {
         eventTap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            // A keyboard event tap requires the "Input Monitoring" permission on modern
-            // macOS (proven on-device: with Accessibility only, tapCreate returns nil for
-            // BOTH .listenOnly and .defaultTap; with Input Monitoring granted, both work).
-            // We use .listenOnly — a passive observer that never sits in the event delivery
-            // path, so it can't delay or drop the user's keystrokes mid-interview. The
-            // required Input Monitoring grant is handled by the permission setup flow.
-            options: .listenOnly,
+            // Use .defaultTap (an ACTIVE tap) — this is authorized by the ACCESSIBILITY
+            // permission, which this app can reliably register for and the user can grant
+            // (confirmed on-device: the app appears in and is granted Accessibility).
+            // .listenOnly would instead require INPUT MONITORING, which this app never
+            // manages to register in that list on the user's Mac — so the Space bar stayed
+            // dead in the background. We pass every event straight through unmodified
+            // (return passUnretained below), so an active tap never delays or drops the
+            // user's real keystrokes. Accessibility must be granted BEFORE this process
+            // launches for the tap to attach, which the relaunch-after-grant flow ensures.
+            options: .defaultTap,
             eventsOfInterest: mask,
             callback: { _, type, event, refcon in
                 // Pass-through tap: return the event UNRETAINED. passRetained would add a

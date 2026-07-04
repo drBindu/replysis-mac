@@ -29,6 +29,10 @@ class GoogleSignIn {
     static func signIn() async -> Result {
         dlog("Google Sign In: starting loopback flow", tag: "GOOGLE")
 
+        // The client secret is loaded from remote config. If it hasn't arrived yet, try
+        // once now so we don't fail the token exchange purely for a missing secret.
+        if AppConfig.googleClientSecret.isEmpty { await AppConfig.fetchRemoteConfig() }
+
         guard let (serverFd, port) = bindListenSocket() else {
             return .failure("Could not bind local port for OAuth redirect.")
         }
@@ -66,7 +70,9 @@ class GoogleSignIn {
 
         dlog("Google: got code, exchanging for tokens…", tag: "GOOGLE")
         guard let tokens = await exchangeCode(code, redirectUri: redirectUri, verifier: codeVerifier) else {
-            return .failure("Failed to get Google tokens.")
+            // Almost always the client secret couldn't be loaded (config backend down).
+            // Point the user at the email/password path, which works independently.
+            return .failure("Google sign-in is temporarily unavailable. Please sign in with your email and password above.")
         }
 
         dlog("Google: signing into Firebase…", tag: "GOOGLE")
@@ -182,7 +188,14 @@ class GoogleSignIn {
         let enc = { (s: String) in
             s.addingPercentEncoding(withAllowedCharacters: .init(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? s
         }
-        req.httpBody = "code=\(enc(code))&client_id=\(AppConfig.googleClientId)&client_secret=\(AppConfig.googleClientSecret)&redirect_uri=\(enc(redirectUri))&code_verifier=\(verifier)&grant_type=authorization_code".data(using: .utf8)
+        // Include client_secret only when we actually have one. For a "Desktop app" OAuth
+        // client, the PKCE code_verifier alone can satisfy the exchange — so omitting an
+        // empty secret gives sign-in a chance to work even when remote config is down.
+        var bodyStr = "code=\(enc(code))&client_id=\(AppConfig.googleClientId)&redirect_uri=\(enc(redirectUri))&code_verifier=\(verifier)&grant_type=authorization_code"
+        if !AppConfig.googleClientSecret.isEmpty {
+            bodyStr += "&client_secret=\(AppConfig.googleClientSecret)"
+        }
+        req.httpBody = bodyStr.data(using: .utf8)
 
         do {
             let (data, _) = try await URLSession.shared.data(for: req)

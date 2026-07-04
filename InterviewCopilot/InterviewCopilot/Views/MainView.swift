@@ -37,15 +37,6 @@ struct MainView: View {
                 if vm.showHotkeyBanner { hotkeyUpsellBanner }
                 bodyArea
             }
-
-            // OPTIONAL hotkey setup — only shown when the user taps "Enable Space bar".
-            // The app is fully usable without it (click the mic button), so this is a
-            // dismissible upgrade, never a wall.
-            if vm.needsPermissionSetup {
-                PermissionSetupView()
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                    .transition(.opacity)
-            }
         }
         .ignoresSafeArea()
         .onAppear {
@@ -67,10 +58,16 @@ struct MainView: View {
             return .handled
         }
         .onReceive(NotificationCenter.default.publisher(for: .showDebugLog)) { _ in showDebugLog = true }
+        // Pressing Space (or tapping the mic) while signed out routes here → open sign-in.
+        .onReceive(NotificationCenter.default.publisher(for: .showLogin)) { _ in showLogin = true }
         .sheet(isPresented: $showSettings)  { SettingsView() }
         .sheet(isPresented: $showSessions)  { SessionsView() }
         .sheet(isPresented: $showLogin)     { LoginView() }
         .sheet(isPresented: $showDebugLog)  { DebugLogView() }
+        // OPTIONAL hotkey setup (fixed-size sheet so it can never stretch the window).
+        // Shown only when the user taps "Enable Space bar" — the app is fully usable
+        // without it via the mic button, so this is a dismissible upgrade, never a wall.
+        .sheet(isPresented: Bindable(vm).needsPermissionSetup) { PermissionSetupView() }
     }
 
     // ── Optional "enable Space bar" upsell — subtle, dismissible, never blocks ──
