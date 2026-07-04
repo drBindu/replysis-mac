@@ -203,25 +203,43 @@ class MainViewModel {
     private func checkAndRequestPermissions() {
         permInputMonitoring = MainViewModel.inputMonitoringGranted()
         permAccessibility   = AXIsProcessTrusted()
-        permMicrophone      = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         permScreenRecording = CGPreflightScreenCaptureAccess()
+        let micStatus       = AVCaptureDevice.authorizationStatus(for: .audio)
+        permMicrophone      = micStatus == .authorized
+        micDenied           = micStatus == .denied
 
-        // Fire the mic popup immediately so the user doesn't have to click a button.
-        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-            AVCaptureDevice.requestAccess(for: .audio) { granted in
-                Task { @MainActor in self.permMicrophone = granted }
+        if micStatus == .notDetermined {
+            // Mic popup fires FIRST — before the permission sheet opens — so the
+            // system dialog is clearly visible with nothing behind it. The gate
+            // appears only after the user responds to the popup.
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                Task { @MainActor [weak self] in
+                    guard let self = self else { return }
+                    self.permMicrophone = granted
+                    self.micDenied      = !granted
+                    self.openGateIfNeeded()
+                }
             }
+            if permAccessibility { setupHotkeys(); hotkeyActive = true }
+            return
         }
 
-        // Show the permission setup gate on launch whenever any required permission
-        // is missing. This ensures every user configures mic, accessibility, and
-        // screen recording before their first interview — no mid-session surprises.
+        openGateIfNeeded()
+
+        if permAccessibility {
+            setupHotkeys()
+            hotkeyActive = true
+        } else {
+            hotkeyActive = false
+        }
+    }
+
+    private func openGateIfNeeded() {
         if !permMicrophone || !permAccessibility || !permScreenRecording {
             if !permAccessibility { requestAccessibilityPrompt() }
             needsPermissionSetup = true
             startPermissionPolling()
         }
-
         if permAccessibility {
             setupHotkeys()
             hotkeyActive = true
