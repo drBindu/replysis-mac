@@ -97,6 +97,8 @@ jobs:
             -exportPath "$RUNNER_TEMP/export"
 
       - name: Re-sign bundled helper binaries with Hardened Runtime
+        env:
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
         run: |
           IDENTITY=$(security find-identity -v -p codesigning "$RUNNER_TEMP/build.keychain" \
             | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.+)"/\1/')
@@ -123,6 +125,19 @@ jobs:
               "$BIN_PATH"
             echo "Signed: $BIN ($(codesign -dv "$BIN_PATH" 2>&1 | grep Identifier || echo 'ok'))"
           done
+          # Inject the Google OAuth client secret (from the GOOGLE_CLIENT_SECRET repo
+          # secret) into the app's Info.plist so "Continue with Google" can complete the
+          # token exchange. Done BEFORE the re-seal so the signature covers it. Entirely
+          # optional: if the secret isn't configured, Google stays disabled and
+          # email/password sign-in is unaffected.
+          if [ -n "${GOOGLE_CLIENT_SECRET}" ]; then
+            /usr/libexec/PlistBuddy -c "Add :GoogleClientSecret string ${GOOGLE_CLIENT_SECRET}" "$APP/Contents/Info.plist" 2>/dev/null \
+              || /usr/libexec/PlistBuddy -c "Set :GoogleClientSecret ${GOOGLE_CLIENT_SECRET}" "$APP/Contents/Info.plist"
+            echo "GoogleClientSecret injected into Info.plist"
+          else
+            echo "GOOGLE_CLIENT_SECRET not set — Google sign-in stays disabled (email/password works)"
+          fi
+
           # Re-seal the whole .app after modifying internals
           codesign --force --options runtime \
             --sign "$IDENTITY" \

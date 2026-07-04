@@ -211,7 +211,12 @@ enum AppConfig {
     static let backendUrl         = "https://coopilotxai.com"   // Oracle Cloud — the only backend
     static let firebaseApiKey     = "AIzaSyAGGmuFpR0qkCHLI3q2cPv_o3cQlbIU8lE"
     static let googleClientId     = "745433477203-lvqmnnip9pb241vkfp628qmue8313cre.apps.googleusercontent.com"
-    static var googleClientSecret  = ""   // fetched from backend via fetchRemoteConfig()
+    // Baked into Info.plist at build time from the GOOGLE_CLIENT_SECRET GitHub Actions
+    // secret (see .github/workflows/build-mac-dmg.yml). Empty in local dev or when the
+    // secret isn't configured → "Continue with Google" stays disabled and email/password
+    // sign-in is completely unaffected. fetchRemoteConfig() can also fill this if a
+    // backend ever serves it.
+    static var googleClientSecret = (Bundle.main.infoDictionary?["GoogleClientSecret"] as? String) ?? ""
     static let speechmaticsApiKey  = ""   // fetched from backend
 
     // Fetches GoogleClientSecret (and optionally other keys) from the original backend.
