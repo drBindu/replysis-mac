@@ -37,7 +37,7 @@ struct PermissionSetupView: View {
                     Text("Enable the Space Bar")
                         .font(.system(size: 23, weight: .bold))
                         .foregroundColor(.white)
-                    Text("Grant the two permissions below, then press Relaunch. After it\nreopens, Space starts listening hands-free — even while Zoom is in front.")
+                    Text("Turn on Accessibility below, then press Relaunch. After it reopens,\nthe Space bar works hands-free — even while Zoom or your browser is in front.")
                         .font(.system(size: 12))
                         .foregroundColor(Color.white.opacity(0.45))
                         .multilineTextAlignment(.center)
@@ -90,8 +90,8 @@ struct PermissionSetupView: View {
                 // exactly the requested flow: grant everything first, then Relaunch.
                 VStack(spacing: 10) {
                     Text(vm.hotkeyReadyToActivate
-                         ? "All set. Relaunch to activate the Space bar."
-                         : "Turn ON the switches above in System Settings — this button activates once both are green.")
+                         ? "Accessibility is on — Relaunch to start the global Space bar."
+                         : "Turn ON Accessibility above — this button activates the moment it's green. (Microphone is a one-tap Allow; Screen Recording is optional.)")
                         .font(.system(size: 11))
                         .foregroundColor(vm.hotkeyReadyToActivate ? Color(hex: "#4ade80") : Color.white.opacity(0.4))
                         .multilineTextAlignment(.center)
@@ -140,8 +140,9 @@ struct PermissionSetupView: View {
     }
 
     private func openScreenSettings() {
-        // Registers the app in the Screen Recording list, then opens the pane.
-        CGRequestScreenCaptureAccess()
+        // Force the app into the Screen Recording list (real capture attempt from OUR
+        // process), then open the pane — so the user just flips the switch, never "+".
+        vm.registerScreenRecording()
         NSWorkspace.shared.open(
             URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
     }

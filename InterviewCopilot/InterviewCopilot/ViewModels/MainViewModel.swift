@@ -107,6 +107,20 @@ class MainViewModel {
         _ = AXIsProcessTrustedWithOptions(opts)
     }
 
+    // Force the app to appear in the Screen Recording list so the user only flips a switch
+    // (never has to click "+" and add it by hand — the recurring complaint). Just calling
+    // CGRequestScreenCaptureAccess sometimes doesn't persist the entry, and running the
+    // `screencapture` tool registers THAT tool, not us. Having OUR OWN process attempt a
+    // real capture via CoreGraphics is what registers the app itself.
+    func registerScreenRecording() {
+        CGRequestScreenCaptureAccess()   // shows the system prompt + registers us
+        DispatchQueue.global(qos: .utility).async {
+            // A throwaway capture from our process guarantees the Screen Recording entry.
+            _ = CGDisplayCreateImage(CGMainDisplayID())
+            Task { @MainActor in self.permScreenRecording = CGPreflightScreenCaptureAccess() }
+        }
+    }
+
     // MARK: - Timers (not tracked by @Observable)
     private var transcriptTimer: Timer?
     private var thinkingTimer: Timer?
@@ -266,9 +280,12 @@ class MainViewModel {
         }
     }
 
-    /// Whether the setup sheet's required permissions (Accessibility + Microphone) are all
-    /// granted — the Relaunch button is enabled only when this is true.
-    var hotkeyReadyToActivate: Bool { permAccessibility && permMicrophone }
+    /// The Space bar is a global keyboard hotkey → it needs ACCESSIBILITY (and a relaunch)
+    /// and nothing else. Microphone is for transcription and is handled by its own one-tap
+    /// prompt, so it must NOT gate this button — otherwise a mic-permission quirk (the
+    /// bundled engine's SEPARATE TCC entry showing a second "InterviewCopilot" row) would
+    /// wrongly keep the user from ever activating the Space bar. That was the stuck button.
+    var hotkeyReadyToActivate: Bool { permAccessibility }
 
     /// Called when the user taps "I've granted them — Relaunch". Accessibility was granted
     /// AFTER launch, so the CGEventTap can't attach in THIS process — relaunch so the fresh

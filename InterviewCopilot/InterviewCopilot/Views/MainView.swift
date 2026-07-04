@@ -76,7 +76,7 @@ struct MainView: View {
             Image(systemName: "keyboard")
                 .font(.system(size: 12))
                 .foregroundColor(Color(hex: "#38bdf8"))
-            Text("Tip: enable the Space bar to start listening hands-free — without clicking.")
+            Text("Tip: enable the global Space bar so it works even while Zoom or your browser is in front.")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(Color(hex: "#cbd5e1"))
                 .lineLimit(1)
