@@ -38,6 +38,16 @@ class SpeechmaticsEngine {
         return dir
     }()
 
+    /// True when the SystemAudioCapture (Core Audio tap) helper is bundled — the normal
+    /// case. The engine then runs in system-audio-only mode and the microphone is only a
+    /// fallback, so the UI can SKIP the upfront mic permission prompt (one fewer popup).
+    /// The mic still prompts lazily if the tap ever fails and we fall back to it.
+    var systemAudioAvailable: Bool {
+        guard let res = Bundle.main.resourceURL else { return false }
+        return FileManager.default.fileExists(
+            atPath: res.appendingPathComponent("SystemAudioCapture").path)
+    }
+
     var latestTxtPath: URL { appDataFolder.appendingPathComponent("latest.txt") }
     var pauseFlagPath: URL { appDataFolder.appendingPathComponent("pause.flag") }
     var resetFlagPath: URL { appDataFolder.appendingPathComponent("reset.flag") }

@@ -215,7 +215,11 @@ class MainViewModel {
         permMicrophone      = micStatus == .authorized
         micDenied           = micStatus == .denied
 
-        if micStatus == .notDetermined {
+        // Only prompt for the mic if it will actually be used. With the system-audio tap
+        // bundled, the engine runs system-audio-only and never opens the mic, so requesting
+        // it here would be a needless extra popup. (If the tap fails at runtime, the mic is
+        // opened then and macOS prompts lazily.)
+        if micStatus == .notDetermined && !engine.systemAudioAvailable {
             // Mic popup fires FIRST — before the permission sheet opens — so the
             // system dialog is clearly visible with nothing behind it. The gate
             // appears only after the user responds to the popup.
@@ -242,7 +246,8 @@ class MainViewModel {
     }
 
     private func openGateIfNeeded() {
-        if !permMicrophone { requestMicrophonePermission() }
+        // Skip the mic prompt when system audio is available (mic is only a fallback there).
+        if !permMicrophone && !engine.systemAudioAvailable { requestMicrophonePermission() }
         if !permAccessibility { requestAccessibilityPrompt() }
         startPermissionPolling()   // detects when Accessibility is granted and sets up hotkeys
         if permAccessibility {
