@@ -55,6 +55,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Permission requests are handled by the in-app setup screen (PermissionSetupView).
         buildPanel()
+
+        // Changing activation policy can invalidate CGEventTaps created earlier.
+        // Re-create the tap now that the final policy (.accessory) is in effect.
+        vm.reinstateHotkeys()
     }
 
     // MARK: - Move-to-Applications guidance (prevents translocation permission loss)

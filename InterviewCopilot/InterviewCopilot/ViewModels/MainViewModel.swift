@@ -395,8 +395,8 @@ class MainViewModel {
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             return MainActor.assumeIsolated {
-                // Only act when the MAIN window is key — never a sheet or the camera overlay.
-                guard event.window is FloatingPanel else { return event }
+                // Act when the main window OR the eye-mode overlay is key.
+                guard event.window is FloatingPanel || event.window is AnswerOverlayWindow else { return event }
                 // Let text editors (resume / ask boxes) receive a real space.
                 if let fr = event.window?.firstResponder, fr is NSText { return event }
                 switch event.keyCode {
@@ -419,6 +419,13 @@ class MainViewModel {
             onF12Pressed:   { },
             onKillPressed:  { NSApplication.shared.terminate(nil) }
         )
+    }
+
+    /// Called by AppDelegate after setActivationPolicy(.accessory) — the policy change can
+    /// invalidate CGEventTaps created earlier. Re-create the tap in the final policy state.
+    func reinstateHotkeys() {
+        hotkey = nil
+        if AXIsProcessTrusted() { setupHotkeys(); hotkeyActive = true }
     }
 
     // MARK: - Space Logic
