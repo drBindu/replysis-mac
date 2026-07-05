@@ -8,6 +8,10 @@ class DebugLog {
     private(set) var entries: [String] = []
     private let maxEntries = 500
 
+    // Serial queue for disk I/O — keeps file writes off the main actor so token
+    // streaming (which calls dlog() on every chunk) never blocks the UI.
+    private let ioQueue = DispatchQueue(label: "com.interviewcopilot.debuglog.io", qos: .utility)
+
     // Created ONCE — DateFormatter is very expensive to allocate, and log() is hot.
     private static let formatter: DateFormatter = {
         let f = DateFormatter()
@@ -37,8 +41,12 @@ class DebugLog {
         let line = "[\(ts)] [\(tag)] \(message)"
         entries.append(line)
         if entries.count > maxEntries { entries.removeFirst(entries.count - maxEntries) }
-        print(line) // also prints to Xcode console
-        if let data = (line + "\n").data(using: .utf8) { fileHandle?.write(data) }
+        print(line)
+        // Write to disk off the main actor — file I/O during token streaming was
+        // blocking the UI thread and causing janky answer rendering.
+        if let data = (line + "\n").data(using: .utf8), let handle = fileHandle {
+            ioQueue.async { handle.write(data) }
+        }
     }
 
     func clear() { entries.removeAll() }
@@ -46,7 +54,12 @@ class DebugLog {
     var text: String { entries.joined(separator: "\n") }
 }
 
-// Convenience global
+// Convenience global — skips Task allocation when already on the main actor
+// (the common case for UI-level callers). Falls back to Task for background callers.
 func dlog(_ msg: String, tag: String = "INFO") {
-    Task { @MainActor in DebugLog.shared.log(msg, tag: tag) }
+    if Thread.isMainThread {
+        MainActor.assumeIsolated { DebugLog.shared.log(msg, tag: tag) }
+    } else {
+        Task { @MainActor in DebugLog.shared.log(msg, tag: tag) }
+    }
 }

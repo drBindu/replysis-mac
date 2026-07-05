@@ -87,6 +87,7 @@ class MainViewModel {
     var permScreenRecording = false
     private var permTimer: Timer?
     private var permPollCount = 0
+    private var isMicPermissionRequesting = false  // guard against re-entrant requestAccess calls
 
     // Input Monitoring is what actually authorizes a keyboard CGEventTap on modern macOS.
     static func inputMonitoringGranted() -> Bool {
@@ -177,6 +178,9 @@ class MainViewModel {
             if !restored && !session.refreshToken.isEmpty {
                 restored = await session.tryRefreshAsync()
             }
+            // Guard: if the user signed in manually while the async restore was in flight,
+            // showProfile is already true — skip to avoid a double startNewSession call.
+            guard restored && !showProfile else { return }
             if restored {
                 showProfile = true
                 profileName = session.firstName
@@ -284,8 +288,8 @@ class MainViewModel {
     }
 
     func requestMicrophonePermission() {
-        AVCaptureDevice.requestAccess(for: .audio) { granted in
-            Task { @MainActor in self.permMicrophone = granted }
+        AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+            Task { @MainActor [weak self] in self?.permMicrophone = granted }
         }
     }
 
@@ -384,6 +388,9 @@ class MainViewModel {
     }
 
     private func setupHotkeys() {
+        // Guard: creating a second GlobalHotkey tears down the current tap for ~1 frame,
+        // causing observable hotkey dropouts. Only create if not already registered.
+        guard hotkey == nil else { return }
         hotkey = GlobalHotkey(
             onSpacePressed: { [weak self] in self?.handleSpacePress(source: "GLOBAL") },
             onF8Pressed:    { [weak self] in self?.runScreenAnalysis() },
@@ -408,10 +415,14 @@ class MainViewModel {
         // usable after install, but permissions are only requested when actually needed.
         let micAuth = AVCaptureDevice.authorizationStatus(for: .audio)
         if micAuth == .notDetermined {
-            // Fire the system mic popup right now. If granted, retry this call.
-            // If denied or Accessibility still missing, open the setup sheet.
-            AVCaptureDevice.requestAccess(for: .audio) { granted in
-                Task { @MainActor in
+            // Guard prevents a re-entrant loop: user hammers Space while popup is open →
+            // second call would requestAccess again → callback calls handleSpacePress again.
+            guard !isMicPermissionRequesting else { return }
+            isMicPermissionRequesting = true
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.isMicPermissionRequesting = false
                     self.permMicrophone = granted
                     if granted && AXIsProcessTrusted() {
                         self.handleSpacePress(source: source)
@@ -784,7 +795,7 @@ class MainViewModel {
         sessionLogPath = dir.appendingPathComponent("interview_\(num).txt")
         let resumeName = ResumeParser.extractName(resumeText)
         let header = "SESSION \(num) | \(useGroq ? "groq" : "openai") | \(Date()) | RESUME: \(resumeName)\n\n"
-        try? header.write(to: sessionLogPath!, atomically: true, encoding: .utf8)
+        if let path = sessionLogPath { try? header.write(to: path, atomically: true, encoding: .utf8) }
         isRecording = true
         sessionSeconds = 0; sessionTimerVisible = true
         sessionTimerObj?.invalidate()
@@ -1002,9 +1013,7 @@ class MainViewModel {
 
     // MARK: - Settings
     func loadSettings() {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = support.appendingPathComponent("InterviewCopilot")
-        let path = dir.appendingPathComponent("settings.json")
+        let path = engine.appDataFolder.appendingPathComponent("settings.json")
         if let data = try? Data(contentsOf: path),
            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             useGroq = obj["useGroq"] as? Bool ?? true

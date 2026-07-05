@@ -107,7 +107,7 @@ class GlobalHotkey {
 
         // Ctrl+Shift+F4 → kill app
         if keyCode == kVK_F4 && flags.contains(.maskControl) && flags.contains(.maskShift) {
-            DispatchQueue.main.async { self.onKillPressed?() }
+            DispatchQueue.main.async { [weak self] in self?.onKillPressed?() }
             return
         }
 
@@ -116,19 +116,18 @@ class GlobalHotkey {
             let now = Date()
             guard now.timeIntervalSince(lastSpaceTime) >= spaceDebounceSecs else { return }
             lastSpaceTime = now
-            DispatchQueue.main.async { self.onSpacePressed?() }
+            DispatchQueue.main.async { [weak self] in self?.onSpacePressed?() }
 
         case kVK_F8:
-            DispatchQueue.main.async { self.onF8Pressed?() }
+            DispatchQueue.main.async { [weak self] in self?.onF8Pressed?() }
 
         case kVK_F9:
-            DispatchQueue.main.async { self.onF9Pressed?() }
+            DispatchQueue.main.async { [weak self] in self?.onF9Pressed?() }
 
         case kVK_F12:
-            // F12 = open debug log
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
                 NotificationCenter.default.post(name: .showDebugLog, object: nil)
-                self.onF12Pressed?()
+                self?.onF12Pressed?()
             }
 
         default:

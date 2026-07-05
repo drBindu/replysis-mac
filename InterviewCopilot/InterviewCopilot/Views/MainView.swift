@@ -1168,22 +1168,22 @@ struct MainView: View {
 
     func scheduleResumeSave() {
         resumeSaveTimer?.invalidate()
-        resumeSaveTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { [vm] _ in
-            Task { @MainActor in vm.saveResume() }
+        resumeSaveTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { [weak vm] _ in
+            Task { @MainActor in vm?.saveResume() }
         }
     }
 
     func scheduleHintsSave() {
         hintsSaveTimer?.invalidate()
-        hintsSaveTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: false) { [vm] _ in
-            Task { @MainActor in vm.saveHints() }
+        hintsSaveTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: false) { [weak vm] _ in
+            Task { @MainActor in vm?.saveHints() }
         }
     }
 
     func scheduleJobSave() {
         jobSaveTimer?.invalidate()
-        jobSaveTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { [vm] _ in
-            Task { @MainActor in vm.saveJob() }
+        jobSaveTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { [weak vm] _ in
+            Task { @MainActor in vm?.saveJob() }
         }
     }
 

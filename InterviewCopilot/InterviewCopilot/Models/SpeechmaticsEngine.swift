@@ -27,6 +27,7 @@ class SpeechmaticsEngine {
     private var engineCancelled = false
     private var authErrorHandled = false
     private var selectedDeviceId = -1
+    private var isStarting = false   // prevents concurrent start() calls from checkEngine
 
     let appDataFolder: URL = {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -52,6 +53,11 @@ class SpeechmaticsEngine {
             dlog("SM start: smKey is empty — cannot start", tag: "SM")
             return
         }
+        guard !isStarting else {
+            dlog("SM start: already starting, skipping duplicate call", tag: "SM")
+            return
+        }
+        isStarting = true
 
         engineCancelled = false
         authErrorHandled = false   // fresh start → allow a new auth error to be reported
@@ -113,11 +119,13 @@ class SpeechmaticsEngine {
         // TCC grant instead of needing their own. Root fix for "engine opens the mic but
         // gets only silence" (macOS feeds zeros to a helper without its own permission).
         guard let pid = spawnEngineDisclaimed(path: engineURL.path, args: args, env: env) else {
+            isStarting = false
             statusText = "ENGINE ERR"
             dlog("SM launch FAILED (posix_spawn returned error)", tag: "SM")
             return
         }
         enginePid = pid
+        isStarting = false
         isRunning = true
         statusText = "READY"
         dlog("SM engine started successfully (pid=\(pid)) [TCC-disclaimed → inherits app mic]", tag: "SM")
@@ -188,10 +196,13 @@ class SpeechmaticsEngine {
 
     private func watchForExit(pid: pid_t) {
         let src = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .global())
-        src.setEventHandler {
+        src.setEventHandler { [weak self] in
             var st: Int32 = 0
-            waitpid(pid, &st, WNOHANG)   // reap the zombie so it doesn't linger
+            waitpid(pid, &st, WNOHANG)
             src.cancel()
+            // Mark isRunning = false immediately so the monitor timer's kill(pid,0) check
+            // doesn't see a 3-second window where a dead engine looks alive.
+            Task { @MainActor [weak self] in self?.isRunning = false }
         }
         src.resume()
         exitSource = src
@@ -202,7 +213,8 @@ class SpeechmaticsEngine {
     private func monitorPipes() {
         // The Speechmatics auth rejection ("not_authorised") arrives on STDOUT, not stderr,
         // so we watch both. Either stream can surface the failure.
-        let onData: @Sendable (FileHandle, String) -> Void = { fh, source in
+        // [weak self] prevents the pipe handler from keeping the engine alive after disposal.
+        let onData: @Sendable (FileHandle, String) -> Void = { [weak self] fh, source in
             let data = fh.availableData
             guard !data.isEmpty, let line = String(data: data, encoding: .utf8) else { return }
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -210,7 +222,7 @@ class SpeechmaticsEngine {
                 Task { @MainActor in dlog("SM \(source): \(trimmed)", tag: "SM") }
             }
             if Self.isAuthFailure(line) {
-                Task { @MainActor in self.handleAuthError() }
+                Task { @MainActor [weak self] in self?.handleAuthError() }
             }
         }
         outHandle?.readabilityHandler = { onData($0, "stdout") }
@@ -283,8 +295,17 @@ class SpeechmaticsEngine {
         if enginePid > 0 {
             let pid = enginePid
             kill(pid, SIGTERM)
-            // Reap off the main thread so we never block, and never leave a zombie.
-            DispatchQueue.global(qos: .utility).async { var st: Int32 = 0; waitpid(pid, &st, 0) }
+            // Reap off main. WNOHANG loop with a SIGKILL fallback after 2s so a hung
+            // engine never blocks this GCD thread indefinitely.
+            DispatchQueue.global(qos: .utility).async {
+                var st: Int32 = 0
+                for _ in 0..<20 {
+                    if waitpid(pid, &st, WNOHANG) != 0 { return }
+                    Thread.sleep(forTimeInterval: 0.1)
+                }
+                kill(pid, SIGKILL)
+                waitpid(pid, &st, 0)
+            }
         }
         enginePid = 0
         isRunning = false
