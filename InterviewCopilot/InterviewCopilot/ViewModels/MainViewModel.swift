@@ -116,13 +116,16 @@ class MainViewModel {
         _ = AXIsProcessTrustedWithOptions(opts)
     }
 
-    // Register the app in "Screen & System Audio Recording" (the full section).
-    // On macOS Tahoe (16), CGDisplayCreateImage lands in "System Audio Recording Only"
-    // instead — the correct API is ScreenCaptureKit's SCShareableContent which triggers
-    // the proper full-screen-capture permission entry.
     func registerScreenRecording() {
-        // SCShareableContent.getExcludingDesktopWindows registers the app in
-        // "Screen & System Audio Recording" on macOS 12.3+ (including Tahoe).
+        // If permission is already granted, just record it — do NOT call SCShareableContent.
+        // On macOS 26 (Tahoe), calling getExcludingDesktopWindows even without starting a stream
+        // now shows a persistent "Currently Sharing" popup in the menu bar, which is visible
+        // to interviewers when the user is screen-sharing. Only call it the first time (when
+        // the app needs to appear in System Settings → Screen Recording for the user to enable it).
+        if CGPreflightScreenCaptureAccess() {
+            permScreenRecording = true
+            return
+        }
         SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { [weak self] _, _ in
             Task { @MainActor [weak self] in
                 self?.permScreenRecording = CGPreflightScreenCaptureAccess()
@@ -696,14 +699,15 @@ class MainViewModel {
     }
 
     private func _doScreenCapture(label: String) async {
-        // CGWindowListCreateImage lets us exclude our own windows without hiding them —
-        // no window flicker visible to the interviewer, and no subprocess spawned.
-        // We collect our window IDs BEFORE capture so they are excluded from the image.
-        let ownWindowIDs = NSApplication.shared.windows.compactMap { w -> CGWindowID? in
-            guard let n = w.windowNumber as Int?, n > 0 else { return nil }
-            return CGWindowID(n)
-        }
-        let imageData = await captureScreen(excludingWindowIDs: ownWindowIDs)
+        // Hide our windows before capture so they don't appear in the screenshot,
+        // then restore them immediately after. CGDisplayCreateImage is the most reliable
+        // API across all macOS versions — CGWindowListCopyWindowInfo became unreliable
+        // on macOS 26 (returns empty results without full SCKit entitlements).
+        let toHide = NSApplication.shared.windows.filter { $0.isVisible }
+        for w in toHide { w.orderOut(nil) }
+        try? await Task.sleep(nanoseconds: 80_000_000)   // 80ms — let compositor update framebuffer
+        let imageData = await captureScreen()
+        for w in toHide { w.orderFrontRegardless() }
 
         guard let imageData = imageData, !imageData.isEmpty else {
             aiAnswer = "⚠ Screen capture failed.\n\nGrant Screen Recording permission:\nSystem Settings → Privacy & Security → Screen Recording"
@@ -758,31 +762,14 @@ class MainViewModel {
         )
     }
 
-    private func captureScreen(excludingWindowIDs ownIDs: [CGWindowID] = []) async -> Data? {
+    private func captureScreen() async -> Data? {
         return await Task.detached(priority: .userInitiated) {
-            // CGWindowListCreateImage runs inside Interview Copilot's own trusted process —
-            // no subprocess spawned, no new entry in the macOS Screen Recording indicator.
-            // The capture completes in ~20ms vs ~500ms for screencapture subprocess.
+            // CGDisplayCreateImage is the most reliable screen capture API across all macOS
+            // versions. Our own windows are hidden by the caller before this runs.
             let displayID = CGMainDisplayID()
-            let screenBounds = CGDisplayBounds(displayID)
+            guard let cgImage = CGDisplayCreateImage(displayID) else { return nil }
 
-            // Build an array of ALL on-screen windows minus our own panels so the overlay
-            // doesn't appear in the image — no need to hide/show windows.
-            let allInfo = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-            let otherIDs: [CGWindowID] = allInfo.compactMap { info in
-                guard let wid = info[kCGWindowNumber as String] as? Int else { return nil }
-                let id = CGWindowID(wid)
-                return ownIDs.contains(id) ? nil : id
-            }
-
-            guard !otherIDs.isEmpty else { return nil }
-            let windowArray = otherIDs.map { NSNumber(value: $0) } as CFArray
-            guard let cgImage = CGImage(windowListFromArrayScreenBounds: screenBounds,
-                                        windowArray: windowArray,
-                                        imageOption: []) else { return nil }
-
-            // Scale to max 800px wide, then JPEG at 60% — keeps payload ~150-300 KB
-            // (was 2-4 MB PNG, which hit the server's 413 body-size limit).
+            // Scale to max 800px wide, JPEG 60% → ~150-300 KB payload (avoids 413 on server).
             let origW = Double(cgImage.width)
             let origH = Double(cgImage.height)
             let scale  = min(1.0, 800.0 / origW)
@@ -799,7 +786,7 @@ class MainViewModel {
 
             let rep = NSBitmapImageRep(cgImage: scaledImage)
             let data = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.6])
-            dlog("Screen capture: \(data?.count ?? 0) bytes JPEG \(newW)×\(newH) (no subprocess)", tag: "SCREEN")
+            dlog("Screen capture: \(data?.count ?? 0) bytes JPEG \(newW)×\(newH)", tag: "SCREEN")
             return data
         }.value
     }
