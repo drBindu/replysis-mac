@@ -117,20 +117,22 @@ class MainViewModel {
     }
 
     func registerScreenRecording() {
-        // Already granted — skip SCKit entirely so no indicator ever appears.
+        // Already granted — skip SCKit entirely. This is the interview-time path and must
+        // never trigger "Currently Sharing" (visible to interviewers in the menu bar).
         if CGPreflightScreenCaptureAccess() {
             permScreenRecording = true
             return
         }
-        // Permission not yet granted. Call SCShareableContent.current (one-shot async query —
-        // NOT a subscription/stream) so the app is automatically added to the Screen Recording
-        // list in System Settings. CGRequestScreenCaptureAccess() just opens Settings but does
-        // NOT add the app to the list, forcing the user to click "+".
-        // SCShareableContent.current does not create a persistent sharing session, so it should
-        // not trigger "Currently Sharing" on macOS 26.
-        Task {
-            _ = try? await SCShareableContent.current
-            await MainActor.run { [weak self] in
+        // Permission not yet granted (setup / first launch only). getExcludingDesktopWindows
+        // is the only API that adds the app to the "Screen & System Audio Recording" list in
+        // System Settings automatically — SCShareableContent.current and CGRequestScreenCaptureAccess
+        // do not register the app, forcing the user to click "+".
+        // "Currently Sharing" may appear briefly here, but this path only runs during initial
+        // setup — the user is not yet in an interview, so the interviewer cannot see it.
+        // Once the user grants permission, CGPreflightScreenCaptureAccess returns true and
+        // this code is never reached again.
+        SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
                 self?.permScreenRecording = CGPreflightScreenCaptureAccess()
             }
         }
