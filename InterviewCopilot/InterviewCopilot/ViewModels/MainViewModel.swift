@@ -116,17 +116,12 @@ class MainViewModel {
     }
 
     func registerScreenRecording() {
-        // On macOS 26 (Tahoe), ALL ScreenCaptureKit APIs — including the one-shot
-        // getExcludingDesktopWindows — create a persistent "Currently Sharing" session
-        // even when permission is not yet granted, AND fail to add the app to the TCC list.
-        // Use only CGRequestScreenCaptureAccess() which opens System Settings without
-        // creating any SCKit session. The user must click "+" to add the app — this cannot
-        // be automated without triggering "Currently Sharing".
-        permScreenRecording = CGPreflightScreenCaptureAccess()
-        if !permScreenRecording {
-            CGRequestScreenCaptureAccess()
-            permScreenRecording = CGPreflightScreenCaptureAccess()
-        }
+        // Screen capture uses the /usr/sbin/screencapture system binary (Apple-signed,
+        // implicit entitlements) — our app does NOT need to be in System Settings →
+        // Screen Recording for the feature to work.
+        // CGPreflightScreenCaptureAccess() and CGRequestScreenCaptureAccess() on macOS 26
+        // use SCKit internally and create "Currently Sharing" sessions. Never call them.
+        permScreenRecording = true
     }
 
     // MARK: - Timers (not tracked by @Observable)
@@ -217,7 +212,7 @@ class MainViewModel {
     private func checkAndRequestPermissions() {
         permInputMonitoring = MainViewModel.inputMonitoringGranted()
         permAccessibility   = AXIsProcessTrusted()
-        permScreenRecording = CGPreflightScreenCaptureAccess()
+        permScreenRecording = true   // screencapture binary has implicit permission; never call CGPreflightScreenCaptureAccess()
         let micStatus       = AVCaptureDevice.authorizationStatus(for: .audio)
         permMicrophone      = micStatus == .authorized
         micDenied           = micStatus == .denied
@@ -322,7 +317,10 @@ class MainViewModel {
                 let micStatus            = AVCaptureDevice.authorizationStatus(for: .audio)
                 self.permMicrophone      = micStatus == .authorized
                 self.micDenied           = micStatus == .denied
-                self.permScreenRecording = CGPreflightScreenCaptureAccess()
+                // Never call CGPreflightScreenCaptureAccess() here — on macOS 26 it uses
+                // SCKit internally and creates a "Currently Sharing" session every second.
+                // permScreenRecording is set once at startup via registerScreenRecording().
+                self.permScreenRecording = true
                 // Stop after 5 min from the first activation, even across multiple reopens.
                 if let start = self.permPollingStarted, Date().timeIntervalSince(start) > 300 {
                     let t = self.permTimer
@@ -653,14 +651,6 @@ class MainViewModel {
         // Same gate as Space: signed-out → take them to sign-in, not a dead-end message.
         guard session.isLoggedIn else {
             NotificationCenter.default.post(name: .showLogin, object: nil); return
-        }
-
-        // Check Screen Recording permission BEFORE capturing — a capture without it only
-        // shows the desktop wallpaper, wasting a vision call/credit (matches .NET).
-        if !CGPreflightScreenCaptureAccess() {
-            CGRequestScreenCaptureAccess()
-            aiAnswer = "⚠ Screen Recording permission needed.\n\n1. System Settings → Privacy & Security → Screen Recording\n2. Enable Interview Copilot\n3. Quit and reopen the app, then try again"
-            return
         }
 
         dlog("Screen analysis triggered", tag: "SCREEN")

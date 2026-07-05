@@ -1,6 +1,5 @@
 import Foundation
 import AVFoundation      // AVCaptureDevice — log the app's mic authorization for diagnostics
-import CoreGraphics      // CGPreflightScreenCaptureAccess — gate system-audio on permission
 import Darwin            // posix_spawn, pipe, kill, waitpid, dlsym
 
 @MainActor
@@ -99,12 +98,14 @@ class SpeechmaticsEngine {
         // Args match .NET order: device (optional), mode, syscapture (optional), delay.
         var args: [String] = []
         if selectedDeviceId >= 0 { args += ["-device", "\(selectedDeviceId)"] }
-        // System-audio capture (hear the interviewer DIRECTLY) only when the helper is
-        // bundled AND Screen Recording is granted; otherwise mic-only. No regression.
-        let useSysAudio = hasSysCapture && CGPreflightScreenCaptureAccess()
+        // System-audio capture only when the helper binary is bundled. The syscapture
+        // binary is Apple-signed and uses its own ScreenCaptureKit permission — we must
+        // NOT call CGPreflightScreenCaptureAccess() from our process on macOS 26 because
+        // Apple reimplemented it via SCKit, which creates a "Currently Sharing" session.
+        let useSysAudio = hasSysCapture
         args += ["-mode", useSysAudio ? "both" : "mic"]
         if useSysAudio { args += ["-syscapture", syscapturePath.path] }
-        dlog("  Audio mode: \(useSysAudio ? "BOTH (system+mic)" : "mic only") — bundled=\(hasSysCapture) screenOK=\(CGPreflightScreenCaptureAccess())", tag: "SM")
+        dlog("  Audio mode: \(useSysAudio ? "BOTH (system+mic)" : "mic only") — bundled=\(hasSysCapture)", tag: "SM")
         args += ["-max-delay", "0.7"]
 
         // Key ONLY via env var (matches the working .NET app); APP_DATA_DIR points the
