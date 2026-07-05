@@ -704,7 +704,12 @@ class MainViewModel {
     }
 
     private func _doScreenCapture(label: String) async {
+        // Hide our windows so they don't appear in the screenshot.
+        let toHide = NSApplication.shared.windows.filter { $0.isVisible }
+        for w in toHide { w.orderOut(nil) }
+        try? await Task.sleep(nanoseconds: 80_000_000)   // 80ms — compositor update
         let imageData = await captureScreen()
+        for w in toHide { w.orderFrontRegardless() }
 
         guard let imageData = imageData, !imageData.isEmpty else {
             aiAnswer = "⚠ Screen capture failed.\n\nGrant Screen Recording permission:\nSystem Settings → Privacy & Security → Screen Recording"
@@ -760,70 +765,40 @@ class MainViewModel {
     }
 
     private func captureScreen() async -> Data? {
-        // SCScreenshotManager (macOS 14.4+) is Apple's one-shot screenshot API — it does NOT
-        // create a persistent SCStream or SCShareableContent subscription, so it should not
-        // trigger the "Currently Sharing" indicator in the menu bar on macOS 26 (Tahoe).
-        if #available(macOS 14.4, *) {
-            if let data = await captureScreenSCK() { return data }
-        }
-        // Fallback for older macOS or SCKit failure: hide windows, capture, restore.
-        let toHide = NSApplication.shared.windows.filter { $0.isVisible }
-        for w in toHide { w.orderOut(nil) }
-        try? await Task.sleep(nanoseconds: 80_000_000)
-        let data = await captureScreenCGDisplay()
-        for w in toHide { w.orderFrontRegardless() }
-        return data
-    }
-
-    @available(macOS 14.4, *)
-    private func captureScreenSCK() async -> Data? {
-        do {
-            // SCShareableContent.current is a one-shot async query — no subscription,
-            // no persistent session, no "Currently Sharing" indicator.
-            let content = try await SCShareableContent.current
-            guard let display = content.displays.first(where: { $0.displayID == CGMainDisplayID() })
-                             ?? content.displays.first else { return nil }
-
-            // Exclude our own windows from the captured image via the filter (no window hiding needed).
-            let ownIDs: Set<UInt32> = Set(NSApplication.shared.windows.compactMap { w in
-                let n = w.windowNumber; return n > 0 ? UInt32(n) : nil
-            })
-            let excludedWindows = content.windows.filter { ownIDs.contains($0.windowID) }
-
-            let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
-            let config = SCStreamConfiguration()
-            let scale = min(1.0, 800.0 / Double(display.width))
-            config.width  = max(1, Int(Double(display.width)  * scale))
-            config.height = max(1, Int(Double(display.height) * scale))
-
-            let cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-            let rep  = NSBitmapImageRep(cgImage: cgImage)
-            let data = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.6])
-            dlog("Screen capture (SCK): \(data?.count ?? 0) bytes JPEG \(cgImage.width)×\(cgImage.height)", tag: "SCREEN")
-            return data
-        } catch {
-            dlog("SCScreenshotManager failed: \(error) — will use CGDisplayCreateImage fallback", tag: "SCREEN")
-            return nil
-        }
-    }
-
-    private func captureScreenCGDisplay() async -> Data? {
+        // Use the screencapture system binary (Apple-signed, not SCKit) which does NOT trigger
+        // "Currently Sharing" on macOS 26. All ScreenCaptureKit APIs (SCScreenshotManager,
+        // CGDisplayCreateImage which SCKit-backs on macOS 26, SCShareableContent) trigger the
+        // indicator. screencapture runs as a separate process with Apple's own entitlements.
         return await Task.detached(priority: .userInitiated) {
-            let displayID = CGMainDisplayID()
-            guard let cgImage = CGDisplayCreateImage(displayID) else { return nil }
-            let origW = Double(cgImage.width), origH = Double(cgImage.height)
+            let tmp = "/tmp/ic_\(UInt32.random(in: 1_000_000...9_999_999)).jpg"
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            proc.arguments = ["-x",        // no shutter sound
+                              "-m",        // main display only
+                              "-t", "jpg", // JPEG output (avoids 413 vs PNG)
+                              tmp]
+            try? proc.run()
+            proc.waitUntilExit()
+            defer { try? FileManager.default.removeItem(atPath: tmp) }
+            guard proc.terminationStatus == 0,
+                  let raw = try? Data(contentsOf: URL(fileURLWithPath: tmp)) else { return nil }
+
+            // Scale to max 800px wide and recompress at 60% — keeps payload ~150-300 KB.
+            guard let src = NSImage(data: raw),
+                  let cg  = src.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return raw }
+            let origW = Double(cg.width), origH = Double(cg.height)
             let scale = min(1.0, 800.0 / origW)
-            let newW = max(1, Int(origW * scale)), newH = max(1, Int(origH * scale))
+            let newW  = max(1, Int(origW * scale)), newH = max(1, Int(origH * scale))
             guard let ctx = CGContext(
                 data: nil, width: newW, height: newH,
                 bitsPerComponent: 8, bytesPerRow: 0,
                 space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
-            ), let scaledImage = { ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: newW, height: newH)); return ctx.makeImage() }()
+            ), let scaled = { ctx.draw(cg, in: CGRect(x: 0, y: 0, width: newW, height: newH)); return ctx.makeImage() }()
             else { return nil }
-            let rep  = NSBitmapImageRep(cgImage: scaledImage)
+            let rep  = NSBitmapImageRep(cgImage: scaled)
             let data = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.6])
-            dlog("Screen capture (CGDisplay): \(data?.count ?? 0) bytes JPEG \(newW)×\(newH)", tag: "SCREEN")
+            dlog("Screen capture: \(data?.count ?? 0) bytes JPEG \(newW)×\(newH)", tag: "SCREEN")
             return data
         }.value
     }
