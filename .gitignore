@@ -15,3 +15,5 @@ build/
 InterviewCopilotMac6/
 *.dll
 *.pdb
+dist/
+SystemAudioCaptureSrc/SystemAudioCapture
