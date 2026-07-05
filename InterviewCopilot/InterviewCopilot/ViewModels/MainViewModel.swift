@@ -3,7 +3,6 @@ import AppKit
 import Observation
 import AVFoundation
 import IOKit.hid
-import ScreenCaptureKit
 
 @MainActor
 @Observable
@@ -117,19 +116,16 @@ class MainViewModel {
     }
 
     func registerScreenRecording() {
-        // If permission is already granted, just record it — do NOT call SCShareableContent.
-        // On macOS 26 (Tahoe), calling getExcludingDesktopWindows even without starting a stream
-        // now shows a persistent "Currently Sharing" popup in the menu bar, which is visible
-        // to interviewers when the user is screen-sharing. Only call it the first time (when
-        // the app needs to appear in System Settings → Screen Recording for the user to enable it).
-        if CGPreflightScreenCaptureAccess() {
-            permScreenRecording = true
-            return
-        }
-        SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { [weak self] _, _ in
-            Task { @MainActor [weak self] in
-                self?.permScreenRecording = CGPreflightScreenCaptureAccess()
-            }
+        // NEVER call SCShareableContent on macOS 26 (Tahoe). Even a one-shot
+        // getExcludingDesktopWindows query now creates a persistent ScreenCaptureKit
+        // session that shows "InterviewCopilot — Currently Sharing" in the menu bar —
+        // visible to interviewers when they ask the user to share their screen.
+        // CGRequestScreenCaptureAccess() registers the app in System Settings without
+        // starting any sharing session or triggering the indicator.
+        permScreenRecording = CGPreflightScreenCaptureAccess()
+        if !permScreenRecording {
+            CGRequestScreenCaptureAccess()
+            permScreenRecording = CGPreflightScreenCaptureAccess()
         }
     }
 
