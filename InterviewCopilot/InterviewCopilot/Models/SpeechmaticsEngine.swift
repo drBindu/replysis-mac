@@ -38,14 +38,13 @@ class SpeechmaticsEngine {
         return dir
     }()
 
-    /// True when the SystemAudioCapture (Core Audio tap) helper is bundled — the normal
-    /// case. The engine then runs in system-audio-only mode and the microphone is only a
-    /// fallback, so the UI can SKIP the upfront mic permission prompt (one fewer popup).
-    /// The mic still prompts lazily if the tap ever fails and we fall back to it.
+    /// True when system audio can be captured by the in-app Core Audio tap (macOS 14.2+).
+    /// The engine then runs system-audio-only and the microphone is never used, so the UI
+    /// must NOT gate the app on, or prompt for, the mic. The tap prompts for its own
+    /// "record system audio" permission when the engine starts.
     var systemAudioAvailable: Bool {
-        guard let res = Bundle.main.resourceURL else { return false }
-        return FileManager.default.fileExists(
-            atPath: res.appendingPathComponent("SystemAudioCapture").path)
+        if #available(macOS 14.2, *) { return true }
+        return false
     }
 
     var latestTxtPath: URL { appDataFolder.appendingPathComponent("latest.txt") }

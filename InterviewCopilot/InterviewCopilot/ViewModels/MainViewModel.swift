@@ -451,32 +451,36 @@ class MainViewModel {
             return
         }
 
-        // Permission gate — mic + accessibility required before first session.
-        // Triggered on the user's first Space/mic press so the app is immediately
-        // usable after install, but permissions are only requested when actually needed.
-        let micAuth = AVCaptureDevice.authorizationStatus(for: .audio)
-        if micAuth == .notDetermined {
-            // Guard prevents a re-entrant loop: user hammers Space while popup is open →
-            // second call would requestAccess again → callback calls handleSpacePress again.
-            guard !isMicPermissionRequesting else { return }
-            isMicPermissionRequesting = true
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.isMicPermissionRequesting = false
-                    self.permMicrophone = granted
-                    if granted && AXIsProcessTrusted() {
-                        self.handleSpacePress(source: source)
-                    } else {
-                        self.openPermissionSetup()
+        // Permission gate — ONLY require the mic when it's actually the audio source.
+        // In system-audio mode the in-app Core Audio tap provides the audio and prompts
+        // for its own "record system audio" permission when the engine starts, so gating
+        // the whole app behind the mic here is both a needless prompt AND blocks system
+        // mode. Skip it entirely when system audio is available.
+        if !engine.systemAudioAvailable {
+            let micAuth = AVCaptureDevice.authorizationStatus(for: .audio)
+            if micAuth == .notDetermined {
+                // Guard prevents a re-entrant loop: user hammers Space while popup is open →
+                // second call would requestAccess again → callback calls handleSpacePress again.
+                guard !isMicPermissionRequesting else { return }
+                isMicPermissionRequesting = true
+                AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.isMicPermissionRequesting = false
+                        self.permMicrophone = granted
+                        if granted && AXIsProcessTrusted() {
+                            self.handleSpacePress(source: source)
+                        } else {
+                            self.openPermissionSetup()
+                        }
                     }
                 }
+                return
             }
-            return
-        }
-        if micAuth != .authorized {
-            openPermissionSetup()
-            return
+            if micAuth != .authorized {
+                openPermissionSetup()
+                return
+            }
         }
         // BUG-19 FIX: mic is authorized — proceed even if Accessibility isn't granted.
         // The local key monitor works without Accessibility; the global Space tap is OPTIONAL.
