@@ -101,16 +101,16 @@ class SpeechmaticsEngine {
         // Args match .NET order: device (optional), mode, syscapture (optional), delay.
         var args: [String] = []
         if selectedDeviceId >= 0 { args += ["-device", "\(selectedDeviceId)"] }
-        // System-audio capture only when the helper binary is bundled. The syscapture
-        // binary is Apple-signed and uses its own ScreenCaptureKit permission — we must
-        // NOT call CGPreflightScreenCaptureAccess() from our process on macOS 26 because
-        // Apple reimplemented it via SCKit, which creates a "Currently Sharing" session.
-        // Disable sys audio if it crashed (e.g. permission denied) — avoids a dialog loop
-        // every 3s where checkEngine() restarts the engine and the binary fails again.
+        // SYSTEM-audio-only mode: capture just the interviewer through the Core Audio
+        // tap (SystemAudioCapture). The mic is NOT opened, so macOS shows no orange
+        // microphone indicator — the app stays fully invisible in the menu bar.
+        // If the tap can't start, the engine self-falls-back to mic-only (orange dot
+        // returns, but transcription keeps working). If it crashed hard before, skip
+        // straight to mic so we don't loop.
         let useSysAudio = hasSysCapture && !sysAudioCrashed
-        args += ["-mode", useSysAudio ? "both" : "mic"]
+        args += ["-mode", useSysAudio ? "system" : "mic"]
         if useSysAudio { args += ["-syscapture", syscapturePath.path] }
-        dlog("  Audio mode: \(useSysAudio ? "BOTH (system+mic)" : "mic only") — bundled=\(hasSysCapture)", tag: "SM")
+        dlog("  Audio mode: \(useSysAudio ? "SYSTEM only (tap, no mic)" : "mic only") — bundled=\(hasSysCapture)", tag: "SM")
         args += ["-max-delay", "0.7"]   // Speechmatics enforces a HARD minimum of 0.7 — lower is rejected
 
         // Key ONLY via env var (matches the working .NET app); APP_DATA_DIR points the
