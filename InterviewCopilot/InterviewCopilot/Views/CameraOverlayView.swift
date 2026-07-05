@@ -76,7 +76,7 @@ class AnswerOverlayWindow: NSPanel {
 // ══════════════════════════════════════════════════════════════
 
 struct AnswerOverlayView: View {
-    @ObservedObject var vm: MainViewModel
+    var vm: MainViewModel
 
     private var hasAnswer: Bool { !vm.aiAnswer.isEmpty || vm.showThinking }
     private var isIdle: Bool { !vm.isListening && vm.aiAnswer.isEmpty && !vm.showThinking }
