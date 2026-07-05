@@ -684,8 +684,17 @@ class MainViewModel {
         for w in toHide { w.orderFrontRegardless() }
 
         guard let imageData = imageData, !imageData.isEmpty else {
-            aiAnswer = "⚠ Screen capture failed — please grant Screen Recording permission and restart the app."
-            dlog("Screen capture returned nil", tag: "SCREEN")
+            dlog("Screen capture returned nil — showing permission alert", tag: "SCREEN")
+            let alert = NSAlert()
+            alert.messageText = "Screen Recording Permission Required"
+            alert.informativeText = "Interview Copilot needs Screen Recording permission to analyze your screen.\n\nClick \"Open Settings\", enable Interview Copilot, then restart the app."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Open Settings")
+            alert.addButton(withTitle: "Later")
+            if alert.runModal() == .alertFirstButtonReturn {
+                NSWorkspace.shared.open(
+                    URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
+            }
             stopThinkingUI(); return
         }
 
