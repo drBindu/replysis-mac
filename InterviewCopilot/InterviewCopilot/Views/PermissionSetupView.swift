@@ -143,6 +143,9 @@ struct PermissionSetupView: View {
             // Register for Screen Recording so the app appears in the list.
             vm.registerScreenRecording()
         }
+        .onDisappear {
+            vm.closeHotkeySetup()   // stops permTimer — otherwise it keeps firing after swipe-dismiss
+        }
         .animation(.easeInOut(duration: 0.22), value: vm.permMicrophone)
         .animation(.easeInOut(duration: 0.22), value: vm.permAccessibility)
         .animation(.easeInOut(duration: 0.22), value: vm.permScreenRecording)

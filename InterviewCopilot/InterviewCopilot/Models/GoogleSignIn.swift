@@ -26,7 +26,15 @@ class GoogleSignIn {
         }
     }
 
+    private static var isSigningIn = false
+
     static func signIn() async -> Result {
+        guard !isSigningIn else {
+            dlog("Google Sign In: already in progress — ignoring duplicate call", tag: "GOOGLE")
+            return .failure("Sign-in already in progress.")
+        }
+        isSigningIn = true
+        defer { isSigningIn = false }
         dlog("Google Sign In: starting loopback flow", tag: "GOOGLE")
 
         // The client secret is loaded from remote config. If it hasn't arrived yet, try
@@ -207,6 +215,9 @@ class GoogleSignIn {
             }
             let idToken     = obj["id_token"]      as? String ?? ""
             let accessToken = obj["access_token"]  as? String ?? ""
+            guard !idToken.isEmpty || !accessToken.isEmpty else {
+                dlog("Google: token exchange returned empty tokens", tag: "GOOGLE"); return nil
+            }
             dlog("Google: token exchange OK — idToken=\(!idToken.isEmpty) accessToken=\(!accessToken.isEmpty)", tag: "GOOGLE")
             return TokenResponse(idToken: idToken, accessToken: accessToken)
         } catch {

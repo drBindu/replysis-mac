@@ -143,34 +143,47 @@ class UserSession {
 
     // MARK: - Token Refresh
 
+    private var refreshTask: Task<Bool, Never>?
+
     func tryRefreshAsync() async -> Bool {
+        // Coalesce concurrent callers — only one network round-trip per refresh cycle.
+        // Without this, two simultaneous Space presses each consume the refresh token,
+        // leaving the second response with an already-invalidated token.
+        if let existing = refreshTask { return await existing.value }
         guard !refreshToken.isEmpty else { return false }
         let rt = refreshToken
 
-        guard let url = URL(string: "https://securetoken.googleapis.com/v1/token?key=\(AppConfig.firebaseApiKey)") else {
-            return false
-        }
+        let task = Task<Bool, Never> { [weak self] in
+            guard let self,
+                  let url = URL(string: "https://securetoken.googleapis.com/v1/token?key=\(AppConfig.firebaseApiKey)")
+            else { return false }
 
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body = ["grant_type": "refresh_token", "refresh_token": rt]
-        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.timeoutInterval = 10   // default 60 s would block Space for a full minute on bad networks
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let body = ["grant_type": "refresh_token", "refresh_token": rt]
+            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        do {
-            let (data, _) = try await URLSession.shared.data(for: req)
-            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let newToken = obj["id_token"] as? String,
-                  let newRefresh = obj["refresh_token"] as? String else { return false }
-            self.idToken = newToken
-            self.refreshToken = newRefresh
-            self.tokenSavedAt = Date()
-            self.isLoggedIn = true
-            self.saveToDisk()
-            return true
-        } catch {
-            return false
+            do {
+                let (data, _) = try await URLSession.shared.data(for: req)
+                guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let newToken = obj["id_token"] as? String,
+                      let newRefresh = obj["refresh_token"] as? String else { return false }
+                self.idToken = newToken
+                self.refreshToken = newRefresh
+                self.tokenSavedAt = Date()
+                self.isLoggedIn = true
+                self.saveToDisk()
+                return true
+            } catch {
+                return false
+            }
         }
+        refreshTask = task
+        let result = await task.value
+        refreshTask = nil
+        return result
     }
 
     // MARK: - Speechmatics Key
@@ -242,7 +255,7 @@ enum AppConfig {
             return
         }
         if let secret = obj["GoogleClientSecret"] as? String, !secret.isEmpty {
-            googleClientSecret = secret
+            await MainActor.run { googleClientSecret = secret }
             dlog("AppConfig: got GoogleClientSecret (len=\(secret.count))", tag: "CONFIG")
         } else {
             dlog("AppConfig: GoogleClientSecret not in response — keys: \(obj.keys.joined(separator: ","))", tag: "CONFIG")

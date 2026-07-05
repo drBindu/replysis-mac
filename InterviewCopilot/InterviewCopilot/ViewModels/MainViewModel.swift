@@ -326,8 +326,10 @@ class MainViewModel {
                 self.permScreenRecording = CGPreflightScreenCaptureAccess()
                 // Stop after 5 min from the first activation, even across multiple reopens.
                 if let start = self.permPollingStarted, Date().timeIntervalSince(start) > 300 {
-                    self.permTimer?.invalidate(); self.permTimer = nil
+                    let t = self.permTimer
+                    self.permTimer = nil
                     self.permPollingStarted = nil
+                    t?.invalidate()
                 }
             }
         }
@@ -511,9 +513,11 @@ class MainViewModel {
             isMuted = false; isListening = true
             justStartedListening = true; listenStartTicks = 0
             transcript = ""; aiAnswer = ""
-            engine.clearLatestTxt()
-            engine.writeResetFlag()
-            engine.deletePauseFlag()
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                self?.engine.clearLatestTxt()
+                self?.engine.writeResetFlag()
+                self?.engine.deletePauseFlag()
+            }
             updateMicUI()
             // Wake the backend now (TLS + cold JVM) so the first answer isn't slow.
             NetworkClient.shared.warmUp()
@@ -528,7 +532,8 @@ class MainViewModel {
             // the polling timer captures is complete before we hand it to AI.
             Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 150_000_000)  // 150ms
-                self?.startAI()
+                guard let self, self.isMuted, !self.isListening else { return }
+                self.startAI()
             }
         }
     }
@@ -579,7 +584,7 @@ class MainViewModel {
         // Only treat as off-topic if it WASN'T recognized as a real question type —
         // otherwise short real questions ("where are you located") get wrongly dismissed.
         if case .general = qType, builder.isOffTopic(q) {
-            finishAI(question: q, answer: builder.getOffTopicResponse()); return
+            stopThinkingUI(); return   // silence — don't respond, don't log
         }
 
         let messages = builder.buildMessages(resumeFacts: resumeFacts, currentQuestion: q,
@@ -618,12 +623,12 @@ class MainViewModel {
                 guard let self = self, self.answerEpoch == epoch else { return }
                 let final = self.cleanAIOutput(accumulated)
                 self.finishAI(question: q, answer: final, prefix: "Q: \(q)\n\n\(lowBanner)")
-                Task { await self.fetchCredits() }
+                Task { [weak self] in await self?.fetchCredits() }
             },
             onError: { [weak self] err in
                 guard let self = self, self.answerEpoch == epoch else { return }
                 if err == "NO_CREDITS"       { self.aiAnswer = "⚠ Not enough credits. Visit coopilotxai.com/pricing." }
-                else if err == "SESSION_EXPIRED" { self.session.clear(); self.setLoggedOutUI() }
+                else if err == "SESSION_EXPIRED" { self.engine.stop(); self.session.clear(); self.setLoggedOutUI() }
                 else                         { self.aiAnswer = "⚠ Something went wrong. Please try again." }
                 self.stopThinkingUI()
             }
@@ -786,6 +791,7 @@ class MainViewModel {
 
     // MARK: - Transcript Polling
     private func startTranscriptTimer() {
+        guard transcriptTimer == nil else { return }
         transcriptTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.updateTranscript() }
         }
@@ -816,6 +822,7 @@ class MainViewModel {
 
     // MARK: - Thinking Animation
     private func startThinkingTimer() {
+        guard thinkingTimer == nil else { return }
         thinkingTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self, self.isProcessing && !self.isScreenAnalyzing else { return }
@@ -844,9 +851,6 @@ class MainViewModel {
         while FileManager.default.fileExists(atPath: dir.appendingPathComponent("interview_\(num).txt").path) { num += 1 }
         sessionNumber = num
         sessionLogPath = dir.appendingPathComponent("interview_\(num).txt")
-        let resumeName = ResumeParser.extractName(resumeText)
-        let header = "SESSION \(num) | \(useGroq ? "groq" : "openai") | \(Date()) | RESUME: \(resumeName)\n\n"
-        if let path = sessionLogPath { try? header.write(to: path, atomically: true, encoding: .utf8) }
         isRecording = true
         sessionSeconds = 0; sessionTimerVisible = true
         sessionTimerObj?.invalidate()
@@ -863,6 +867,7 @@ class MainViewModel {
     func newSession() {
         guard !isProcessing else { return }
         endSession(); transcript = ""; aiAnswer = ""
+        answerEpoch += 1   // cancel any in-flight streaming callbacks
         liveHints = ""; saveHints()   // fresh interview → fresh hints
         aiAnswerHint = "New session started. Press SPACE to begin."
         startNewSession()
@@ -877,9 +882,23 @@ class MainViewModel {
     private func appendToSessionLog(q: String, a: String) {
         guard let path = sessionLogPath else { return }
         let entry = "Q: \(q)\nA: \(a)\n\n"
-        if let data = entry.data(using: .utf8),
-           let handle = try? FileHandle(forWritingTo: path) {
-            handle.seekToEndOfFile(); handle.write(data); handle.closeFile()
+        do {
+            if !FileManager.default.fileExists(atPath: path.path) {
+                // Lazy creation: write header + first entry atomically so empty
+                // sessions never produce files that clutter Past Sessions view.
+                let fmt = DateFormatter()
+                fmt.dateFormat = "yyyy-MM-dd HH:mm"
+                let resumeName = ResumeParser.extractName(resumeText)
+                let header = "SESSION \(sessionNumber) | \(useGroq ? "groq" : "openai") | \(fmt.string(from: Date())) | RESUME: \(resumeName)\n\n"
+                try (header + entry).write(to: path, atomically: true, encoding: .utf8)
+                return
+            }
+            let handle = try FileHandle(forWritingTo: path)
+            try handle.seekToEnd()
+            try handle.write(contentsOf: entry.data(using: .utf8) ?? Data())
+            try handle.close()
+        } catch {
+            dlog("Session log write failed: \(error)", tag: "SESSION")
         }
     }
 
@@ -925,6 +944,7 @@ class MainViewModel {
     }
 
     private func startCreditsTimer() {
+        guard creditsTimer == nil else { return }
         creditsTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in await self?.fetchCredits() }
         }
@@ -989,6 +1009,8 @@ class MainViewModel {
     }
 
     func signOut() {
+        // Stop eye-mode overlay so its NSPanel and timers don't outlive the session.
+        if showCameraOverlay { exitCamera() }
         // BUG-16 FIX: stop watch mode before clearing the session — otherwise the 8s
         // timer keeps firing _doScreenCapture() with an expired idToken after sign-out.
         if isWatchMode {
@@ -999,6 +1021,9 @@ class MainViewModel {
     }
 
     private func setLoggedOutUI() {
+        transcriptTimer?.invalidate(); transcriptTimer = nil
+        thinkingTimer?.invalidate();   thinkingTimer = nil
+        creditsTimer?.invalidate();    creditsTimer = nil
         showCreditsBadge = false; creditsText = "—"; endSession()
         showProfile = false
     }
@@ -1107,6 +1132,7 @@ class MainViewModel {
 
     // MARK: - Helpers
     func clearAnswer() {
+        resumeLocked = false
         answerEpoch += 1   // invalidate any in-flight stream so it can't re-populate
         transcript = ""; aiAnswer = ""; answerIsBehavioral = false
         aiAnswerHint = "Ready. Press SPACE to start listening, then SPACE again to get your answer."

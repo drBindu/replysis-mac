@@ -111,7 +111,11 @@ class NetworkClient {
                         yielded = true
                         onMain { onToken(tok) }
                     }
-                    onMain { onDone() }
+                    // Only call onDone when the server actually streamed tokens — an
+                    // empty response (yielded=false) means the server sent nothing and
+                    // should be retried or surfaced as an error, not a blank answer.
+                    if yielded { onMain { onDone() } } else if attempt == 0 { continue }
+                    else { onMain { onError("Server returned empty response. Please try again.") } }
                     return
                 } catch {
                     // Clean failure before a single token arrived → silent retry once.

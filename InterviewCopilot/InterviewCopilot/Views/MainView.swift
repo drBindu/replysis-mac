@@ -20,6 +20,8 @@ struct MainView: View {
     @State private var askText = ""   // unified Ask / Guide bar input
     @State private var jobSaveTimer: Timer?
     @State private var leftTab = 0   // 0 = Resume, 1 = Job & Company
+    @State private var resumeParseError = ""
+    @State private var showResumeError = false
 
     var body: some View {
         // ── Outer glass container — matches original #B3080C14 border with CornerRadius 14
@@ -50,12 +52,6 @@ struct MainView: View {
             if vm.resumeLocked { withAnimation { resumeOpen = false; jobOpen = false } }
         }
         .onChange(of: focusedField) { vm.isEditingText = focusedField != nil }
-        .onKeyPress(.space) {
-            // While typing in a field, let the space through (type it); otherwise toggle mic.
-            if vm.isEditingText { return .ignored }
-            vm.handleSpacePress(source: "KEYBOARD")
-            return .handled
-        }
         .onReceive(NotificationCenter.default.publisher(for: .showDebugLog)) { _ in showDebugLog = true }
         // Pressing Space (or tapping the mic) while signed out routes here → open sign-in.
         .onReceive(NotificationCenter.default.publisher(for: .showLogin)) { _ in showLogin = true }
@@ -69,6 +65,11 @@ struct MainView: View {
         .sheet(isPresented: Bindable(vm).needsPermissionSetup) {
             PermissionSetupView()
                 .interactiveDismissDisabled(!vm.hotkeyReadyToActivate)
+        }
+        .alert("Resume Upload Failed", isPresented: $showResumeError) {
+            Button("OK") {}
+        } message: {
+            Text(resumeParseError)
         }
     }
 
@@ -1168,23 +1169,29 @@ struct MainView: View {
 
     func scheduleResumeSave() {
         resumeSaveTimer?.invalidate()
-        resumeSaveTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { [weak vm] _ in
+        let t = Timer(timeInterval: 0.8, repeats: false) { [weak vm] _ in
             Task { @MainActor in vm?.saveResume() }
         }
+        RunLoop.main.add(t, forMode: .common)   // fires even while NSOpenPanel is visible
+        resumeSaveTimer = t
     }
 
     func scheduleHintsSave() {
         hintsSaveTimer?.invalidate()
-        hintsSaveTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: false) { [weak vm] _ in
+        let t = Timer(timeInterval: 0.6, repeats: false) { [weak vm] _ in
             Task { @MainActor in vm?.saveHints() }
         }
+        RunLoop.main.add(t, forMode: .common)
+        hintsSaveTimer = t
     }
 
     func scheduleJobSave() {
         jobSaveTimer?.invalidate()
-        jobSaveTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { [weak vm] _ in
+        let t = Timer(timeInterval: 0.8, repeats: false) { [weak vm] _ in
             Task { @MainActor in vm?.saveJob() }
         }
+        RunLoop.main.add(t, forMode: .common)
+        jobSaveTimer = t
     }
 
     func uploadResume() {
@@ -1194,17 +1201,24 @@ struct MainView: View {
             UTType(filenameExtension: "doc")  ?? .data]
         panel.allowsMultipleSelection = false
         panel.message = "Choose your resume (PDF, DOCX, or TXT)"
-        if panel.runModal() == .OK, let url = panel.url {
-            // Proper extraction for PDF/DOCX/TXT (reading a .docx/.pdf as a raw String
-            // produces binary garbage — that was the bug).
-            let text = ResumeParser.readResumeFile(url)
-            if !text.isEmpty {
-                vm.resumeText = text
-                vm.saveResumeToLibrary(name: url.deletingPathExtension().lastPathComponent)
-                vm.saveResume()
-                withAnimation { resumeOpen = false }
-            } else {
-                vm.resumeText = "⚠ Couldn't read that file. Try exporting your resume as PDF or pasting the text directly."
+        // Non-blocking: keeps RunLoop free (runModal blocks it, causing stuck timers/saves).
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            let name = url.deletingPathExtension().lastPathComponent
+            Task { @MainActor in
+                // Parse off the main actor — PDF/DOCX extraction can take 100-500ms.
+                let text = await Task.detached(priority: .userInitiated) {
+                    ResumeParser.readResumeFile(url)
+                }.value
+                if !text.isEmpty {
+                    vm.resumeText = text
+                    vm.saveResumeToLibrary(name: name)
+                    vm.saveResume()
+                    withAnimation { resumeOpen = false }
+                } else {
+                    resumeParseError = "Couldn't read that file. Try exporting your resume as PDF or pasting the text directly."
+                    showResumeError = true
+                }
             }
         }
     }

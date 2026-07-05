@@ -1,7 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct SessionEntry: Identifiable {
+struct SessionEntry: Identifiable, Equatable {
+    static func == (lhs: SessionEntry, rhs: SessionEntry) -> Bool { lhs.id == rhs.id }
     let id = UUID()
     let filename: String
     let header: String
@@ -39,6 +40,7 @@ struct SessionsView: View {
     @Environment(\.dismiss) var dismiss
     @State private var sessions: [SessionEntry] = []
     @State private var selected: SessionEntry?
+    @State private var cachedQABlocks: [QABlock] = []
     @State private var searchText = ""
     @State private var copiedToast = false
     @State private var deletedToast = false
@@ -54,8 +56,8 @@ struct SessionsView: View {
         }
     }
 
-    var qaBlocks: [QABlock] {
-        guard let sel = selected else { return [] }
+    private func computeQABlocks(for sel: SessionEntry?) -> [QABlock] {
+        guard let sel else { return [] }
         let lines = sel.content.components(separatedBy: "\n")
         var blocks: [QABlock] = []
         var currentQ = ""
@@ -104,7 +106,8 @@ struct SessionsView: View {
             }
         }
         .frame(width: 900, height: 580)
-        .onAppear { loadSessions(); selected = sessions.first }
+        .onAppear { loadSessions() }
+        .onChange(of: selected) { _, newSel in cachedQABlocks = computeQABlocks(for: newSel) }
     }
 
     // MARK: - Sidebar
@@ -288,7 +291,7 @@ struct SessionsView: View {
 
                     Rectangle().fill(Color(hex: "#111d2e")).frame(height: 1)
 
-                    if qaBlocks.isEmpty {
+                    if cachedQABlocks.isEmpty {
                         Spacer()
                         VStack(spacing: 10) {
                             Image(systemName: "doc.text")
@@ -302,7 +305,7 @@ struct SessionsView: View {
                     } else {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 14) {
-                                ForEach(Array(qaBlocks.enumerated()), id: \.element.id) { idx, block in
+                                ForEach(Array(cachedQABlocks.enumerated()), id: \.element.id) { idx, block in
                                     qaBlockView(index: idx + 1, block: block)
                                 }
                             }
@@ -431,21 +434,29 @@ struct SessionsView: View {
 
     func loadSessions() {
         let dir = SpeechmaticsEngine.shared.appDataFolder
-        guard let files = try? FileManager.default.contentsOfDirectory(at: dir,
-            includingPropertiesForKeys: [.creationDateKey]) else { return }
-        sessions = files
-            .filter { $0.lastPathComponent.hasPrefix("interview_") && $0.pathExtension == "txt" }
-            .compactMap { url -> SessionEntry? in
-                guard let content = try? String(contentsOf: url, encoding: .utf8),
-                      content.contains("Q:") else { return nil }
-                let lines = content.components(separatedBy: "\n")
-                let header = lines.first ?? url.lastPathComponent
-                let date = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? Date()
-                let name = url.deletingPathExtension().lastPathComponent
-                let num = Int(name.replacingOccurrences(of: "interview_", with: "")) ?? 0
-                return SessionEntry(filename: name, header: header, content: content, date: date, sessionNumber: num)
+        Task.detached(priority: .userInitiated) {
+            guard let files = try? FileManager.default.contentsOfDirectory(at: dir,
+                includingPropertiesForKeys: [.creationDateKey]) else { return }
+            let entries = files
+                .filter { $0.lastPathComponent.hasPrefix("interview_") && $0.pathExtension == "txt" }
+                .compactMap { url -> SessionEntry? in
+                    guard let content = try? String(contentsOf: url, encoding: .utf8),
+                          content.contains("Q:") else { return nil }
+                    let lines = content.components(separatedBy: "\n")
+                    let header = lines.first ?? url.lastPathComponent
+                    let date = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? Date()
+                    let name = url.deletingPathExtension().lastPathComponent
+                    let num = Int(name.replacingOccurrences(of: "interview_", with: "")) ?? 0
+                    return SessionEntry(filename: name, header: header, content: content, date: date, sessionNumber: num)
+                }
+                .sorted { $0.sessionNumber > $1.sessionNumber }
+            await MainActor.run {
+                self.sessions = entries
+                let first = entries.first
+                self.selected = first
+                self.cachedQABlocks = self.computeQABlocks(for: first)
             }
-            .sorted { $0.sessionNumber > $1.sessionNumber }
+        }
     }
 
     func exportSession(_ session: SessionEntry) {

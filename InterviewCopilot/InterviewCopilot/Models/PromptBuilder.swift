@@ -101,9 +101,17 @@ class PromptBuilder {
     func isGreeting(_ q: String) -> Bool {
         let t = q.trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-            .trimmingCharacters(in: CharacterSet(charactersIn: ".!?,"))
-        return ["hi","hello","hey","hi there","good morning","good afternoon",
-                "good evening","greetings","hey there"].contains(t)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".!?,").union(.whitespaces))
+        let singleWords = ["hi","hello","hey","hi there","good morning","good afternoon",
+                           "good evening","greetings","hey there"]
+        if singleWords.contains(t) { return true }
+        // Catch Speechmatics artifacts: "hello hello", "hello .", "hi hi", "hey hey"
+        let baseGreetings = ["hi","hello","hey","greetings"]
+        let words = t.split(separator: " ")
+            .map { $0.trimmingCharacters(in: CharacterSet.letters.inverted) }
+            .filter { !$0.isEmpty }
+        if words.count >= 1 && words.count <= 4 && words.allSatisfy({ baseGreetings.contains($0) }) { return true }
+        return false
     }
 
     func isSmallTalk(_ q: String) -> Bool {

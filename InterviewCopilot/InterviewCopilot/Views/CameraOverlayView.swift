@@ -115,10 +115,12 @@ struct AnswerOverlayView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .gesture(DragGesture().onChanged { value in
             guard let w = AnswerOverlayWindow.shared else { return }
+            let screen = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
             let o = w.frame.origin
-            w.setFrameOrigin(NSPoint(x: o.x + value.translation.width,
-                                     y: o.y - value.translation.height))
-            w.topEdgeY = w.frame.maxY       // remember new top so resizes stay put
+            let newX = max(screen.minX, min(o.x + value.translation.width, screen.maxX - w.frame.width))
+            let newY = max(screen.minY, min(o.y - value.translation.height, screen.maxY - w.frame.height))
+            w.setFrameOrigin(NSPoint(x: newX, y: newY))
+            w.topEdgeY = w.frame.maxY
         })
     }
 

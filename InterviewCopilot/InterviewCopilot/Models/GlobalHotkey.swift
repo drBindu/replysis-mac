@@ -14,7 +14,7 @@ class GlobalHotkey {
     private var lastSpaceTime: Date = .distantPast
     private let spaceDebounceSecs: Double = 0.4
 
-    static var instance: GlobalHotkey?
+    static weak var instance: GlobalHotkey?
 
     // macOS virtual key codes (from Carbon/Events.h)
     // F1=122 F2=120 F3=99 F4=118 F5=96 F6=97 F7=98 F8=100 F9=101 F10=109 F11=103 F12=111
