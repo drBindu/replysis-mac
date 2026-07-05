@@ -35,10 +35,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let vm = MainViewModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // .accessory = no menu bar entry, no Dock icon — fully invisible to interviewers.
+        // LSUIElement=YES in Info.plist makes the process start as .accessory from birth
+        // (no menu bar entry, no Dock icon). The runtime call below is belt-and-suspenders
+        // in case something re-sets the policy, and also clears any SwiftUI default menus.
         NSApp.setActivationPolicy(.accessory)
-        // Belt-and-suspenders: clear the menu so the app name never appears even if
-        // the window is clicked and macOS briefly activates the process.
         NSApp.mainMenu = nil
 
         // Startup diagnostics — first lines in the debug log for supporting real users.
