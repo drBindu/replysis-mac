@@ -15,6 +15,11 @@ import AppKit
 class AnswerOverlayWindow: NSPanel {
     static var shared: AnswerOverlayWindow?
     var topEdgeY: CGFloat = 0      // screen Y of the top edge we keep pinned
+    private var resizeObserver: NSObjectProtocol?   // held so we can remove it in deinit
+
+    deinit {
+        if let obs = resizeObserver { NotificationCenter.default.removeObserver(obs) }
+    }
 
     static func show(vm: MainViewModel) {
         if shared == nil {
@@ -38,7 +43,8 @@ class AnswerOverlayWindow: NSPanel {
             AnswerOverlayWindow.shared = panel
 
             // Keep the top edge pinned whenever the content (and thus height) changes.
-            NotificationCenter.default.addObserver(
+            // Store the token so the observer is removed when the panel is deallocated.
+            panel.resizeObserver = NotificationCenter.default.addObserver(
                 forName: NSWindow.didResizeNotification, object: panel, queue: .main
             ) { [weak panel] _ in panel?.anchorTop() }
         }

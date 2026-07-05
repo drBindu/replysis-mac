@@ -138,8 +138,11 @@ class NetworkClient {
         }
     }
 
-    // Run a closure on the main thread (UI/@Observable updates)
-    private func onMain(_ block: @escaping () -> Void) { DispatchQueue.main.async(execute: block) }
+    // Deliver a closure to the main actor. Using Task { @MainActor } keeps this within
+    // Swift Concurrency's actor model rather than mixing GCD and @MainActor isolation.
+    private func onMain(_ block: @escaping @Sendable @MainActor () -> Void) {
+        Task { @MainActor in block() }
+    }
 
     // Parse one SSE line ("data: {...}" / "data:{...}") → token, or nil for non-data lines.
     private static func tokenFromSSELine(_ line: String) -> String? {

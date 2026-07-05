@@ -86,7 +86,7 @@ class MainViewModel {
     var micDenied           = false   // true when user explicitly denied mic (not just undetermined)
     var permScreenRecording = false
     private var permTimer: Timer?
-    private var permPollCount = 0
+    private var permPollingStarted: Date?           // wall-time cap — stops after 5 min total
     private var isMicPermissionRequesting = false  // guard against re-entrant requestAccess calls
 
     // Input Monitoring is what actually authorizes a keyboard CGEventTap on modern macOS.
@@ -275,6 +275,7 @@ class MainViewModel {
     /// Close the optional hotkey setup sheet without enabling it — app stays fully usable.
     func closeHotkeySetup() {
         permTimer?.invalidate(); permTimer = nil
+        permPollingStarted = nil   // reset so next open gets a fresh 5-min window
         needsPermissionSetup = false
     }
 
@@ -294,24 +295,25 @@ class MainViewModel {
     }
 
     private func startPermissionPolling() {
+        // Record the FIRST activation time — the 5-min cap is absolute, not per sheet-open.
+        // Repeated calls (user opens/closes the sheet) restart the 1s timer but don't
+        // reset the clock, so the cap actually fires instead of being bypassed forever.
+        if permPollingStarted == nil { permPollingStarted = Date() }
         permTimer?.invalidate()
-        permPollCount = 0
         permTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
-                // Keep the live permission state fresh so the setup sheet's cards flip to
-                // green and the "I've granted them — Relaunch" button ENABLES the moment the
-                // user grants them. We deliberately do NOT auto-relaunch — the user clicks
-                // the button themselves once everything is granted (their requested flow).
                 self.permInputMonitoring = MainViewModel.inputMonitoringGranted()
                 self.permAccessibility   = AXIsProcessTrusted()
                 let micStatus            = AVCaptureDevice.authorizationStatus(for: .audio)
                 self.permMicrophone      = micStatus == .authorized
                 self.micDenied           = micStatus == .denied
                 self.permScreenRecording = CGPreflightScreenCaptureAccess()
-                self.permPollCount += 1
-                // Stop after ~5 min so a forgotten-open sheet doesn't poll forever.
-                if self.permPollCount > 300 { self.permTimer?.invalidate(); self.permTimer = nil }
+                // Stop after 5 min from the first activation, even across multiple reopens.
+                if let start = self.permPollingStarted, Date().timeIntervalSince(start) > 300 {
+                    self.permTimer?.invalidate(); self.permTimer = nil
+                    self.permPollingStarted = nil
+                }
             }
         }
     }
@@ -835,7 +837,9 @@ class MainViewModel {
     // MARK: - Credits
     func fetchCredits() async {
         guard session.isLoggedIn else { return }
-        _ = await session.tryRefreshAsync()
+        // Only hit Firebase when the token is actually near expiry — avoids a redundant
+        // network call on every 5-minute credits poll when the token is still fresh.
+        if session.tokenNeedsRefresh { _ = await session.tryRefreshAsync() }
         dlog("Credits fetch starting...", tag: "CREDITS")
         if let result = await NetworkClient.shared.fetchCredits() {
             session.credits = result.credits

@@ -63,8 +63,13 @@ class UserSession {
         return dir.appendingPathComponent("session.json")
     }()
 
-    private var tokenSavedAt: Date = .distantPast
+    private(set) var tokenSavedAt: Date = .distantPast
     private let tokenValidMinutes: Double = 55
+
+    /// True when the token should be proactively refreshed (within 5 min of expiry).
+    var tokenNeedsRefresh: Bool {
+        Date().timeIntervalSince(tokenSavedAt) > (tokenValidMinutes - 5) * 60
+    }
 
     private init() {}
 
@@ -80,7 +85,7 @@ class UserSession {
 
     // MARK: - Persistence
 
-    func saveToDisK() {
+    func saveToDisk() {
         let data: [String: Any] = [
             "email": email, "name": name,
             "idToken": idToken, "refreshToken": refreshToken,
@@ -161,7 +166,7 @@ class UserSession {
             self.refreshToken = newRefresh
             self.tokenSavedAt = Date()
             self.isLoggedIn = true
-            self.saveToDisK()
+            self.saveToDisk()
             return true
         } catch {
             return false
