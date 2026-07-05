@@ -762,8 +762,9 @@ class MainViewModel {
             // Run the blocking screencapture + sips OFF the main thread, or the whole UI
             // freezes for the duration of every F9 capture.
             DispatchQueue.global(qos: .userInitiated).async {
-                let tmp = NSTemporaryDirectory() + "ic_screen_\(UUID().uuidString).png"
-                let cap = Process()
+                let base = NSTemporaryDirectory() + "ic_screen_\(UUID().uuidString)"
+                let tmp  = base + ".png"
+                let cap  = Process()
                 cap.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
                 cap.arguments = ["-x", "-t", "png", tmp]
                 do { try cap.run() } catch { continuation.resume(returning: nil); return }
@@ -772,18 +773,24 @@ class MainViewModel {
                     continuation.resume(returning: nil); return
                 }
 
-                // Resize to max 1280px wide via sips (built into macOS) — a Retina PNG is
-                // 5-8 MB; this keeps the vision payload small and fast (matches .NET).
-                let resized = tmp + "_r.png"
+                // 1. Resize to max 800px wide (was 1280) — Retina PNG starts at 5-8 MB;
+                //    smaller width + JPEG conversion keeps the payload under 500 KB.
+                // 2. Convert to JPEG at 60% quality — PNG at 800px is still ~1 MB;
+                //    JPEG at 60% is ~150-300 KB, well under the 10 MB server body limit.
+                let jpg = base + ".jpg"
                 let sips = Process()
                 sips.executableURL = URL(fileURLWithPath: "/usr/bin/sips")
-                sips.arguments = ["--resampleWidth", "1280", tmp, "--out", resized]
+                sips.arguments = ["--resampleWidth", "800",
+                                  "-s", "format", "jpeg",
+                                  "-s", "formatOptions", "60",
+                                  tmp, "--out", jpg]
                 try? sips.run(); sips.waitUntilExit()
 
-                let readPath = FileManager.default.fileExists(atPath: resized) ? resized : tmp
+                let readPath = FileManager.default.fileExists(atPath: jpg) ? jpg : tmp
                 let data = try? Data(contentsOf: URL(fileURLWithPath: readPath))
                 try? FileManager.default.removeItem(atPath: tmp)
-                try? FileManager.default.removeItem(atPath: resized)
+                try? FileManager.default.removeItem(atPath: jpg)
+                dlog("Screen capture: \(data?.count ?? 0) bytes at \(readPath.hasSuffix(".jpg") ? "JPEG 60%" : "PNG fallback")", tag: "SCREEN")
                 continuation.resume(returning: data)
             }
         }
