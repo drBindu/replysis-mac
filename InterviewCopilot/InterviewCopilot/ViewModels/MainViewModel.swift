@@ -996,11 +996,11 @@ class MainViewModel {
         }
     }
 
-    // Camera mode OFF: hide the overlay and bring the main window back
+    // Camera mode OFF: hide the overlay and bring the main window back as key window.
     func exitCamera() {
         showCameraOverlay = false
         AnswerOverlayWindow.hide()
-        mainPanel?.orderFrontRegardless()
+        mainPanel?.makeKeyAndOrderFront(nil)
     }
 
     // Pin on top: when ON the window floats above other apps (for the interview);

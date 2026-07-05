@@ -25,8 +25,8 @@ class AnswerOverlayWindow: NSPanel {
         if shared == nil {
             let panel = AnswerOverlayWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 600, height: 120),
-                styleMask:   [.borderless, .nonactivatingPanel],
-                backing:     .buffered,
+                styleMask:   [.borderless],   // no .nonactivatingPanel — needs to be key window
+                backing:     .buffered,       // so SwiftUI renders properly with .accessory policy
                 defer:       false
             )
             panel.isOpaque           = false
@@ -40,6 +40,7 @@ class AnswerOverlayWindow: NSPanel {
             let hosting = NSHostingView(rootView: AnswerOverlayView(vm: vm))
             hosting.sizingOptions = [.preferredContentSize]   // window follows content height
             panel.contentView = hosting
+            panel.contentView?.clearLayerBackgrounds()
             AnswerOverlayWindow.shared = panel
 
             // Keep the top edge pinned whenever the content (and thus height) changes.
@@ -55,7 +56,7 @@ class AnswerOverlayWindow: NSPanel {
             let x = screen.visibleFrame.midX - panel.frame.width / 2
             panel.setFrameOrigin(NSPoint(x: x, y: panel.topEdgeY - panel.frame.height))
         }
-        shared?.orderFrontRegardless()
+        shared?.makeKeyAndOrderFront(nil)
     }
 
     static func hide() { shared?.orderOut(nil) }
@@ -75,7 +76,7 @@ class AnswerOverlayWindow: NSPanel {
 // ══════════════════════════════════════════════════════════════
 
 struct AnswerOverlayView: View {
-    let vm: MainViewModel
+    @ObservedObject var vm: MainViewModel
 
     private var hasAnswer: Bool { !vm.aiAnswer.isEmpty || vm.showThinking }
     private var isIdle: Bool { !vm.isListening && vm.aiAnswer.isEmpty && !vm.showThinking }

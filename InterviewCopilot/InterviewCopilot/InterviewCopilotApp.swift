@@ -37,6 +37,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // .accessory = no menu bar entry, no Dock icon — fully invisible to interviewers.
         NSApp.setActivationPolicy(.accessory)
+        // Belt-and-suspenders: clear the menu so the app name never appears even if
+        // the window is clicked and macOS briefly activates the process.
+        NSApp.mainMenu = nil
 
         // Startup diagnostics — first lines in the debug log for supporting real users.
         dlog("=== LAUNCH === v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") | path=\(Bundle.main.bundlePath)", tag: "BOOT")
