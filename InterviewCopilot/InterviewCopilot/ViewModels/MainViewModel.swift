@@ -3,6 +3,7 @@ import AppKit
 import Observation
 import AVFoundation
 import IOKit.hid
+import ScreenCaptureKit
 
 @MainActor
 @Observable
@@ -116,12 +117,17 @@ class MainViewModel {
     }
 
     func registerScreenRecording() {
-        // Screen capture uses the /usr/sbin/screencapture system binary (Apple-signed,
-        // implicit entitlements) — our app does NOT need to be in System Settings →
-        // Screen Recording for the feature to work.
-        // CGPreflightScreenCaptureAccess() and CGRequestScreenCaptureAccess() on macOS 26
-        // use SCKit internally and create "Currently Sharing" sessions. Never call them.
-        permScreenRecording = true
+        // Call SCShareableContent ONCE at startup to add the app to the Screen Recording
+        // list and trigger the native macOS permission request. Called only here — never
+        // in the permTimer — so "Currently Sharing" appears at most briefly on launch.
+        Task {
+            do {
+                _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+                self.permScreenRecording = true
+            } catch {
+                self.permScreenRecording = false
+            }
+        }
     }
 
     // MARK: - Timers (not tracked by @Observable)
@@ -317,10 +323,8 @@ class MainViewModel {
                 let micStatus            = AVCaptureDevice.authorizationStatus(for: .audio)
                 self.permMicrophone      = micStatus == .authorized
                 self.micDenied           = micStatus == .denied
-                // Never call CGPreflightScreenCaptureAccess() here — on macOS 26 it uses
-                // SCKit internally and creates a "Currently Sharing" session every second.
-                // permScreenRecording is set once at startup via registerScreenRecording().
-                self.permScreenRecording = true
+                // permScreenRecording is set once by registerScreenRecording() via SCKit.
+                // Do not poll it here — polling SCKit every second causes "Currently Sharing".
                 // Stop after 5 min from the first activation, even across multiple reopens.
                 if let start = self.permPollingStarted, Date().timeIntervalSince(start) > 300 {
                     let t = self.permTimer
@@ -693,15 +697,8 @@ class MainViewModel {
         for w in toHide { w.orderFrontRegardless() }
 
         guard let imageData = imageData, !imageData.isEmpty else {
-            // screencapture failed — app not in Screen Recording TCC list.
-            // CGRequestScreenCaptureAccess() only opens System Settings; it does NOT create
-            // an SCKit session and will NOT show "Currently Sharing" on macOS 26.
-            CGRequestScreenCaptureAccess()
-            aiAnswer = "⚠ Screen capture failed.\n\n" +
-                       "1. System Settings → Privacy & Security → Screen Recording\n" +
-                       "2. Enable Interview Copilot (click + if not listed)\n" +
-                       "3. Quit and reopen the app, then try Analyze again"
-            dlog("Screen capture returned nil — opened System Settings for Screen Recording", tag: "SCREEN")
+            aiAnswer = "⚠ Screen capture failed — please grant Screen Recording permission and restart the app."
+            dlog("Screen capture returned nil", tag: "SCREEN")
             stopThinkingUI(); return
         }
 
