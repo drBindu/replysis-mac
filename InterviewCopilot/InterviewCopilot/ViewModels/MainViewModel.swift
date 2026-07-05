@@ -88,6 +88,8 @@ class MainViewModel {
     private var permTimer: Timer?
     private var permPollingStarted: Date?           // wall-time cap — stops after 5 min total
     private var isMicPermissionRequesting = false  // guard against re-entrant requestAccess calls
+    private var hasPromptedAccessibility = false   // BUG-21: fire the AX prompt only once per launch
+    private var isRestoringSession = false         // BUG-5: true while async restore is in flight
 
     // Input Monitoring is what actually authorizes a keyboard CGEventTap on modern macOS.
     static func inputMonitoringGranted() -> Bool {
@@ -105,7 +107,11 @@ class MainViewModel {
     // Fire the Accessibility prompt. This REGISTERS the app in the Accessibility list
     // (and shows the "would like to control this computer" prompt with its own "Open
     // System Settings" button). Without this the app never appears in that list to toggle.
+    // BUG-21 FIX: only prompt once per launch — subsequent calls on repeated sheet open/close
+    // cycles are no-ops (macOS suppresses the dialog anyway, but we skip the call entirely).
     func requestAccessibilityPrompt() {
+        guard !hasPromptedAccessibility else { return }
+        hasPromptedAccessibility = true
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(opts)
     }
@@ -173,31 +179,36 @@ class MainViewModel {
 
     // MARK: - Session Restore
     private func restoreSession() {
-        Task {
+        isRestoringSession = true   // BUG-5: suppress premature login prompt during restore
+        Task { @MainActor in        // BUG-22: explicit @MainActor keeps all session mutations on actor
+            defer { isRestoringSession = false }
             var restored = session.tryLoadFromDisk()
             if !restored && !session.refreshToken.isEmpty {
                 restored = await session.tryRefreshAsync()
             }
-            // Guard: if the user signed in manually while the async restore was in flight,
-            // showProfile is already true — skip to avoid a double startNewSession call.
-            guard restored && !showProfile else { return }
-            if restored {
-                showProfile = true
-                profileName = session.firstName
-                profilePlan = "\(session.plan) plan"
-                avatarInitials = session.initials
-                showCreditsBadge = true
-                await fetchCredits()
-                let smOk = await session.fetchSpeechmaticsKeyAsync()
-                startNewSession()
-                if smOk {
-                    engine.start(smKey: session.speechmaticsKey)
-                } else {
-                    micStatus = "NO MIC"
-                    micColor = Color(white: 0.42)
-                    aiAnswer = "Ready — speech service temporarily unavailable. Retrying automatically.\n\nClick NO MIC badge to retry, or use F9 to analyze screen."
-                    engine.startRetryTimer()
-                }
+            // BUG-4 FIX: check showProfile BEFORE awaiting to close the TOCTOU window where
+            // the user taps "Continue As" while this Task is in flight and both paths reach
+            // startNewSession(). showProfile=true is our mutex for "session already active".
+            guard restored && !showProfile else { isRestoringSession = false; return }
+            showProfile = true   // claim the mutex before any await below
+            profileName = session.firstName
+            profilePlan = "\(session.plan) plan"
+            avatarInitials = session.initials
+            showCreditsBadge = true
+            await fetchCredits()
+            let smOk = await session.fetchSpeechmaticsKeyAsync()
+            startNewSession()
+            // BUG-20 FIX: only start the engine if it isn't already running (e.g. from a
+            // concurrent continueAsSaved() call that completed first).
+            if smOk && !engine.isRunning {
+                engine.start(smKey: session.speechmaticsKey)
+            } else if smOk {
+                dlog("restoreSession: engine already running — no restart needed", tag: "AUTH")
+            } else {
+                micStatus = "NO MIC"
+                micColor = Color(white: 0.42)
+                aiAnswer = "Ready — speech service temporarily unavailable. Retrying automatically.\n\nClick NO MIC badge to retry, or use F9 to analyze screen."
+                engine.startRetryTimer()
             }
         }
     }
@@ -290,7 +301,11 @@ class MainViewModel {
 
     func requestMicrophonePermission() {
         AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-            Task { @MainActor [weak self] in self?.permMicrophone = granted }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.permMicrophone = granted
+                self.micDenied = !granted   // BUG-12 FIX: was missing — UI showed wrong denied state
+            }
         }
     }
 
@@ -330,6 +345,8 @@ class MainViewModel {
     /// If mic is denied, relaunch anyway — the Space bar press will prompt again.
     func permissionGrantedContinue() {
         permTimer?.invalidate(); permTimer = nil
+        permPollingStarted = nil   // BUG-3/11 FIX: always nil here so if relaunch fails the
+                                   // timer cap doesn't expire before the user retries.
         let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
         switch micStatus {
         case .notDetermined:
@@ -338,8 +355,8 @@ class MainViewModel {
                 Task { @MainActor in MainViewModel.relaunchApp() }
             }
         case .denied:
-            // Cannot show popup — send user to System Settings to toggle it on.
-            // Do NOT relaunch; that just loops back to this same state.
+            // Cannot show the system popup — open the Privacy pane directly.
+            // Leave needsPermissionSetup = true so the sheet stays open on return.
             NSWorkspace.shared.open(
                 URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
         default: // .authorized
@@ -358,9 +375,17 @@ class MainViewModel {
         let url = Bundle.main.bundleURL
         let config = NSWorkspace.OpenConfiguration()
         config.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, _ in }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            NSApp.terminate(nil)
+        // BUG-10 FIX: check the error before quitting — if the new instance fails to open
+        // (corrupt bundle, read-only volume) the old instance must NOT terminate, otherwise
+        // the user is left with zero app instances and has to relaunch manually.
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
+            guard error == nil else {
+                dlog("relaunchApp: failed to open new instance — \(error!.localizedDescription)", tag: "APP")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                NSApp.terminate(nil)
+            }
         }
     }
 
@@ -407,6 +432,14 @@ class MainViewModel {
         if isEditingText { return }
 
         if !session.isLoggedIn {
+            // BUG-5 FIX: if async restore is still in flight, swallow the press — the user
+            // has a valid saved session, they just haven't been authenticated yet (~1-2s lag).
+            // Without this guard, Space fires .showLogin before the Keychain restore completes
+            // and the user sees a login sheet for an account they're already signed into.
+            if isRestoringSession {
+                dlog("SPACE from \(source): session restore in flight — ignoring to avoid premature login prompt", tag: "SPACE")
+                return
+            }
             dlog("SPACE from \(source): not signed in → prompting sign-in", tag: "SPACE")
             NotificationCenter.default.post(name: .showLogin, object: nil)
             return
@@ -435,10 +468,14 @@ class MainViewModel {
             }
             return
         }
-        if micAuth != .authorized || !AXIsProcessTrusted() {
+        if micAuth != .authorized {
             openPermissionSetup()
             return
         }
+        // BUG-19 FIX: mic is authorized — proceed even if Accessibility isn't granted.
+        // The local key monitor works without Accessibility; the global Space tap is OPTIONAL.
+        // Previously this gated on !AXIsProcessTrusted() too, blocking the whole app whenever
+        // Accessibility was missing even though mic was authorized and the local monitor worked.
 
         dlog("SPACE pressed from \(source) | loggedIn=\(session.isLoggedIn) | engineRunning=\(engine.isRunning) | isMuted=\(isMuted) | isProcessing=\(isProcessing)", tag: "SPACE")
 
@@ -455,6 +492,12 @@ class MainViewModel {
             let key = session.speechmaticsKey
             dlog("SPACE: engine not running, smKey length=\(key.count)", tag: "SPACE")
             if key.isEmpty {
+                // BUG-1 FIX: if session restore is still in flight the key just hasn't been
+                // fetched yet — don't cry "NO MIC" and lock in a 60s retry; just wait.
+                if isRestoringSession {
+                    dlog("SPACE: key not yet fetched (restore in flight), ignoring", tag: "SPACE")
+                    return
+                }
                 aiAnswer = "⚠ Speech service temporarily unavailable.\n\nRetrying automatically — or click the NO MIC badge.\n\nUse F9 / Analyze Screen instead."
                 micStatus = "NO MIC"
                 micColor = Color(white: 0.42)
@@ -889,15 +932,28 @@ class MainViewModel {
 
     // MARK: - Login / Logout
     func onLoginSuccess() {
+        // BUG-4 FIX: guard with showProfile mutex before the Task — closes the TOCTOU
+        // window where restoreSession() and continueAsSaved() both reach startNewSession().
+        guard !showProfile else {
+            dlog("onLoginSuccess: session already active — skipping duplicate start", tag: "AUTH")
+            return
+        }
         showProfile = true; profileName = session.firstName
         profilePlan = "\(session.plan) plan"; avatarInitials = session.initials
         showCreditsBadge = true
-        Task {
+        Task { @MainActor in
             await fetchCredits()
             let smOk = await session.fetchSpeechmaticsKeyAsync()
             startNewSession()
-            if smOk { engine.start(smKey: session.speechmaticsKey) }
-            else { micStatus = "NO MIC"; micColor = Color(white: 0.42); engine.startRetryTimer() }
+            if smOk {
+                // BUG-20 FIX: don't kill and restart a healthy engine — e.g. restoreSession()
+                // already started it; restarting causes a transcription gap + session log reset.
+                if !engine.isRunning { engine.start(smKey: session.speechmaticsKey) }
+                else { dlog("onLoginSuccess: engine already running — no restart", tag: "AUTH") }
+            } else {
+                micStatus = "NO MIC"; micColor = Color(white: 0.42)
+                engine.startRetryTimer()
+            }
         }
     }
 
@@ -932,10 +988,19 @@ class MainViewModel {
         dlog("Pin-on-top \(isPinnedOnTop ? "ON" : "OFF")", tag: "WINDOW")
     }
 
-    func signOut() { engine.stop(); session.clear(); setLoggedOutUI() }
+    func signOut() {
+        // BUG-16 FIX: stop watch mode before clearing the session — otherwise the 8s
+        // timer keeps firing _doScreenCapture() with an expired idToken after sign-out.
+        if isWatchMode {
+            isWatchMode = false
+            watchModeTimer?.invalidate(); watchModeTimer = nil
+        }
+        engine.stop(); session.clear(); setLoggedOutUI()
+    }
 
     private func setLoggedOutUI() {
-        showProfile = false; showCreditsBadge = false; creditsText = "—"; endSession()
+        showCreditsBadge = false; creditsText = "—"; endSession()
+        showProfile = false
     }
 
     // MARK: - Resume

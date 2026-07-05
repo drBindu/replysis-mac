@@ -248,8 +248,17 @@ enum AppConfig {
             dlog("AppConfig: GoogleClientSecret not in response — keys: \(obj.keys.joined(separator: ","))", tag: "CONFIG")
         }
         if let smKey = obj["SpeechmaticsKey"] as? String, !smKey.isEmpty {
-            await MainActor.run { UserSession.shared.speechmaticsKey = smKey }
-            dlog("AppConfig: got SpeechmaticsKey from remote config", tag: "CONFIG")
+            // BUG-15 FIX: only write the remote config key when the session hasn't already
+            // fetched a user-specific key — prevents overwriting a valid per-user key with
+            // a global fallback, which would trigger handleAuthError() mid-interview.
+            await MainActor.run {
+                if UserSession.shared.speechmaticsKey.isEmpty {
+                    UserSession.shared.speechmaticsKey = smKey
+                    dlog("AppConfig: got SpeechmaticsKey from remote config", tag: "CONFIG")
+                } else {
+                    dlog("AppConfig: remote SpeechmaticsKey ignored — user key already set", tag: "CONFIG")
+                }
+            }
         }
     }
 }

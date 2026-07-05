@@ -129,8 +129,10 @@ class NetworkClient {
     /// answer of the interview isn't slowed by a cold server. Fire-and-forget.
     func warmUp() {
         guard let url = URL(string: "\(AppConfig.backendUrl)/api/v1/interview/credits") else { return }
-        let token = UserSession.shared.idToken
         Task {
+            // BUG-23 FIX: read idToken inside the Task so we get the freshest token even if a
+            // concurrent tryRefreshAsync() updated it between warmUp() being called and now.
+            let token = await MainActor.run { UserSession.shared.idToken }
             var req = URLRequest(url: url)
             req.timeoutInterval = 8
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

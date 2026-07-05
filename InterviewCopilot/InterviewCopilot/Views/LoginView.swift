@@ -12,7 +12,9 @@ struct LoginView: View {
 
     // Saved account for "Continue As" card
     private var savedEmail: String { UserSession.shared.email }
-    private var hasSavedAccount: Bool { !savedEmail.isEmpty && !UserSession.shared.idToken.isEmpty }
+    // BUG-14 FIX: check refreshToken (not idToken) — idToken can be populated even when
+    // expired, so the "Continue As" card would show for an unusable token.
+    private var hasSavedAccount: Bool { !savedEmail.isEmpty && !UserSession.shared.refreshToken.isEmpty }
 
     var body: some View {
         ZStack {
@@ -256,9 +258,14 @@ struct LoginView: View {
     }
 
     func signInWithGoogle() {
+        // BUG-13 FIX: guard prevents double-tap opening two browser windows and leaking
+        // the loopback server socket for up to 2 minutes per extra tap.
+        guard !isLoading else { return }
+        isLoading = true
         errorMsg = ""
         Task {
             let result = await GoogleSignIn.signIn()
+            isLoading = false
             if result.success {
                 UserSession.shared.idToken      = result.idToken
                 UserSession.shared.refreshToken = result.refreshToken
@@ -266,7 +273,7 @@ struct LoginView: View {
                 UserSession.shared.name         = result.displayName
                 UserSession.shared.userId       = result.userId
                 UserSession.shared.isLoggedIn   = true
-                UserSession.shared.saveToDisK()
+                UserSession.shared.saveToDisk()   // BUG-2 FIX: was saveToDisK() — typo silently skipped Keychain write
                 vm.onLoginSuccess()
                 dismiss()
             } else {
@@ -295,8 +302,12 @@ struct LoginView: View {
             errorMsg = "Enter your email above, then tap Forgot password."
             return
         }
+        // BUG-18 FIX: guard prevents spamming the Firebase reset endpoint via rapid taps.
+        guard !isLoading else { return }
+        isLoading = true
         Task {
             let sent = await sendPasswordReset(email: email)
+            isLoading = false
             if sent {
                 successMsg = "Password reset email sent to \(email)"
                 errorMsg   = ""
@@ -314,6 +325,7 @@ struct LoginView: View {
         }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
+        req.timeoutInterval = 15   // BUG-8 FIX: default 60s left spinner up for an entire minute on bad networks
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: [
             "email": email, "password": password, "returnSecureToken": true
@@ -333,13 +345,32 @@ struct LoginView: View {
                 UserSession.shared.name          = (obj["displayName"] as? String)
                     ?? email.components(separatedBy: "@").first ?? "User"
                 UserSession.shared.isLoggedIn    = true
-                UserSession.shared.saveToDisK()
+                UserSession.shared.saveToDisk()   // BUG-2 FIX: was saveToDisK() typo
                 return (true, nil)
             }
-            let errMsg = (obj["error"] as? [String: Any])?["message"] as? String ?? "Sign in failed"
-            return (false, errMsg.replacingOccurrences(of: "_", with: " ").capitalized)
+            // BUG-9 FIX: map raw Firebase error codes to user-friendly messages that don't
+            // expose account enumeration (EMAIL_NOT_FOUND vs INVALID_PASSWORD tells attacker
+            // which emails are registered — collapse both to the same message).
+            let errCode = (obj["error"] as? [String: Any])?["message"] as? String ?? ""
+            let errMsg: String
+            switch errCode {
+            case "EMAIL_NOT_FOUND", "INVALID_PASSWORD", "INVALID_LOGIN_CREDENTIALS":
+                errMsg = "Incorrect email or password."
+            case "USER_DISABLED":
+                errMsg = "This account has been disabled. Contact support."
+            case "TOO_MANY_ATTEMPTS_TRY_LATER":
+                errMsg = "Too many failed attempts. Please try again later."
+            case "WEAK_PASSWORD":
+                errMsg = "Password must be at least 6 characters."
+            default:
+                errMsg = errCode.isEmpty ? "Sign in failed. Please try again." :
+                    errCode.replacingOccurrences(of: "_", with: " ").capitalized
+            }
+            return (false, errMsg)
+        } catch let urlErr as URLError where urlErr.code == .timedOut {
+            return (false, "Connection timed out. Check your internet and try again.")
         } catch {
-            return (false, error.localizedDescription)
+            return (false, "Connection error. Please try again.")
         }
     }
 
