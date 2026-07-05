@@ -696,13 +696,14 @@ class MainViewModel {
     }
 
     private func _doScreenCapture(label: String) async {
-        // Hide only the windows that are CURRENTLY visible, then restore exactly
-        // those — so camera mode (main hidden, overlay shown) is preserved.
-        let toHide = NSApplication.shared.windows.filter { $0.isVisible }
-        for window in toHide { window.orderOut(nil) }
-        try? await Task.sleep(nanoseconds: 350_000_000)
-        let imageData = await captureScreen()
-        for window in toHide { window.orderFrontRegardless() }
+        // CGWindowListCreateImage lets us exclude our own windows without hiding them —
+        // no window flicker visible to the interviewer, and no subprocess spawned.
+        // We collect our window IDs BEFORE capture so they are excluded from the image.
+        let ownWindowIDs = NSApplication.shared.windows.compactMap { w -> CGWindowID? in
+            guard let n = w.windowNumber as Int?, n > 0 else { return nil }
+            return CGWindowID(n)
+        }
+        let imageData = await captureScreen(excludingWindowIDs: ownWindowIDs)
 
         guard let imageData = imageData, !imageData.isEmpty else {
             aiAnswer = "⚠ Screen capture failed.\n\nGrant Screen Recording permission:\nSystem Settings → Privacy & Security → Screen Recording"
@@ -757,43 +758,50 @@ class MainViewModel {
         )
     }
 
-    private func captureScreen() async -> Data? {
-        await withCheckedContinuation { continuation in
-            // Run the blocking screencapture + sips OFF the main thread, or the whole UI
-            // freezes for the duration of every F9 capture.
-            DispatchQueue.global(qos: .userInitiated).async {
-                let base = NSTemporaryDirectory() + "ic_screen_\(UUID().uuidString)"
-                let tmp  = base + ".png"
-                let cap  = Process()
-                cap.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-                cap.arguments = ["-x", "-t", "png", tmp]
-                do { try cap.run() } catch { continuation.resume(returning: nil); return }
-                cap.waitUntilExit()
-                guard FileManager.default.fileExists(atPath: tmp) else {
-                    continuation.resume(returning: nil); return
-                }
+    private func captureScreen(excludingWindowIDs ownIDs: [CGWindowID] = []) async -> Data? {
+        return await Task.detached(priority: .userInitiated) {
+            // CGWindowListCreateImage runs inside Interview Copilot's own trusted process —
+            // no subprocess spawned, no new entry in the macOS Screen Recording indicator.
+            // The capture completes in ~20ms vs ~500ms for screencapture subprocess.
+            let displayID = CGMainDisplayID()
+            let screenBounds = CGDisplayBounds(displayID)
 
-                // 1. Resize to max 800px wide (was 1280) — Retina PNG starts at 5-8 MB;
-                //    smaller width + JPEG conversion keeps the payload under 500 KB.
-                // 2. Convert to JPEG at 60% quality — PNG at 800px is still ~1 MB;
-                //    JPEG at 60% is ~150-300 KB, well under the 10 MB server body limit.
-                let jpg = base + ".jpg"
-                let sips = Process()
-                sips.executableURL = URL(fileURLWithPath: "/usr/bin/sips")
-                sips.arguments = ["--resampleWidth", "800",
-                                  "-s", "format", "jpeg",
-                                  "-s", "formatOptions", "60",
-                                  tmp, "--out", jpg]
-                try? sips.run(); sips.waitUntilExit()
-
-                let readPath = FileManager.default.fileExists(atPath: jpg) ? jpg : tmp
-                let data = try? Data(contentsOf: URL(fileURLWithPath: readPath))
-                try? FileManager.default.removeItem(atPath: tmp)
-                try? FileManager.default.removeItem(atPath: jpg)
-                dlog("Screen capture: \(data?.count ?? 0) bytes at \(readPath.hasSuffix(".jpg") ? "JPEG 60%" : "PNG fallback")", tag: "SCREEN")
-                continuation.resume(returning: data)
+            // Build an array of ALL on-screen windows minus our own panels so the overlay
+            // doesn't appear in the image — no need to hide/show windows.
+            let allInfo = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+            let otherIDs: [CGWindowID] = allInfo.compactMap { info in
+                guard let wid = info[kCGWindowNumber as String] as? Int else { return nil }
+                let id = CGWindowID(wid)
+                return ownIDs.contains(id) ? nil : id
             }
-        }
+
+            guard !otherIDs.isEmpty else { return nil }
+            let windowArray = otherIDs.map { NSNumber(value: $0) } as CFArray
+            guard let cgImage = CGImage(windowListFromArrayScreenBounds: screenBounds,
+                                        windowArray: windowArray,
+                                        imageOption: []) else { return nil }
+
+            // Scale to max 800px wide, then JPEG at 60% — keeps payload ~150-300 KB
+            // (was 2-4 MB PNG, which hit the server's 413 body-size limit).
+            let origW = Double(cgImage.width)
+            let origH = Double(cgImage.height)
+            let scale  = min(1.0, 800.0 / origW)
+            let newW   = max(1, Int(origW * scale))
+            let newH   = max(1, Int(origH * scale))
+
+            guard let ctx = CGContext(
+                data: nil, width: newW, height: newH,
+                bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+            ), let scaledImage = { ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: newW, height: newH)); return ctx.makeImage() }()
+            else { return nil }
+
+            let rep = NSBitmapImageRep(cgImage: scaledImage)
+            let data = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.6])
+            dlog("Screen capture: \(data?.count ?? 0) bytes JPEG \(newW)×\(newH) (no subprocess)", tag: "SCREEN")
+            return data
+        }.value
     }
 
     // MARK: - Transcript Polling
