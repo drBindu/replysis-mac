@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation      // AVCaptureDevice — log the app's mic authorization for diagnostics
+import AppKit            // NSAlert / NSWorkspace for the permission guidance dialog
 import Darwin            // posix_spawn, pipe, kill, waitpid, dlsym
 
 @MainActor
@@ -121,6 +122,11 @@ class SpeechmaticsEngine {
         var startedSysTap = false
         if !sysAudioCrashed, #available(macOS 14.2, *) {
             let fifo = appDataFolder.appendingPathComponent("sysaudio.pcm").path
+            // If the tap runs silent for 6 s, the "record system audio" permission is
+            // missing — pop a native alert that jumps to the right Settings pane.
+            SystemAudioTapper.shared.onSilentDetected = {
+                DispatchQueue.main.async { SpeechmaticsEngine.showSystemAudioPermissionAlert() }
+            }
             if SystemAudioTapper.shared.start(fifoPath: fifo) {
                 args += ["-mode", "system", "-sysfifo", fifo]
                 dlog("  Audio mode: SYSTEM (in-app Core Audio tap → FIFO)", tag: "SM")
@@ -314,6 +320,34 @@ class SpeechmaticsEngine {
     }
 
     // MARK: - Stop
+
+    // Shown at most once per launch when the in-app tap runs but stays silent (permission).
+    private static var permAlertShown = false
+
+    /// Guide the user to enable system-audio recording. macOS only lets THEM toggle it.
+    @MainActor
+    static func showSystemAudioPermissionAlert() {
+        guard !permAlertShown else { return }
+        permAlertShown = true
+        let alert = NSAlert()
+        alert.messageText = "Allow Interview Copilot to hear the interviewer"
+        alert.informativeText = """
+        macOS is currently blocking the computer's audio, so nothing can be transcribed.
+
+        Fix it in one step:
+        1. Click “Open Settings”.
+        2. Under “Screen & System Audio Recording”, turn ON Interview Copilot
+           (also check the Microphone list).
+        3. Quit and reopen Interview Copilot.
+        """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Open Settings")
+        alert.addButton(withTitle: "Later")
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(
+                URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
+        }
+    }
 
     func stop() {
         engineCancelled = true

@@ -36,6 +36,11 @@ nonisolated final class SystemAudioTapper {
     private func setStop(_ v: Bool) { stateLock.lock(); _stop = v; stateLock.unlock() }
     private func shouldStop() -> Bool { stateLock.lock(); let v = _stop; stateLock.unlock(); return v }
 
+    /// Fired ONCE if the tap runs but stays silent for several seconds — the signature of
+    /// the "record system audio" permission not being granted. The app shows a native
+    /// alert that jumps the user straight to the right System Settings pane.
+    nonisolated(unsafe) var onSilentDetected: (() -> Void)?
+
     // Thread-safe PCM hand-off from the realtime IO proc to the FIFO writer thread.
     private final class PCMQueue {
         nonisolated(unsafe) private var buf = Data()
@@ -218,6 +223,9 @@ nonisolated final class SystemAudioTapper {
             var bytesThisSec = 0
             var peakThisSec: Int32 = 0
             var lastLog = Date()
+            let tapStart = Date()
+            var sawAudio = false
+            var silentFired = false
             while !self.shouldStop() {
                 // Blocks until the engine opens the FIFO for reading.
                 let fd = open(path, O_WRONLY)
@@ -245,11 +253,18 @@ nonisolated final class SystemAudioTapper {
                             while i < s.count { let a = abs(Int32(s[i])); if a > peakThisSec { peakThisSec = a }; i += step }
                         }
                     }
+                    if peakThisSec > 300 { sawAudio = true }   // ~1% full-scale = real audio
                     let now = Date(); let el = now.timeIntervalSince(lastLog)
                     if el >= 2.0 {
                         dlog(String(format: "in-app tap: peak=%.3f  rate=%.0fB/s",
                                     Double(peakThisSec) / 32768.0, Double(bytesThisSec) / el), tag: "TAP")
                         bytesThisSec = 0; peakThisSec = 0; lastLog = now
+                    }
+                    // Real-time silence for 6 s → almost certainly a missing permission.
+                    if !sawAudio, !silentFired, now.timeIntervalSince(tapStart) > 6 {
+                        silentFired = true
+                        dlog("in-app tap: 6s of silence — likely missing 'record system audio' permission", tag: "TAP")
+                        self.onSilentDetected?()
                     }
                 }
                 close(fd)
