@@ -27,6 +27,9 @@ class SpeechmaticsEngine {
     private var authErrorHandled = false
     private var selectedDeviceId = -1
     private var isStarting = false   // prevents concurrent start() calls from checkEngine
+    // When SystemAudioCapture crashes (typically permission denied on first run), fall back
+    // to mic-only for the rest of the session so we don't loop permission dialogs every 3s.
+    private var sysAudioCrashed = false
 
     let appDataFolder: URL = {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -102,7 +105,9 @@ class SpeechmaticsEngine {
         // binary is Apple-signed and uses its own ScreenCaptureKit permission — we must
         // NOT call CGPreflightScreenCaptureAccess() from our process on macOS 26 because
         // Apple reimplemented it via SCKit, which creates a "Currently Sharing" session.
-        let useSysAudio = hasSysCapture
+        // Disable sys audio if it crashed (e.g. permission denied) — avoids a dialog loop
+        // every 3s where checkEngine() restarts the engine and the binary fails again.
+        let useSysAudio = hasSysCapture && !sysAudioCrashed
         args += ["-mode", useSysAudio ? "both" : "mic"]
         if useSysAudio { args += ["-syscapture", syscapturePath.path] }
         dlog("  Audio mode: \(useSysAudio ? "BOTH (system+mic)" : "mic only") — bundled=\(hasSysCapture)", tag: "SM")
@@ -273,6 +278,9 @@ class SpeechmaticsEngine {
         guard !engineCancelled else { return }
         // kill(pid, 0) == 0 → process still alive; non-zero (ESRCH) → it died, restart it.
         if enginePid <= 0 || kill(enginePid, 0) != 0 {
+            // Assume sys audio crashed (e.g. Screen Recording permission denied) and fall
+            // back to mic-only — prevents a permission-dialog loop every 3 seconds.
+            sysAudioCrashed = true
             let key = UserSession.shared.speechmaticsKey
             guard !key.isEmpty else {
                 statusText = "NO MIC"
@@ -287,6 +295,7 @@ class SpeechmaticsEngine {
 
     func stop() {
         engineCancelled = true
+        sysAudioCrashed = false   // reset for next session — will try sys audio again
         monitorTimer?.invalidate(); monitorTimer = nil
         retryTimer?.invalidate();   retryTimer = nil
         killAndDispose()
