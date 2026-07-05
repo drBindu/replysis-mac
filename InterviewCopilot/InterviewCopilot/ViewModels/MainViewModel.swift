@@ -480,7 +480,13 @@ class MainViewModel {
             engine.writePauseFlag()
             isMuted = true
             updateMicUI()
-            startAI()
+            // BUG-9 FIX: brief drain window — lets the Speechmatics SDK flush any audio
+            // buffered before the pause flag landed, so the final transcript snapshot
+            // the polling timer captures is complete before we hand it to AI.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 150_000_000)  // 150ms
+                self?.startAI()
+            }
         }
     }
 

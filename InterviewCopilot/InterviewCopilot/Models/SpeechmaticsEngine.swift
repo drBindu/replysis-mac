@@ -58,6 +58,8 @@ class SpeechmaticsEngine {
             return
         }
         isStarting = true
+        // BUG-7 FIX: cancel any pending retry timer — a manual/auto start supersedes it.
+        retryTimer?.invalidate(); retryTimer = nil
 
         engineCancelled = false
         authErrorHandled = false   // fresh start → allow a new auth error to be reported
@@ -125,13 +127,14 @@ class SpeechmaticsEngine {
             return
         }
         enginePid = pid
-        isStarting = false
         isRunning = true
         statusText = "READY"
         dlog("SM engine started successfully (pid=\(pid)) [TCC-disclaimed → inherits app mic]", tag: "SM")
         monitorPipes()
         watchForExit(pid: pid)
         startMonitorTimer()
+        // BUG-13 FIX: clear isStarting after all setup is complete, not before startMonitorTimer
+        isStarting = false
     }
 
     // MARK: - posix_spawn with TCC responsibility disclaim
@@ -198,11 +201,14 @@ class SpeechmaticsEngine {
         let src = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .global())
         src.setEventHandler { [weak self] in
             var st: Int32 = 0
-            waitpid(pid, &st, WNOHANG)
+            waitpid(pid, &st, WNOHANG)   // reap zombie so kill(pid,0) returns ESRCH
             src.cancel()
-            // Mark isRunning = false immediately so the monitor timer's kill(pid,0) check
-            // doesn't see a 3-second window where a dead engine looks alive.
-            Task { @MainActor [weak self] in self?.isRunning = false }
+            // BUG-6 FIX: call checkEngine() immediately rather than waiting up to 3s
+            // for the monitor timer — eliminates the dead-transcription window after a crash.
+            Task { @MainActor [weak self] in
+                self?.isRunning = false
+                self?.checkEngine()
+            }
         }
         src.resume()
         exitSource = src
@@ -351,7 +357,14 @@ class SpeechmaticsEngine {
         retryTimer?.invalidate()
         retryTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self = self else { return }
+                guard let self else { return }
+                // BUG-7/21 FIX: if the engine is already running (restarted by other path)
+                // or the user explicitly stopped it, cancel the timer and do nothing.
+                guard !self.isRunning, !self.engineCancelled else {
+                    self.retryTimer?.invalidate()
+                    self.retryTimer = nil
+                    return
+                }
                 let ok = await UserSession.shared.fetchSpeechmaticsKeyAsync()
                 if ok {
                     self.retryTimer?.invalidate()
