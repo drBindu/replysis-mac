@@ -117,16 +117,22 @@ class MainViewModel {
     }
 
     func registerScreenRecording() {
-        // NEVER call SCShareableContent on macOS 26 (Tahoe). Even a one-shot
-        // getExcludingDesktopWindows query now creates a persistent ScreenCaptureKit
-        // session that shows "InterviewCopilot — Currently Sharing" in the menu bar —
-        // visible to interviewers when they ask the user to share their screen.
-        // CGRequestScreenCaptureAccess() registers the app in System Settings without
-        // starting any sharing session or triggering the indicator.
-        permScreenRecording = CGPreflightScreenCaptureAccess()
-        if !permScreenRecording {
-            CGRequestScreenCaptureAccess()
-            permScreenRecording = CGPreflightScreenCaptureAccess()
+        // Already granted — skip SCKit entirely so no indicator ever appears.
+        if CGPreflightScreenCaptureAccess() {
+            permScreenRecording = true
+            return
+        }
+        // Permission not yet granted. Call SCShareableContent.current (one-shot async query —
+        // NOT a subscription/stream) so the app is automatically added to the Screen Recording
+        // list in System Settings. CGRequestScreenCaptureAccess() just opens Settings but does
+        // NOT add the app to the list, forcing the user to click "+".
+        // SCShareableContent.current does not create a persistent sharing session, so it should
+        // not trigger "Currently Sharing" on macOS 26.
+        Task {
+            _ = try? await SCShareableContent.current
+            await MainActor.run { [weak self] in
+                self?.permScreenRecording = CGPreflightScreenCaptureAccess()
+            }
         }
     }
 
