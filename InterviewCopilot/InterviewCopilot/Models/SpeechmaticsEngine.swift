@@ -111,7 +111,7 @@ class SpeechmaticsEngine {
         args += ["-mode", useSysAudio ? "both" : "mic"]
         if useSysAudio { args += ["-syscapture", syscapturePath.path] }
         dlog("  Audio mode: \(useSysAudio ? "BOTH (system+mic)" : "mic only") — bundled=\(hasSysCapture)", tag: "SM")
-        args += ["-max-delay", "0.5"]
+        args += ["-max-delay", "0.7"]   // Speechmatics enforces a HARD minimum of 0.7 — lower is rejected
 
         // Key ONLY via env var (matches the working .NET app); APP_DATA_DIR points the
         // engine at the same folder the UI polls.
