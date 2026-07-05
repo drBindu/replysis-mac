@@ -242,10 +242,9 @@ class MainViewModel {
     }
 
     private func openGateIfNeeded() {
-        // Request permissions natively — no custom setup sheet.
         if !permMicrophone { requestMicrophonePermission() }
         if !permAccessibility { requestAccessibilityPrompt() }
-        // Screen recording is handled by registerScreenRecording() via SCKit.
+        startPermissionPolling()   // detects when Accessibility is granted and sets up hotkeys
         if permAccessibility {
             setupHotkeys()
             hotkeyActive = true
@@ -306,7 +305,12 @@ class MainViewModel {
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 self.permInputMonitoring = MainViewModel.inputMonitoringGranted()
+                let prevAX = self.permAccessibility
                 self.permAccessibility   = AXIsProcessTrusted()
+                // Auto-setup hotkeys the instant Accessibility is granted — no relaunch needed.
+                if !prevAX && self.permAccessibility {
+                    self.setupHotkeys(); self.hotkeyActive = true
+                }
                 let micStatus            = AVCaptureDevice.authorizationStatus(for: .audio)
                 self.permMicrophone      = micStatus == .authorized
                 self.micDenied           = micStatus == .denied
@@ -970,10 +974,9 @@ class MainViewModel {
         }
     }
 
-    // The main app window (the borderless FloatingPanel created in AppDelegate)
-    private var mainPanel: NSWindow? {
-        NSApplication.shared.windows.first { $0 is FloatingPanel }
-    }
+    // Direct reference set by AppDelegate after the panel is created.
+    // NSApplication.shared.windows is unreliable with .accessory activation policy.
+    weak var mainPanel: NSWindow?
 
     func toggleCamera() {
         if showCameraOverlay {

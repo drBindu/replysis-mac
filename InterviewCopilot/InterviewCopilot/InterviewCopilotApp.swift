@@ -35,7 +35,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let vm = MainViewModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
+        // .accessory = no menu bar entry, no Dock icon — fully invisible to interviewers.
+        NSApp.setActivationPolicy(.accessory)
 
         // Startup diagnostics — first lines in the debug log for supporting real users.
         dlog("=== LAUNCH === v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") | path=\(Bundle.main.bundlePath)", tag: "BOOT")
@@ -142,6 +143,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         panel.makeKeyAndOrderFront(nil)
         self.panel = panel
+        vm.mainPanel = panel   // give ViewModel a direct reference (needed with .accessory policy)
     }
 
     // Keep the app alive when sheets/popovers close (the borderless panel isn't
