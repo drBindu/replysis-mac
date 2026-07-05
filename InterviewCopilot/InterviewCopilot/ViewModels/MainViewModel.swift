@@ -700,17 +700,11 @@ class MainViewModel {
         for w in toHide { w.orderFrontRegardless() }
 
         guard let imageData = imageData, !imageData.isEmpty else {
-            dlog("Screen capture returned nil — showing permission alert", tag: "SCREEN")
-            let alert = NSAlert()
-            alert.messageText = "Screen Recording Permission Required"
-            alert.informativeText = "Interview Copilot needs Screen Recording permission to analyze your screen.\n\nClick \"Open Settings\", enable Interview Copilot, then restart the app."
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "Open Settings")
-            alert.addButton(withTitle: "Later")
-            if alert.runModal() == .alertFirstButtonReturn {
-                NSWorkspace.shared.open(
-                    URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
-            }
+            // macOS already showed its OWN native Screen Recording prompt (from the
+            // SCShareableContent call). Do NOT show a second custom alert on top of it —
+            // that's the "two popups for one permission" the user hit. Just log and bail;
+            // the native prompt is enough to guide the grant.
+            dlog("Screen capture returned nil — native permission prompt already shown", tag: "SCREEN")
             stopThinkingUI(); return
         }
 

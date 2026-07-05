@@ -152,14 +152,38 @@ let pcmQueue = PCMQueue()
 
 Thread.detachNewThread {
     let out = FileHandle.standardOutput
+    var bytesThisSec = 0
+    var peakThisSec: Int32 = 0
+    var lastLog = Date()
     while true {
         let chunk = pcmQueue.drain()
-        if chunk.isEmpty { usleep(5_000); continue }   // 5 ms idle
-        out.write(chunk)
+        if !chunk.isEmpty {
+            out.write(chunk)
+            bytesThisSec += chunk.count
+            // Peak of the int16 output — safe here (normal thread), unlike the RT IO proc.
+            chunk.withUnsafeBytes { raw in
+                let s = raw.bindMemory(to: Int16.self)
+                let step = max(1, s.count / 256)
+                var i = 0
+                while i < s.count { let a = abs(Int32(s[i])); if a > peakThisSec { peakThisSec = a }; i += step }
+            }
+        } else {
+            usleep(5_000)   // 5 ms idle
+        }
+        let now = Date()
+        let el = now.timeIntervalSince(lastLog)
+        if el >= 1.0 {
+            status(String(format: ">>> tap: peak=%.3f  outRate=%.0fB/s",
+                          Double(peakThisSec) / 32768.0, Double(bytesThisSec) / el))
+            bytesThisSec = 0; peakThisSec = 0; lastLog = now
+        }
     }
 }
 
 // ── 6. IO proc: convert each callback's audio and enqueue it ────────────────
+// MUST stay lean and touch nothing that can block — it runs on Core Audio's
+// real-time thread (passing nil as the queue). Diagnostics live in the writer
+// thread above, never here.
 let ioBlock: AudioDeviceIOBlock = { (_, inInputData, _, _, _) in
     let abl = inInputData.pointee
     guard abl.mNumberBuffers > 0 else { return }
