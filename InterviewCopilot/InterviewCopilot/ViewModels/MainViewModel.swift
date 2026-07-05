@@ -117,17 +117,9 @@ class MainViewModel {
     }
 
     func registerScreenRecording() {
-        // Call SCShareableContent ONCE at startup to add the app to the Screen Recording
-        // list and trigger the native macOS permission request. Called only here — never
-        // in the permTimer — so "Currently Sharing" appears at most briefly on launch.
-        Task {
-            do {
-                _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-                self.permScreenRecording = true
-            } catch {
-                self.permScreenRecording = false
-            }
-        }
+        // Permission is handled naturally by SCScreenshotManager when the user clicks Analyze.
+        // macOS shows its own prompt automatically — no manual setup needed.
+        permScreenRecording = true
     }
 
     // MARK: - Timers (not tracked by @Observable)
@@ -745,28 +737,22 @@ class MainViewModel {
     }
 
     private func captureScreen() async -> Data? {
-        // Use the screencapture system binary (Apple-signed, not SCKit) which does NOT trigger
-        // "Currently Sharing" on macOS 26. All ScreenCaptureKit APIs (SCScreenshotManager,
-        // CGDisplayCreateImage which SCKit-backs on macOS 26, SCShareableContent) trigger the
-        // indicator. screencapture runs as a separate process with Apple's own entitlements.
-        return await Task.detached(priority: .userInitiated) {
-            let tmp = "/tmp/ic_\(UInt32.random(in: 1_000_000...9_999_999)).jpg"
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-            proc.arguments = ["-x",        // no shutter sound
-                              "-m",        // main display only
-                              "-t", "jpg", // JPEG output (avoids 413 vs PNG)
-                              tmp]
-            try? proc.run()
-            proc.waitUntilExit()
-            defer { try? FileManager.default.removeItem(atPath: tmp) }
-            guard proc.terminationStatus == 0,
-                  let raw = try? Data(contentsOf: URL(fileURLWithPath: tmp)) else { return nil }
+        // Use SCScreenshotManager — Apple's one-shot screenshot API (macOS 14.4+).
+        // When screen recording permission is not yet granted, macOS automatically shows
+        // its own permission prompt. No manual System Settings navigation needed.
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            guard let display = content.displays.first else { return nil }
 
-            // Scale to max 800px wide and recompress at 60% — keeps payload ~150-300 KB.
-            guard let src = NSImage(data: raw),
-                  let cg  = src.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return raw }
-            let origW = Double(cg.width), origH = Double(cg.height)
+            let config = SCStreamConfiguration()
+            config.width  = display.width
+            config.height = display.height
+
+            let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+            let cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+
+            // Scale to max 800px wide, recompress at 60% — keeps payload ~150-300 KB.
+            let origW = Double(cgImage.width), origH = Double(cgImage.height)
             let scale = min(1.0, 800.0 / origW)
             let newW  = max(1, Int(origW * scale)), newH = max(1, Int(origH * scale))
             guard let ctx = CGContext(
@@ -774,13 +760,17 @@ class MainViewModel {
                 bitsPerComponent: 8, bytesPerRow: 0,
                 space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
-            ), let scaled = { ctx.draw(cg, in: CGRect(x: 0, y: 0, width: newW, height: newH)); return ctx.makeImage() }()
-            else { return nil }
+            ) else { return nil }
+            ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: newW, height: newH))
+            guard let scaled = ctx.makeImage() else { return nil }
             let rep  = NSBitmapImageRep(cgImage: scaled)
             let data = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.6])
             dlog("Screen capture: \(data?.count ?? 0) bytes JPEG \(newW)×\(newH)", tag: "SCREEN")
             return data
-        }.value
+        } catch {
+            dlog("Screen capture failed: \(error)", tag: "SCREEN")
+            return nil
+        }
     }
 
     // MARK: - Transcript Polling
