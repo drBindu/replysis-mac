@@ -693,8 +693,15 @@ class MainViewModel {
         for w in toHide { w.orderFrontRegardless() }
 
         guard let imageData = imageData, !imageData.isEmpty else {
-            aiAnswer = "⚠ Screen capture failed.\n\nGrant Screen Recording permission:\nSystem Settings → Privacy & Security → Screen Recording"
-            dlog("Screen capture returned empty data", tag: "SCREEN")
+            // screencapture failed — app not in Screen Recording TCC list.
+            // CGRequestScreenCaptureAccess() only opens System Settings; it does NOT create
+            // an SCKit session and will NOT show "Currently Sharing" on macOS 26.
+            CGRequestScreenCaptureAccess()
+            aiAnswer = "⚠ Screen capture failed.\n\n" +
+                       "1. System Settings → Privacy & Security → Screen Recording\n" +
+                       "2. Enable Interview Copilot (click + if not listed)\n" +
+                       "3. Quit and reopen the app, then try Analyze again"
+            dlog("Screen capture returned nil — opened System Settings for Screen Recording", tag: "SCREEN")
             stopThinkingUI(); return
         }
 
