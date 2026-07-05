@@ -793,7 +793,7 @@ class MainViewModel {
 
     private var transcriptLogTick = 0
     private func updateTranscript() {
-        guard isListening else { return }
+        guard session.isLoggedIn, isListening else { return }
         if justStartedListening {
             listenStartTicks += 1; transcript = ""
             if listenStartTicks >= suppressTickCount {
