@@ -3,7 +3,6 @@ import AppKit
 import Observation
 import AVFoundation
 import IOKit.hid
-import ScreenCaptureKit
 
 @MainActor
 @Observable
@@ -117,24 +116,16 @@ class MainViewModel {
     }
 
     func registerScreenRecording() {
-        // Already granted — skip SCKit entirely. This is the interview-time path and must
-        // never trigger "Currently Sharing" (visible to interviewers in the menu bar).
-        if CGPreflightScreenCaptureAccess() {
-            permScreenRecording = true
-            return
-        }
-        // Permission not yet granted (setup / first launch only). getExcludingDesktopWindows
-        // is the only API that adds the app to the "Screen & System Audio Recording" list in
-        // System Settings automatically — SCShareableContent.current and CGRequestScreenCaptureAccess
-        // do not register the app, forcing the user to click "+".
-        // "Currently Sharing" may appear briefly here, but this path only runs during initial
-        // setup — the user is not yet in an interview, so the interviewer cannot see it.
-        // Once the user grants permission, CGPreflightScreenCaptureAccess returns true and
-        // this code is never reached again.
-        SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { [weak self] _, _ in
-            Task { @MainActor [weak self] in
-                self?.permScreenRecording = CGPreflightScreenCaptureAccess()
-            }
+        // On macOS 26 (Tahoe), ALL ScreenCaptureKit APIs — including the one-shot
+        // getExcludingDesktopWindows — create a persistent "Currently Sharing" session
+        // even when permission is not yet granted, AND fail to add the app to the TCC list.
+        // Use only CGRequestScreenCaptureAccess() which opens System Settings without
+        // creating any SCKit session. The user must click "+" to add the app — this cannot
+        // be automated without triggering "Currently Sharing".
+        permScreenRecording = CGPreflightScreenCaptureAccess()
+        if !permScreenRecording {
+            CGRequestScreenCaptureAccess()
+            permScreenRecording = CGPreflightScreenCaptureAccess()
         }
     }
 
