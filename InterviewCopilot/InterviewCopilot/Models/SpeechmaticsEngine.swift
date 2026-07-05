@@ -111,16 +111,29 @@ class SpeechmaticsEngine {
         // Args match .NET order: device (optional), mode, syscapture (optional), delay.
         var args: [String] = []
         if selectedDeviceId >= 0 { args += ["-device", "\(selectedDeviceId)"] }
-        // SYSTEM-audio-only mode: capture just the interviewer through the Core Audio
-        // tap (SystemAudioCapture). The mic is NOT opened, so macOS shows no orange
-        // microphone indicator — the app stays fully invisible in the menu bar.
-        // If the tap can't start, the engine self-falls-back to mic-only (orange dot
-        // returns, but transcription keeps working). If it crashed hard before, skip
-        // straight to mic so we don't loop.
-        let useSysAudio = hasSysCapture && !sysAudioCrashed
-        args += ["-mode", useSysAudio ? "system" : "mic"]
-        if useSysAudio { args += ["-syscapture", syscapturePath.path] }
-        dlog("  Audio mode: \(useSysAudio ? "SYSTEM only (tap, no mic)" : "mic only") — bundled=\(hasSysCapture)", tag: "SM")
+        // SYSTEM-audio-only mode: capture just the interviewer. The mic is NOT opened,
+        // so macOS shows no orange indicator — the app stays fully invisible.
+        //
+        // The tap runs IN THE APP PROCESS (SystemAudioTapper), not a helper — a helper
+        // process is fed silence by macOS because it doesn't inherit the app's audio
+        // permission (confirmed: peak=0.000 from the old helper). In-app, the permission
+        // the user granted applies, so it captures real audio. The app streams that PCM
+        // to a FIFO the engine reads via -sysfifo.
+        var startedSysTap = false
+        if !sysAudioCrashed, #available(macOS 14.2, *) {
+            let fifo = appDataFolder.appendingPathComponent("sysaudio.pcm").path
+            if SystemAudioTapper.shared.start(fifoPath: fifo) {
+                args += ["-mode", "system", "-sysfifo", fifo]
+                dlog("  Audio mode: SYSTEM (in-app Core Audio tap → FIFO)", tag: "SM")
+                startedSysTap = true
+            } else {
+                dlog("  in-app tap failed to start → mic-only fallback", tag: "SM")
+            }
+        }
+        if !startedSysTap {
+            args += ["-mode", "mic"]
+            dlog("  Audio mode: mic only", tag: "SM")
+        }
         args += ["-max-delay", "0.7"]   // Speechmatics enforces a HARD minimum of 0.7 — lower is rejected
 
         // Key ONLY via env var (matches the working .NET app); APP_DATA_DIR points the
@@ -306,6 +319,7 @@ class SpeechmaticsEngine {
     func stop() {
         engineCancelled = true
         sysAudioCrashed = false   // reset for next session — will try sys audio again
+        if #available(macOS 14.2, *) { SystemAudioTapper.shared.stop() }   // stop the in-app tap
         monitorTimer?.invalidate(); monitorTimer = nil
         retryTimer?.invalidate();   retryTimer = nil
         killAndDispose()

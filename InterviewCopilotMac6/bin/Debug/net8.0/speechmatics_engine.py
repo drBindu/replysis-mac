@@ -92,6 +92,11 @@ parser.add_argument("-sysdevice", type=int, default=None)
 parser.add_argument("-max-delay", type=float, default=1.0)
 parser.add_argument("-mode", type=str, default="mic", choices=["mic", "system", "both"])
 parser.add_argument("-syscapture", type=str, default=None)
+# -sysfifo: path to a FIFO the APP writes system audio to (16 kHz mono s16le).
+# Preferred over -syscapture: the app runs the Core Audio tap in-process where the
+# audio-recording permission actually applies, so it captures real audio (a separate
+# helper process is fed silence by macOS).
+parser.add_argument("-sysfifo", type=str, default=None)
 args = parser.parse_args()
 
 if not args.key:
@@ -327,6 +332,54 @@ sys_capture_buffer = bytearray()
 sys_capture_lock   = threading.Lock()
 
 
+def start_sys_fifo():
+    """Read system audio (16 kHz mono s16le) from a FIFO the APP writes to.
+    The app runs the Core Audio tap in-process, where the audio-recording
+    permission the user granted actually applies — so it captures real audio
+    (a separate helper process gets fed silence by macOS)."""
+    path = args.sysfifo
+    print(f">>> SysFIFO: reading system audio from {path}", flush=True)
+
+    def reader():
+        bytes_received = 0
+        last_log = 0
+        while True:
+            try:
+                # open() blocks until the app opens the FIFO for writing.
+                f = open(path, "rb", buffering=0)
+            except Exception as e:
+                print(f">>> SysFIFO: open failed: {e}", flush=True)
+                threading.Event().wait(0.5)
+                continue
+            print(">>> SysFIFO: connected — app is streaming system audio", flush=True)
+            try:
+                while True:
+                    chunk = f.read(CHUNK_FRAMES * 2)
+                    if not chunk:
+                        break   # writer closed → reopen
+                    with sys_capture_lock:
+                        sys_capture_buffer.extend(chunk)
+                        if len(sys_capture_buffer) > SCK_BUF_MAX:
+                            del sys_capture_buffer[:len(sys_capture_buffer) - SCK_BUF_MAX]
+                        buf_size = len(sys_capture_buffer)
+                    bytes_received += len(chunk)
+                    now = int(bytes_received / 32000)
+                    if now != last_log:
+                        last_log = now
+                        print(f">>> SysFIFO: {now}s captured  buffer={buf_size//32:.0f}ms", flush=True)
+            except Exception as e:
+                print(f">>> SysFIFO: read error: {e}", flush=True)
+            finally:
+                try:
+                    f.close()
+                except Exception:
+                    pass
+            print(">>> SysFIFO: writer closed — waiting to reconnect", flush=True)
+
+    threading.Thread(target=reader, daemon=True).start()
+    return True
+
+
 def start_sys_capture():
     global sys_capture_proc
     if not args.syscapture or not os.path.exists(args.syscapture):
@@ -425,7 +478,12 @@ def read_sys_capture_chunk(num_frames):
 
 
 using_screencapturekit = False
-if args.syscapture and args.mode in ("system", "both"):
+if args.sysfifo and args.mode in ("system", "both"):
+    # Preferred path: the app captures system audio in-process (permission applies)
+    # and streams it to this FIFO. No helper process, no silence.
+    using_screencapturekit = start_sys_fifo()
+    print(">>> Audio mode: in-app Core Audio tap via FIFO", flush=True)
+elif args.syscapture and args.mode in ("system", "both"):
     using_screencapturekit = start_sys_capture()
     if using_screencapturekit:
         print(">>> Audio mode: ScreenCaptureKit active", flush=True)
