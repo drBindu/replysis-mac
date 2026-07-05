@@ -250,11 +250,10 @@ class MainViewModel {
     }
 
     private func openGateIfNeeded() {
-        if !permMicrophone || !permAccessibility || !permScreenRecording {
-            if !permAccessibility { requestAccessibilityPrompt() }
-            needsPermissionSetup = true
-            startPermissionPolling()
-        }
+        // Request permissions natively — no custom setup sheet.
+        if !permMicrophone { requestMicrophonePermission() }
+        if !permAccessibility { requestAccessibilityPrompt() }
+        // Screen recording is handled by registerScreenRecording() via SCKit.
         if permAccessibility {
             setupHotkeys()
             hotkeyActive = true
@@ -272,9 +271,7 @@ class MainViewModel {
         if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
             requestMicrophonePermission()
         }
-        needsPermissionSetup = true      // shows the (optional) setup sheet
         showHotkeyBanner = false
-        startPermissionPolling()
     }
 
     /// User dismissed the upsell banner — don't nag again this session.
@@ -294,9 +291,7 @@ class MainViewModel {
     /// the moment each permission is granted.
     func openPermissionSetup() {
         if !permAccessibility { requestAccessibilityPrompt() }
-        needsPermissionSetup = true
         showHotkeyBanner = false
-        startPermissionPolling()
     }
 
     func requestMicrophonePermission() {
