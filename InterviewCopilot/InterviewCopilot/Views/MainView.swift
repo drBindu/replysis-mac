@@ -51,7 +51,10 @@ struct MainView: View {
             // for a clean, focused view. The user can reopen them anytime.
             if vm.resumeLocked { withAnimation { resumeOpen = false; jobOpen = false } }
         }
-        .onChange(of: focusedField) { vm.isEditingText = focusedField != nil }
+        .onChange(of: focusedField) {
+            vm.isEditingText = focusedField != nil
+            vm.refreshHotkeyGate()   // so the global Space tap types in text boxes, not toggles
+        }
         .onReceive(NotificationCenter.default.publisher(for: .showDebugLog)) { _ in showDebugLog = true }
         // Pressing Space (or tapping the mic) while signed out routes here → open sign-in.
         .onReceive(NotificationCenter.default.publisher(for: .showLogin)) { _ in showLogin = true }

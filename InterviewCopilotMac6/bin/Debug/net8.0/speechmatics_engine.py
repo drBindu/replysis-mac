@@ -554,18 +554,35 @@ elif args.syscapture and args.mode in ("system", "both"):
 
 _mix_log_counter = 0
 
+# Target loudness (RMS) the mixed stream is lifted toward before it's sent to
+# Speechmatics. The old code multiplied the mic by 0.45, so a normal speaking voice
+# (~1400 RMS) reached the recognizer at ~635 RMS — quiet enough that it hallucinated
+# garbage ("On the . I information de la"). ASR wants a healthy, consistent level.
+_MIX_TARGET_RMS = 4000.0
+_MIX_MAX_GAIN   = 8.0     # cap so near-silence/noise isn't blown up into fake speech
+_MIX_GAIN_FLOOR = 200.0   # only auto-gain when there's real signal above the noise floor
+
 def mix_audio(mic_data, sys_data):
     global _mix_log_counter
     mic_arr = np.frombuffer(mic_data, dtype=np.int16).astype(np.float32)
     sys_arr = np.frombuffer(sys_data, dtype=np.int16).astype(np.float32)
 
-    # Weight system audio higher (0.85) than mic (0.45) so interview
-    # questions from YouTube/video come through clearly.
-    # Mic still captured so user's spoken answers are also transcribed.
-    mixed_f = mic_arr * 0.45 + sys_arr * 0.85
+    # Full-level mix. The mic (already noise-gated upstream, so pauses are silent) plus
+    # the system audio (the interviewer). No pre-attenuation — auto-gain below sets the
+    # final level, so whichever source is actually present comes through at full strength.
+    mixed_f = mic_arr + sys_arr
 
-    # Normalise if clipping — preserves relative levels without distortion
-    peak = np.abs(mixed_f).max()
+    # Auto-gain: lift the mix toward the target RMS so a soft voice or a quiet call is
+    # transcribed reliably. Only kicks in when real audio is present (above the floor),
+    # and never attenuates a loud source — just boosts quiet ones.
+    rms = float(np.sqrt(np.mean(mixed_f ** 2))) if mixed_f.size else 0.0
+    if rms > _MIX_GAIN_FLOOR:
+        gain = min(_MIX_TARGET_RMS / rms, _MIX_MAX_GAIN)
+        if gain > 1.0:
+            mixed_f = mixed_f * gain
+
+    # Normalise if clipping — preserves relative levels without distortion.
+    peak = np.abs(mixed_f).max() if mixed_f.size else 0.0
     if peak > 32767:
         mixed_f = mixed_f * (32767.0 / peak)
 

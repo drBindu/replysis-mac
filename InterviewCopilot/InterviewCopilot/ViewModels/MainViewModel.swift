@@ -402,6 +402,17 @@ class MainViewModel {
             onF12Pressed:   { },
             onKillPressed:  { NSApplication.shared.terminate(nil) }
         )
+        refreshHotkeyGate()   // seed the tap's consume/pass-through state
+    }
+
+    /// Push the current sign-in + text-editing state to the global hotkey tap so it knows
+    /// when to CONSUME Space (clean push-to-talk) vs pass it through (typing / signed out).
+    /// Called on the main thread whenever either can change. (No need to track the login
+    /// sheet separately: while it's up the user isn't signed in yet, so Space already
+    /// passes through and types into the email/password fields.)
+    func refreshHotkeyGate() {
+        let editing = isEditingText || needsPermissionSetup
+        hotkey?.updateGate(loggedIn: session.isLoggedIn, editing: editing)
     }
 
     /// Called by AppDelegate after setActivationPolicy(.accessory) — the policy change can
@@ -413,6 +424,7 @@ class MainViewModel {
 
     // MARK: - Space Logic
     func handleSpacePress(source: String = "KEYBOARD") {
+        refreshHotkeyGate()   // keep the tap's editing/login mirror fresh
         if isEditingText { return }
 
         if !session.isLoggedIn {
@@ -828,6 +840,7 @@ class MainViewModel {
 
     // MARK: - MIC UI
     func updateMicUI() {
+        refreshHotkeyGate()   // login/logout & listening transitions flow through here
         if isProcessing      { micStatus = "THINKING";  micColor = .orange }
         else if isListening  { micStatus = "LISTENING"; micColor = .green }
         else if isMuted      { micStatus = "MUTED";     micColor = Color(red: 239/255, green: 68/255, blue: 68/255) }
