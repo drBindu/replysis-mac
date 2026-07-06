@@ -255,6 +255,31 @@ def apply_noise_gate(data: bytes) -> bytes:
 mic_stream = None
 sys_stream = None
 p = None
+# The mic is opened but NOT started at launch (start=False below), so macOS shows NO
+# orange microphone indicator while the app sits idle. We start/stop the stream on
+# unmute/mute so the indicator — which macOS forces on for any live mic and no app can
+# hide — appears ONLY while the user is actually listening, then disappears again.
+mic_stream_active = False
+
+
+def set_mic_active(active: bool):
+    """Start or stop the mic IO so the macOS orange indicator is on only while listening.
+    Keeps the stream OPEN either way, so toggling is instant (no slow re-open)."""
+    global mic_stream, mic_stream_active
+    if mic_stream is None:
+        return
+    try:
+        if active and not mic_stream_active:
+            mic_stream.start_stream()
+            mic_stream_active = True
+            print(">>> MIC: recording ON (listening)", flush=True)
+        elif not active and mic_stream_active:
+            mic_stream.stop_stream()
+            mic_stream_active = False
+            print(">>> MIC: recording OFF (muted) — indicator clears", flush=True)
+    except Exception as e:
+        print(f">>> MIC set_active error: {e}", flush=True)
+
 
 def open_mic(fatal=True):
     """Open the default (or selected) microphone into the global mic_stream.
@@ -262,7 +287,7 @@ def open_mic(fatal=True):
     system-audio capture fails — so transcription keeps working (with the
     orange mic indicator) instead of the audio thread crashing on a None
     stream. Returns True on success. No-op if the mic is already open."""
-    global p, mic_stream
+    global p, mic_stream, mic_stream_active
     if mic_stream is not None:
         return True
     try:
@@ -287,6 +312,10 @@ def open_mic(fatal=True):
             rate=SAMPLE_RATE,
             input=True,
             frames_per_buffer=CHUNK_FRAMES,
+            # Open but DON'T start capturing — no orange mic indicator until we call
+            # start_stream() on the first unmute. This is the "invisible until listening"
+            # behavior the user asked for.
+            start=False,
         )
         if args.device is not None:
             mic_kwargs["input_device_index"] = args.device
@@ -296,7 +325,8 @@ def open_mic(fatal=True):
             default_in = p.get_default_input_device_info()
             print(f">>> MIC: default input device [{default_in['index']}] {default_in['name']}", flush=True)
         mic_stream = p.open(**mic_kwargs)
-        print(">>> MIC stream opened OK", flush=True)
+        mic_stream_active = False   # opened, not recording → no orange dot yet
+        print(">>> MIC stream opened OK (idle — no indicator until you press Space)", flush=True)
         return True
     except Exception as e:
         print(f">>> {'FATAL' if fatal else 'WARNING'}: Cannot open mic stream - {e}", flush=True)
@@ -646,15 +676,11 @@ class SmartAudioStream:
         global is_recording, recording_frames
 
         if os.path.exists(PAUSE_FLAG):
-            if mic_stream:
-                try:
-                    mic_stream.read(num_frames, exception_on_overflow=False)
-                except Exception:
-                    pass
-            else:
-                # No mic stream to pace the loop — sleep one chunk-duration so the
-                # paused stream emits silence at REAL-TIME rate, never in a tight loop.
-                time.sleep(num_frames / SAMPLE_RATE)
+            # MUTED → physically stop the mic so the macOS orange indicator disappears.
+            # The stream stays OPEN, so unmuting is instant (no slow re-open).
+            set_mic_active(False)
+            # Pace the loop at real time (mic is stopped, so it can't pace us anymore).
+            time.sleep(num_frames / SAMPLE_RATE)
             # Drain captured system audio too — the ScreenCaptureKit thread keeps
             # filling sys_capture_buffer while paused, so without this up to ~2s of
             # audio captured during mute gets transcribed right after unmute,
@@ -663,6 +689,10 @@ class SmartAudioStream:
                 with sys_capture_lock:
                     sys_capture_buffer.clear()
             return SILENCE
+
+        # LISTENING → make sure the mic is actually recording (indicator on only now).
+        if args.mode in ("mic", "both"):
+            set_mic_active(True)
 
         mode = args.mode
 

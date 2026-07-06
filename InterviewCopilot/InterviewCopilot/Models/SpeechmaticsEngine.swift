@@ -10,6 +10,12 @@ class SpeechmaticsEngine {
     var isRunning = false
     var statusText = "READY"
 
+    /// True once the Python engine has finished its (slow, ~10s) cold start and is actually
+    /// connected and capturing — i.e. speaking now will really be transcribed. isRunning
+    /// goes true the instant we spawn the process; isReady waits for it to be usable, so the
+    /// UI can show "Starting…" instead of a green mic that silently drops the first words.
+    var isReady = false
+
     /// Fired when Speechmatics rejects the key (not_authorised / invalid key). Lets the
     /// UI show an honest "speech unavailable" message instead of silently doing nothing.
     var onKeyError: (() -> Void)?
@@ -75,6 +81,7 @@ class SpeechmaticsEngine {
 
         engineCancelled = false
         authErrorHandled = false   // fresh start → allow a new auth error to be reported
+        isReady = false            // becomes true when the engine reports it's online
         nukePreviousProcesses()
         killAndDispose()
 
@@ -266,6 +273,11 @@ class SpeechmaticsEngine {
             if Self.isAuthFailure(line) {
                 Task { @MainActor [weak self] in self?.handleAuthError() }
             }
+            // The engine prints "STATUS: ONLINE" once the websocket is connected and it's
+            // pulling audio — the moment speaking will really be transcribed.
+            if line.contains("STATUS: ONLINE") || line.contains("ENGINE: READY") {
+                Task { @MainActor [weak self] in self?.isReady = true }
+            }
         }
         outHandle?.readabilityHandler = { onData($0, "stdout") }
         errHandle?.readabilityHandler = { onData($0, "stderr") }
@@ -332,6 +344,7 @@ class SpeechmaticsEngine {
 
     func stop() {
         engineCancelled = true
+        isReady = false
         sysAudioCrashed = false   // reset for next session — will try sys audio again
         if #available(macOS 14.2, *) { SystemAudioTapper.shared.stop() }   // stop the in-app tap
         monitorTimer?.invalidate(); monitorTimer = nil

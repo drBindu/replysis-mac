@@ -154,6 +154,10 @@ class MainViewModel {
         // Surface a clear message if the speech service rejects the key, instead of
         // silently showing an empty transcript forever.
         engine.onKeyError = { [weak self] in self?.handleSpeechKeyError() }
+        // Start MUTED so the engine opens the mic idle (start=False) and the macOS orange
+        // mic indicator stays OFF until the user actually presses Space to listen. The
+        // unmute path deletes this flag; the mute path re-writes it.
+        engine.writePauseFlag()
         // Best-effort: pull the Google client secret so "Continue with Google" can work.
         // Harmless if that config backend is down — email/password sign-in is independent.
         Task { await AppConfig.fetchRemoteConfig() }
@@ -514,6 +518,12 @@ class MainViewModel {
             isMuted = false; isListening = true
             justStartedListening = true; listenStartTicks = 0
             transcript = ""; aiAnswer = ""
+            // The engine has a slow (~10s) cold start on the first listen after launch.
+            // Tell the user it's warming up instead of showing a green mic that silently
+            // drops their first words — this was the "Space does nothing at first" bug.
+            if !engine.isReady {
+                aiAnswerHint = "Warming up the microphone… speak in a moment (first time after launch only)."
+            }
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 self?.engine.clearLatestTxt()
                 self?.engine.writeResetFlag()
