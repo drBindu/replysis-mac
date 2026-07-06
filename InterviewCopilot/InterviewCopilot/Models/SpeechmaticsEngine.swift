@@ -118,35 +118,34 @@ class SpeechmaticsEngine {
         // Args match .NET order: device (optional), mode, syscapture (optional), delay.
         var args: [String] = []
         if selectedDeviceId >= 0 { args += ["-device", "\(selectedDeviceId)"] }
-        // BOTH mode when possible: system audio (the interviewer, via the in-app Core
-        // Audio tap) MIXED with the microphone (the user's own voice). System-only mode
-        // meant the user pressed Space, spoke, and got nothing — the mic was never opened.
+        // SYSTEM-AUDIO-ONLY: capture just the interviewer, via the in-app Core Audio tap.
+        // The microphone is NEVER opened, so macOS shows NO orange mic indicator — the app
+        // stays fully invisible in the menu bar, which is what the user requires. (The
+        // trade-off, chosen by the user, is that their own spoken voice isn't transcribed;
+        // the interviewer's questions are, which is what the AI answers.)
         //
         // The tap runs IN THE APP PROCESS (SystemAudioTapper), not a helper — a helper
         // process is fed silence by macOS because it doesn't inherit the app's audio
         // permission (confirmed: peak=0.000 from the old helper). In-app, the permission
         // the user granted applies, so it captures real audio. The app streams that PCM
         // to a FIFO the engine reads via -sysfifo.
-        //
-        // Mic permission is requested lazily on the first Space press (see
-        // MainViewModel.handleSpacePress) — the native macOS popup, no custom UI. Until
-        // it's granted the engine runs system-audio-only; once granted the engine is
-        // restarted in BOTH mode automatically.
-        let micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         var startedSysTap = false
         if !sysAudioCrashed, #available(macOS 14.2, *) {
             let fifo = appDataFolder.appendingPathComponent("sysaudio.pcm").path
             if SystemAudioTapper.shared.start(fifoPath: fifo) {
-                args += ["-mode", micGranted ? "both" : "system", "-sysfifo", fifo]
-                dlog("  Audio mode: \(micGranted ? "BOTH (mic + system tap)" : "SYSTEM only (mic not granted yet)")", tag: "SM")
+                args += ["-mode", "system", "-sysfifo", fifo]
+                dlog("  Audio mode: SYSTEM only (interviewer via in-app tap — mic never opened, no macOS indicator)", tag: "SM")
                 startedSysTap = true
             } else {
                 dlog("  in-app tap failed to start → mic-only fallback", tag: "SM")
             }
         }
         if !startedSysTap {
+            // Fallback only when the system-audio tap is unavailable (macOS < 14.2 or the
+            // tap failed to start). Here the mic is the only source, so the orange dot will
+            // show — unavoidable, and rare.
             args += ["-mode", "mic"]
-            dlog("  Audio mode: mic only", tag: "SM")
+            dlog("  Audio mode: mic only (system-audio tap unavailable)", tag: "SM")
         }
         args += ["-max-delay", "0.7"]   // Speechmatics enforces a HARD minimum of 0.7 — lower is rejected
 
