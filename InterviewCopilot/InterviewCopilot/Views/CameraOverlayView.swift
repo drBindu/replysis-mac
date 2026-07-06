@@ -75,8 +75,18 @@ class AnswerOverlayWindow: NSPanel {
 // MARK: — Eye Mode SwiftUI view
 // ══════════════════════════════════════════════════════════════
 
+private struct EyeAnswerHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 struct AnswerOverlayView: View {
     var vm: MainViewModel
+
+    // Measured height of the answer content, so the box shrinks to fit a short answer
+    // (no more giant empty black rectangle) and scrolls only once it exceeds the cap.
+    @State private var answerContentHeight: CGFloat = 0
+    private let answerMaxHeight: CGFloat = 340
 
     private var hasAnswer: Bool { !vm.aiAnswer.isEmpty || vm.showThinking }
     private var isIdle: Bool { !vm.isListening && vm.aiAnswer.isEmpty && !vm.showThinking }
@@ -92,7 +102,9 @@ struct AnswerOverlayView: View {
         VStack(spacing: 0) {
             statusBar
 
-            if !vm.transcript.isEmpty {
+            // Show the interviewer's question whenever we're listening OR have captured
+            // text — with a "Listening…" placeholder — so the question area is never blank.
+            if vm.isListening || !vm.transcript.isEmpty {
                 divider
                 transcriptRow
             }
@@ -160,9 +172,10 @@ struct AnswerOverlayView: View {
                 .padding(.horizontal, 6).padding(.vertical, 3)
                 .background(Color(hex: "#0d2540"))
                 .cornerRadius(4)
-            Text(vm.transcript)
+            Text(vm.transcript.isEmpty ? "Listening…" : vm.transcript)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(Color(hex: "#cbd5e1"))
+                .foregroundColor(vm.transcript.isEmpty
+                                 ? Color(hex: "#64748b") : Color(hex: "#cbd5e1"))
                 .lineLimit(nil)               // show the FULL question — never truncate
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -195,8 +208,14 @@ struct AnswerOverlayView: View {
                 }
                 .padding(16)
                 .id("eyeContent")
+                .background(GeometryReader { g in
+                    Color.clear.preference(key: EyeAnswerHeightKey.self, value: g.size.height)
+                })
             }
-            .frame(height: 300)
+            // Fit the box to the answer (short answers → small box, no giant black
+            // rectangle) and cap it so long answers scroll inside the overlay.
+            .frame(height: min(max(answerContentHeight, 44), answerMaxHeight))
+            .onPreferenceChange(EyeAnswerHeightKey.self) { answerContentHeight = $0 }
             // Jump to the top of a NEW answer; don't auto-follow while it streams
             .onChange(of: vm.answerEpoch) {
                 proxy.scrollTo("eyeContent", anchor: .top)

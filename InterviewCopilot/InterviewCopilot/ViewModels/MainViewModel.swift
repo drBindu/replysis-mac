@@ -861,6 +861,11 @@ class MainViewModel {
 
     // MARK: - Session
     func startNewSession() {
+        // BUG FIX: refresh the global-hotkey gate now that we're logged in. Session restore
+        // is async, so the gate was seeded as "signed out" at launch and Space wasn't being
+        // handled globally until the user first interacted with the app (e.g. opened the
+        // debug log) — the "Space does nothing / had to press F12 first" bug.
+        refreshHotkeyGate()
         resumeLocked = false
         PromptBuilder.shared.clearHistory()
         let dir = engine.appDataFolder
