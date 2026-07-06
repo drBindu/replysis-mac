@@ -445,36 +445,44 @@ class MainViewModel {
             return
         }
 
-        // System-audio-only: the interviewer is captured through the in-app Core Audio tap
-        // and the microphone is NEVER opened, so there's no macOS orange indicator and no
-        // mic-permission popup at all. Only when the system-audio tap is unavailable
-        // (macOS < 14.2) do we fall back to the mic and prompt for it.
-        if !engine.systemAudioAvailable {
-            let micAuth = AVCaptureDevice.authorizationStatus(for: .audio)
-            if micAuth == .notDetermined {
-                // Guard prevents a re-entrant loop: user hammers Space while popup is open →
-                // second call would requestAccess again → callback calls handleSpacePress again.
-                guard !isMicPermissionRequesting else { return }
-                isMicPermissionRequesting = true
-                AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        self.isMicPermissionRequesting = false
-                        self.permMicrophone = granted
-                        self.micDenied = !granted
-                        self.handleSpacePress(source: source)
+        // Lazy microphone permission — the ONLY mic UI is the native macOS popup, fired the
+        // first time the user starts listening. No custom permission screens. If granted,
+        // the engine restarts in BOTH mode so it transcribes the user's voice (mic) AND the
+        // interviewer (system-audio tap). If denied, we keep going with system audio only
+        // (interviewer still transcribed) and never nag again.
+        let micAuth = AVCaptureDevice.authorizationStatus(for: .audio)
+        if micAuth == .notDetermined {
+            // Guard prevents a re-entrant loop: user hammers Space while popup is open →
+            // second call would requestAccess again → callback calls handleSpacePress again.
+            guard !isMicPermissionRequesting else { return }
+            isMicPermissionRequesting = true
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.isMicPermissionRequesting = false
+                    self.permMicrophone = granted
+                    self.micDenied = !granted
+                    if granted && self.engine.isRunning {
+                        // Restart so the engine picks up the mic (relaunches in BOTH mode).
+                        // The mic is opened idle and only records while listening, so this
+                        // doesn't turn on the orange dot until the user is actually speaking.
+                        dlog("Mic granted on first Space — restarting engine in BOTH mode", tag: "SPACE")
+                        self.engine.stop()
+                        self.engine.start(smKey: self.session.speechmaticsKey)
                     }
+                    self.handleSpacePress(source: source)
                 }
-                return
             }
-            if micAuth != .authorized {
-                // No system tap AND mic denied → nothing can capture audio. Open the mic
-                // privacy pane directly (native, no custom UI).
-                NSWorkspace.shared.open(
-                    URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
-                return
-            }
+            return
         }
+        if micAuth != .authorized && !engine.systemAudioAvailable {
+            // Mic denied AND no system-audio tap (macOS < 14.2) → nothing can capture audio.
+            // Open the mic privacy pane directly (native, no custom UI).
+            NSWorkspace.shared.open(
+                URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+            return
+        }
+        // Mic denied but the system tap works → continue with system audio only.
         // Accessibility is never a gate here: the local key monitor works without it.
 
         dlog("SPACE pressed from \(source) | loggedIn=\(session.isLoggedIn) | engineRunning=\(engine.isRunning) | isMuted=\(isMuted) | isProcessing=\(isProcessing)", tag: "SPACE")
@@ -515,7 +523,7 @@ class MainViewModel {
             // Tell the user it's warming up instead of showing a green mic that silently
             // drops the first words — this was the "Space does nothing at first" bug.
             if !engine.isReady {
-                aiAnswerHint = "Warming up… the interviewer's audio will transcribe in a moment (first time after launch only)."
+                aiAnswerHint = "Warming up… audio will transcribe in a moment (first time after launch only)."
             }
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 self?.engine.clearLatestTxt()

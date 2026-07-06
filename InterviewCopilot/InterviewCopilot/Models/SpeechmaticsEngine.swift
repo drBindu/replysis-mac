@@ -118,32 +118,35 @@ class SpeechmaticsEngine {
         // Args match .NET order: device (optional), mode, syscapture (optional), delay.
         var args: [String] = []
         if selectedDeviceId >= 0 { args += ["-device", "\(selectedDeviceId)"] }
-        // SYSTEM-AUDIO-ONLY: capture just the interviewer, via the in-app Core Audio tap.
-        // The microphone is NEVER opened, so macOS shows NO orange mic indicator — the app
-        // stays fully invisible in the menu bar, which is what the user requires. (The
-        // trade-off, chosen by the user, is that their own spoken voice isn't transcribed;
-        // the interviewer's questions are, which is what the AI answers.)
+        // BOTH the interviewer (system audio via the in-app Core Audio tap) AND the user's
+        // own voice (microphone) are transcribed. The tap alone never triggers the macOS
+        // orange mic indicator; the mic does — but the mic is opened idle (start=False) and
+        // only records WHILE LISTENING (see SmartAudioStream / set_mic_active in the Python
+        // engine), so the dot appears only during the seconds the user is actually speaking.
+        // In a real video interview the meeting app (Zoom/Meet/Teams) is already using the
+        // mic the whole call, so that dot is present regardless and reveals nothing new.
         //
         // The tap runs IN THE APP PROCESS (SystemAudioTapper), not a helper — a helper
         // process is fed silence by macOS because it doesn't inherit the app's audio
         // permission (confirmed: peak=0.000 from the old helper). In-app, the permission
         // the user granted applies, so it captures real audio. The app streams that PCM
         // to a FIFO the engine reads via -sysfifo.
+        //
+        // Mic permission is requested lazily on the first Space press. Until it's granted
+        // the engine runs system-only; once granted it restarts in BOTH mode.
+        let micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         var startedSysTap = false
         if !sysAudioCrashed, #available(macOS 14.2, *) {
             let fifo = appDataFolder.appendingPathComponent("sysaudio.pcm").path
             if SystemAudioTapper.shared.start(fifoPath: fifo) {
-                args += ["-mode", "system", "-sysfifo", fifo]
-                dlog("  Audio mode: SYSTEM only (interviewer via in-app tap — mic never opened, no macOS indicator)", tag: "SM")
+                args += ["-mode", micGranted ? "both" : "system", "-sysfifo", fifo]
+                dlog("  Audio mode: \(micGranted ? "BOTH (mic + system tap; mic records only while listening)" : "SYSTEM only (mic not granted yet)")", tag: "SM")
                 startedSysTap = true
             } else {
                 dlog("  in-app tap failed to start → mic-only fallback", tag: "SM")
             }
         }
         if !startedSysTap {
-            // Fallback only when the system-audio tap is unavailable (macOS < 14.2 or the
-            // tap failed to start). Here the mic is the only source, so the orange dot will
-            // show — unavoidable, and rare.
             args += ["-mode", "mic"]
             dlog("  Audio mode: mic only (system-audio tap unavailable)", tag: "SM")
         }
