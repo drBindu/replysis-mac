@@ -43,6 +43,29 @@ jobs:
         id: version
         run: echo "VERSION=1.0.${{ github.run_number }}" >> $GITHUB_OUTPUT
 
+      # Rebuild speechmatics_engine from Python source on every build. Previously the
+      # repo shipped a stale pre-built binary, so fixes to speechmatics_engine.py never
+      # reached users. If this step fails the build fails loudly instead of silently
+      # shipping the old engine.
+      - name: Set up Python for engine build
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build speechmatics_engine from source
+        run: |
+          brew install portaudio
+          python3 -m venv "$RUNNER_TEMP/enginevenv"
+          source "$RUNNER_TEMP/enginevenv/bin/activate"
+          pip install --upgrade pip
+          pip install pyinstaller speechmatics-python pyaudio numpy certifi
+          pyinstaller speechmatics_engine.spec --distpath "$RUNNER_TEMP/enginedist" --workpath "$RUNNER_TEMP/enginebuild" -y
+          # Smoke test: binary must start and print its startup banner (no key → exit 1 is OK)
+          "$RUNNER_TEMP/enginedist/speechmatics_engine" 2>&1 | head -20 || true
+          cp -f "$RUNNER_TEMP/enginedist/speechmatics_engine" \
+            InterviewCopilot/InterviewCopilot/Resources/speechmatics_engine
+          echo "Engine rebuilt: $(du -sh InterviewCopilot/InterviewCopilot/Resources/speechmatics_engine | cut -f1)"
+
       - name: Make bundled binaries executable
         run: |
           [ -f InterviewCopilot/InterviewCopilot/Resources/speechmatics_engine ] && \

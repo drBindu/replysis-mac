@@ -36,11 +36,6 @@ nonisolated final class SystemAudioTapper {
     private func setStop(_ v: Bool) { stateLock.lock(); _stop = v; stateLock.unlock() }
     private func shouldStop() -> Bool { stateLock.lock(); let v = _stop; stateLock.unlock(); return v }
 
-    /// Fired ONCE if the tap runs but stays silent for several seconds — the signature of
-    /// the "record system audio" permission not being granted. The app shows a native
-    /// alert that jumps the user straight to the right System Settings pane.
-    nonisolated(unsafe) var onSilentDetected: (() -> Void)?
-
     // Thread-safe PCM hand-off from the realtime IO proc to the FIFO writer thread.
     private final class PCMQueue {
         nonisolated(unsafe) private var buf = Data()
@@ -260,11 +255,12 @@ nonisolated final class SystemAudioTapper {
                                     Double(peakThisSec) / 32768.0, Double(bytesThisSec) / el), tag: "TAP")
                         bytesThisSec = 0; peakThisSec = 0; lastLog = now
                     }
-                    // Real-time silence for 6 s → almost certainly a missing permission.
+                    // Diagnostic only — silence here usually just means nothing is
+                    // playing (the output device idles), NOT a missing permission,
+                    // so we log it and never show a popup for it.
                     if !sawAudio, !silentFired, now.timeIntervalSince(tapStart) > 6 {
                         silentFired = true
-                        dlog("in-app tap: 6s of silence — likely missing 'record system audio' permission", tag: "TAP")
-                        self.onSilentDetected?()
+                        dlog("in-app tap: no system audio yet (nothing playing, or permission missing)", tag: "TAP")
                     }
                 }
                 close(fd)

@@ -111,25 +111,27 @@ class SpeechmaticsEngine {
         // Args match .NET order: device (optional), mode, syscapture (optional), delay.
         var args: [String] = []
         if selectedDeviceId >= 0 { args += ["-device", "\(selectedDeviceId)"] }
-        // SYSTEM-audio-only mode: capture just the interviewer. The mic is NOT opened,
-        // so macOS shows no orange indicator — the app stays fully invisible.
+        // BOTH mode when possible: system audio (the interviewer, via the in-app Core
+        // Audio tap) MIXED with the microphone (the user's own voice). System-only mode
+        // meant the user pressed Space, spoke, and got nothing — the mic was never opened.
         //
         // The tap runs IN THE APP PROCESS (SystemAudioTapper), not a helper — a helper
         // process is fed silence by macOS because it doesn't inherit the app's audio
         // permission (confirmed: peak=0.000 from the old helper). In-app, the permission
         // the user granted applies, so it captures real audio. The app streams that PCM
         // to a FIFO the engine reads via -sysfifo.
+        //
+        // Mic permission is requested lazily on the first Space press (see
+        // MainViewModel.handleSpacePress) — the native macOS popup, no custom UI. Until
+        // it's granted the engine runs system-audio-only; once granted the engine is
+        // restarted in BOTH mode automatically.
+        let micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         var startedSysTap = false
         if !sysAudioCrashed, #available(macOS 14.2, *) {
             let fifo = appDataFolder.appendingPathComponent("sysaudio.pcm").path
-            // If the tap runs silent for 6 s, the "record system audio" permission is
-            // missing — pop a native alert that jumps to the right Settings pane.
-            SystemAudioTapper.shared.onSilentDetected = {
-                DispatchQueue.main.async { SpeechmaticsEngine.showSystemAudioPermissionAlert() }
-            }
             if SystemAudioTapper.shared.start(fifoPath: fifo) {
-                args += ["-mode", "system", "-sysfifo", fifo]
-                dlog("  Audio mode: SYSTEM (in-app Core Audio tap → FIFO)", tag: "SM")
+                args += ["-mode", micGranted ? "both" : "system", "-sysfifo", fifo]
+                dlog("  Audio mode: \(micGranted ? "BOTH (mic + system tap)" : "SYSTEM only (mic not granted yet)")", tag: "SM")
                 startedSysTap = true
             } else {
                 dlog("  in-app tap failed to start → mic-only fallback", tag: "SM")
@@ -321,33 +323,12 @@ class SpeechmaticsEngine {
 
     // MARK: - Stop
 
-    // Shown at most once per launch when the in-app tap runs but stays silent (permission).
-    private static var permAlertShown = false
-
-    /// Guide the user to enable system-audio recording. macOS only lets THEM toggle it.
-    @MainActor
-    static func showSystemAudioPermissionAlert() {
-        guard !permAlertShown else { return }
-        permAlertShown = true
-        let alert = NSAlert()
-        alert.messageText = "Allow Interview Copilot to hear the interviewer"
-        alert.informativeText = """
-        macOS is currently blocking the computer's audio, so nothing can be transcribed.
-
-        Fix it in one step:
-        1. Click “Open Settings”.
-        2. Under “Screen & System Audio Recording”, turn ON Interview Copilot
-           (also check the Microphone list).
-        3. Quit and reopen Interview Copilot.
-        """
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Open Settings")
-        alert.addButton(withTitle: "Later")
-        if alert.runModal() == .alertFirstButtonReturn {
-            NSWorkspace.shared.open(
-                URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
-        }
-    }
+    // NOTE: the old "6 s of silence → modal permission alert" is GONE on purpose.
+    // Silence from the tap usually just means nothing is playing (the output device
+    // idles, so the IO proc doesn't fire) — the log proved permission was granted and
+    // audio flowed the moment something played. That modal was the "popup keeps
+    // appearing even though I granted everything" bug. A REAL permission failure makes
+    // AudioHardwareCreateProcessTap fail, which falls back to mic-only above.
 
     func stop() {
         engineCancelled = true
