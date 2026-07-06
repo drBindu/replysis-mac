@@ -196,8 +196,19 @@ _EMA_ALPHA           = 0.005  # very slow drift — stable but self-correcting
 _gate_open           = False
 _gate_loud_streak    = 0
 _gate_hold_counter   = 0
-_GATE_OPEN_STREAK    = 2      # consecutive loud frames needed to open
-_GATE_HOLD_FRAMES    = 20     # frames to hold open after going quiet (~400 ms)
+_GATE_OPEN_STREAK    = 1      # consecutive loud frames needed to open (was 2 — a user
+                              # sitting a bit further from the mic has softer voice onsets
+                              # that don't reliably clear the threshold twice in a row)
+_GATE_HOLD_FRAMES    = 26     # frames to hold open after going quiet (~520 ms, was 400ms —
+                              # softer trailing syllables from farther away need more margin
+                              # so words don't get chopped mid-sentence)
+
+# Gate threshold = ambient floor * this multiplier, clamped to [MIN, MAX] RMS. Lowered from
+# 2.0x/150/1000 so a user sitting a bit further from the mic (quieter voice, closer to the
+# room's ambient level) still clears the threshold and gets transcribed instead of silenced.
+_GATE_FLOOR_MULT     = 1.5
+_GATE_MIN_RMS        = 110
+_GATE_MAX_RMS        = 800
 
 
 def reset_gate_transient_state():
@@ -223,8 +234,8 @@ def apply_noise_gate(data: bytes) -> bytes:
             s            = sorted(_noise_cal_samples)
             floor        = s[int(len(s) * 0.50)]          # 50th-percentile (median) ambient
             _ema_noise_floor = float(floor)
-            _noise_gate_rms  = max(int(floor * 2.0), 150)
-            _noise_gate_rms  = min(_noise_gate_rms, 1000)
+            _noise_gate_rms  = max(int(floor * _GATE_FLOOR_MULT), _GATE_MIN_RMS)
+            _noise_gate_rms  = min(_noise_gate_rms, _GATE_MAX_RMS)
             _noise_calibrating = False
             print(f">>> NOISE GATE ready — floor={floor}  threshold={_noise_gate_rms} RMS", flush=True)
         return data
@@ -242,8 +253,8 @@ def apply_noise_gate(data: bytes) -> bytes:
         # Phase 3 — EMA drift during quiet frames
         if _ema_noise_floor is not None:
             _ema_noise_floor = _EMA_ALPHA * rms + (1.0 - _EMA_ALPHA) * _ema_noise_floor
-            updated = max(int(_ema_noise_floor * 2.0), 150)
-            _noise_gate_rms = min(updated, 1000)
+            updated = max(int(_ema_noise_floor * _GATE_FLOOR_MULT), _GATE_MIN_RMS)
+            _noise_gate_rms = min(updated, _GATE_MAX_RMS)
         if _gate_open:
             if _gate_hold_counter > 0:
                 _gate_hold_counter -= 1

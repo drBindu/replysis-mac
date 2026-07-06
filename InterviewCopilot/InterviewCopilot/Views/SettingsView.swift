@@ -45,6 +45,23 @@ struct SettingsView: View {
                             }
                         }
 
+                        // Audio Capture — the user's stealth/accuracy trade-off, tucked into
+                        // Settings instead of a main-UI button so the main window stays clean.
+                        settingsSection("AUDIO CAPTURE") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                audioModeRow(
+                                    title: "System audio only",
+                                    detail: "Fully invisible — mic is never used, no orange indicator, nothing to find if checked.",
+                                    selected: !vm.micCaptureEnabled
+                                ) { vm.setMicCaptureEnabled(false) }
+                                audioModeRow(
+                                    title: "System audio + my voice",
+                                    detail: "Also transcribes what you say. macOS shows its orange mic indicator only while you're actively listening.",
+                                    selected: vm.micCaptureEnabled
+                                ) { vm.setMicCaptureEnabled(true) }
+                            }
+                        }
+
                         // Window opacity is controlled live from the profile menu
                         // (avatar → Window opacity slider), so it's not duplicated here.
 
@@ -66,7 +83,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .frame(width: 420, height: 480)
+        .frame(width: 420, height: 560)
     }
 
     func settingsSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -92,6 +109,31 @@ struct SettingsView: View {
                 Spacer()
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(Color(hex: selected ? "#0c2a40" : "#111827"))
+            .cornerRadius(6)
+        }
+        .buttonStyle(.plain)
+    }
+
+    func audioModeRow(title: String, detail: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(selected ? Color(hex: "#38bdf8") : Color(hex: "#4b5563"))
+                    .font(.system(size: 14))
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(selected ? .white : Color(hex: "#9ca3af"))
+                    Text(detail)
+                        .font(.system(size: 10))
+                        .foregroundColor(Color(hex: "#6b7280"))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 9)
             .background(Color(hex: selected ? "#0c2a40" : "#111827"))
             .cornerRadius(6)
         }

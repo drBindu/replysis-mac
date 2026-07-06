@@ -187,6 +187,14 @@ class MainViewModel {
             // startNewSession(). showProfile=true is our mutex for "session already active".
             guard restored && !showProfile else { isRestoringSession = false; return }
             showProfile = true   // claim the mutex before any await below
+            // ROOT-CAUSE FIX for "Space does nothing until I click something": isLoggedIn
+            // is already true here, but the two awaits below (credits, Speechmatics key)
+            // can take real network time. The old code only unlocked the global Space tap
+            // deep inside startNewSession(), AFTER both awaits — so for that whole window,
+            // the global tap kept treating the user as signed out and let Space pass
+            // through untouched (only a focus change elsewhere happened to fix it). Refresh
+            // the gate the instant we know isLoggedIn, not after the network round-trips.
+            refreshHotkeyGate()
             profileName = session.firstName
             profilePlan = "\(session.plan) plan"
             avatarInitials = session.initials
@@ -301,6 +309,13 @@ class MainViewModel {
                 let micStatus            = AVCaptureDevice.authorizationStatus(for: .audio)
                 self.permMicrophone      = micStatus == .authorized
                 self.micDenied           = micStatus == .denied
+                // Safety net for the global-Space gate: re-sync it every second for the
+                // first 5 minutes after launch, in ADDITION to the explicit refreshes at
+                // login/logout. This guarantees Space can never get stuck thinking the user
+                // is signed out, no matter which async path updates isLoggedIn first — the
+                // exact bug that made Space (and the mic) do nothing until something else
+                // (like opening the debug log) happened to trigger a refresh.
+                self.refreshHotkeyGate()
                 // permScreenRecording is set once by registerScreenRecording() via SCKit.
                 // Do not poll it here — polling SCKit every second causes "Currently Sharing".
                 // Stop after 5 min from the first activation, even across multiple reopens.
@@ -445,44 +460,45 @@ class MainViewModel {
             return
         }
 
-        // Lazy microphone permission — the ONLY mic UI is the native macOS popup, fired the
-        // first time the user starts listening. No custom permission screens. If granted,
-        // the engine restarts in BOTH mode so it transcribes the user's voice (mic) AND the
-        // interviewer (system-audio tap). If denied, we keep going with system audio only
-        // (interviewer still transcribed) and never nag again.
-        let micAuth = AVCaptureDevice.authorizationStatus(for: .audio)
-        if micAuth == .notDetermined {
-            // Guard prevents a re-entrant loop: user hammers Space while popup is open →
-            // second call would requestAccess again → callback calls handleSpacePress again.
-            guard !isMicPermissionRequesting else { return }
-            isMicPermissionRequesting = true
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.isMicPermissionRequesting = false
-                    self.permMicrophone = granted
-                    self.micDenied = !granted
-                    if granted && self.engine.isRunning {
-                        // Restart so the engine picks up the mic (relaunches in BOTH mode).
-                        // The mic is opened idle and only records while listening, so this
-                        // doesn't turn on the orange dot until the user is actually speaking.
-                        dlog("Mic granted on first Space — restarting engine in BOTH mode", tag: "SPACE")
-                        self.engine.stop()
-                        self.engine.start(smKey: self.session.speechmaticsKey)
+        // Lazy microphone permission — ONLY when the user has opted into it from Settings
+        // (Audio Capture: "System audio + my voice"). With the default "System audio only"
+        // mode, the mic is never touched and never prompted for, so the app stays fully
+        // invisible (no orange indicator, nothing in the mic list if checked).
+        if micCaptureEnabled {
+            let micAuth = AVCaptureDevice.authorizationStatus(for: .audio)
+            if micAuth == .notDetermined {
+                // Guard prevents a re-entrant loop: user hammers Space while popup is open →
+                // second call would requestAccess again → callback calls handleSpacePress again.
+                guard !isMicPermissionRequesting else { return }
+                isMicPermissionRequesting = true
+                AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.isMicPermissionRequesting = false
+                        self.permMicrophone = granted
+                        self.micDenied = !granted
+                        if granted && self.engine.isRunning {
+                            // Restart so the engine picks up the mic (relaunches in BOTH mode).
+                            // The mic is opened idle and only records while listening, so this
+                            // doesn't turn on the orange dot until the user is actually speaking.
+                            dlog("Mic granted on first Space — restarting engine in BOTH mode", tag: "SPACE")
+                            self.engine.stop()
+                            self.engine.start(smKey: self.session.speechmaticsKey)
+                        }
+                        self.handleSpacePress(source: source)
                     }
-                    self.handleSpacePress(source: source)
                 }
+                return
             }
-            return
+            if micAuth != .authorized && !engine.systemAudioAvailable {
+                // Mic denied AND no system-audio tap (macOS < 14.2) → nothing can capture audio.
+                // Open the mic privacy pane directly (native, no custom UI).
+                NSWorkspace.shared.open(
+                    URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+                return
+            }
+            // Mic denied but the system tap works → continue with system audio only.
         }
-        if micAuth != .authorized && !engine.systemAudioAvailable {
-            // Mic denied AND no system-audio tap (macOS < 14.2) → nothing can capture audio.
-            // Open the mic privacy pane directly (native, no custom UI).
-            NSWorkspace.shared.open(
-                URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
-            return
-        }
-        // Mic denied but the system tap works → continue with system audio only.
         // Accessibility is never a gate here: the local key monitor works without it.
 
         dlog("SPACE pressed from \(source) | loggedIn=\(session.isLoggedIn) | engineRunning=\(engine.isRunning) | isMuted=\(isMuted) | isProcessing=\(isProcessing)", tag: "SPACE")
@@ -983,6 +999,9 @@ class MainViewModel {
         showProfile = true; profileName = session.firstName
         profilePlan = "\(session.plan) plan"; avatarInitials = session.initials
         showCreditsBadge = true
+        // Unlock the global Space tap the instant we know the user is signed in — don't
+        // wait for the network calls below (same fix as restoreSession()).
+        refreshHotkeyGate()
         Task { @MainActor in
             await fetchCredits()
             let smOk = await session.fetchSpeechmaticsKeyAsync()
@@ -1047,6 +1066,7 @@ class MainViewModel {
         creditsTimer?.invalidate();    creditsTimer = nil
         showCreditsBadge = false; creditsText = "—"; endSession()
         showProfile = false
+        refreshHotkeyGate()   // re-lock Space out globally now that the user is signed out
     }
 
     // MARK: - Resume
@@ -1141,14 +1161,46 @@ class MainViewModel {
             mainWindowOpacity = obj["mainOpacity"] as? Double ?? 1.0
             overlayOpacity = obj["overlayOpacity"] as? Double ?? 0.90
             conciseAnswers = obj["concise"] as? Bool ?? false
+            // Default OFF: system-audio-only, so a fresh install is fully invisible (no
+            // mic, no orange indicator) until the user explicitly opts into their own
+            // voice being transcribed too, from Settings.
+            micCaptureEnabled = obj["micCaptureEnabled"] as? Bool ?? false
         }
     }
 
     func saveSettings() {
         let path = engine.appDataFolder.appendingPathComponent("settings.json")
         let obj: [String: Any] = ["useGroq": useGroq, "mainOpacity": mainWindowOpacity,
-                                  "overlayOpacity": overlayOpacity, "concise": conciseAnswers]
+                                  "overlayOpacity": overlayOpacity, "concise": conciseAnswers,
+                                  "micCaptureEnabled": micCaptureEnabled]
         try? JSONSerialization.data(withJSONObject: obj).write(to: path)
+    }
+
+    // MARK: - Audio capture mode (Settings toggle)
+
+    /// Off (default) = system-audio-only: only the interviewer is transcribed, the mic is
+    /// NEVER opened, so macOS shows no orange indicator — fully invisible, safe to use in
+    /// a real interview with nothing to reveal if the mic icon is checked.
+    /// On = system audio + the user's own voice via the microphone. macOS will show its
+    /// orange mic indicator while actively listening (this cannot be hidden — it's an OS
+    /// privacy guarantee no app can bypass), but the mic only records during those moments.
+    var micCaptureEnabled = false
+
+    /// Called from Settings when the user switches audio-capture mode. Applies immediately:
+    /// requests the native mic permission if needed, and restarts the engine so the change
+    /// takes effect without waiting for the next launch.
+    func setMicCaptureEnabled(_ enabled: Bool) {
+        guard micCaptureEnabled != enabled else { return }
+        micCaptureEnabled = enabled
+        saveSettings()
+        dlog("Audio capture mode changed → micCaptureEnabled=\(enabled)", tag: "SETTINGS")
+
+        if enabled && AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+            requestMicrophonePermission()   // native popup; engine restart below picks it up
+        }
+        guard session.isLoggedIn, engine.isRunning else { return }
+        engine.stop()
+        engine.start(smKey: session.speechmaticsKey)
     }
 
     // MARK: - Helpers

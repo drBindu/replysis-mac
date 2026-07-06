@@ -150,6 +150,24 @@ struct AnswerOverlayView: View {
                     .foregroundColor(.white.opacity(0.4))
             }
             Spacer()
+            // Manual screen-analysis trigger — eye mode had no way to fire F9 other than
+            // the physical key, unlike the main window's visible Analyze button.
+            Button(action: { vm.runScreenAnalysis() }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "viewfinder")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("Analyze")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .foregroundColor(Color(hex: "#38bdf8"))
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(Color(hex: "#38bdf8").opacity(0.12))
+                .cornerRadius(5)
+            }
+            .buttonStyle(.plain)
+            .disabled(vm.isProcessing || vm.isScreenAnalyzing)
+            .opacity(vm.isProcessing || vm.isScreenAnalyzing ? 0.4 : 1)
+
             Image(systemName: "eye.fill")
                 .font(.system(size: 10))
                 .foregroundColor(.white.opacity(0.22))

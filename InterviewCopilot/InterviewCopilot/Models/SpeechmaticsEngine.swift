@@ -134,7 +134,17 @@ class SpeechmaticsEngine {
         //
         // Mic permission is requested lazily on the first Space press. Until it's granted
         // the engine runs system-only; once granted it restarts in BOTH mode.
-        let micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        // Read the Settings toggle (System audio only vs. + my voice) directly from disk so
+        // every start() call site picks it up without threading state through MainViewModel.
+        // Default OFF (system-audio-only) — a fresh install stays fully invisible until the
+        // user explicitly opts in to their own voice being transcribed too.
+        let settingsPath = appDataFolder.appendingPathComponent("settings.json")
+        let micCaptureEnabled: Bool = {
+            guard let data = try? Data(contentsOf: settingsPath),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+            return obj["micCaptureEnabled"] as? Bool ?? false
+        }()
+        let micGranted = micCaptureEnabled && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         var startedSysTap = false
         if !sysAudioCrashed, #available(macOS 14.2, *) {
             let fifo = appDataFolder.appendingPathComponent("sysaudio.pcm").path
