@@ -215,41 +215,19 @@ class MainViewModel {
         permMicrophone      = micStatus == .authorized
         micDenied           = micStatus == .denied
 
-        // Only prompt for the mic if it will actually be used. With the system-audio tap
-        // bundled, the engine runs system-audio-only and never opens the mic, so requesting
-        // it here would be a needless extra popup. (If the tap fails at runtime, the mic is
-        // opened then and macOS prompts lazily.)
-        if micStatus == .notDetermined && !engine.systemAudioAvailable {
-            // Mic popup fires FIRST — before the permission sheet opens — so the
-            // system dialog is clearly visible with nothing behind it. The gate
-            // appears only after the user responds to the popup.
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-                Task { @MainActor [weak self] in
-                    guard let self = self else { return }
-                    self.permMicrophone = granted
-                    self.micDenied      = !granted
-                    self.openGateIfNeeded()
-                }
+        // NO upfront mic popup — the native mic prompt fires on the FIRST Space press
+        // (the first real mic use, see handleSpacePress). Screen Recording prompts
+        // natively on the first F9. The only launch-time prompt is Accessibility (needed
+        // for the global Space bar), and it's shown ONCE ever — never again after that.
+        if !permAccessibility {
+            let promptedKey = "didPromptAccessibility"
+            if !UserDefaults.standard.bool(forKey: promptedKey) {
+                UserDefaults.standard.set(true, forKey: promptedKey)
+                requestAccessibilityPrompt()
             }
-            if permAccessibility { setupHotkeys(); hotkeyActive = true }
-            return
         }
+        startPermissionPolling()   // auto-attaches the global hotkey the moment AX is granted
 
-        openGateIfNeeded()
-
-        if permAccessibility {
-            setupHotkeys()
-            hotkeyActive = true
-        } else {
-            hotkeyActive = false
-        }
-    }
-
-    private func openGateIfNeeded() {
-        // Skip the mic prompt when system audio is available (mic is only a fallback there).
-        if !permMicrophone && !engine.systemAudioAvailable { requestMicrophonePermission() }
-        if !permAccessibility { requestAccessibilityPrompt() }
-        startPermissionPolling()   // detects when Accessibility is granted and sets up hotkeys
         if permAccessibility {
             setupHotkeys()
             hotkeyActive = true
@@ -451,41 +429,44 @@ class MainViewModel {
             return
         }
 
-        // Permission gate — ONLY require the mic when it's actually the audio source.
-        // In system-audio mode the in-app Core Audio tap provides the audio and prompts
-        // for its own "record system audio" permission when the engine starts, so gating
-        // the whole app behind the mic here is both a needless prompt AND blocks system
-        // mode. Skip it entirely when system audio is available.
-        if !engine.systemAudioAvailable {
-            let micAuth = AVCaptureDevice.authorizationStatus(for: .audio)
-            if micAuth == .notDetermined {
-                // Guard prevents a re-entrant loop: user hammers Space while popup is open →
-                // second call would requestAccess again → callback calls handleSpacePress again.
-                guard !isMicPermissionRequesting else { return }
-                isMicPermissionRequesting = true
-                AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        self.isMicPermissionRequesting = false
-                        self.permMicrophone = granted
-                        if granted && AXIsProcessTrusted() {
-                            self.handleSpacePress(source: source)
-                        } else {
-                            self.openPermissionSetup()
-                        }
+        // Lazy microphone permission — the ONLY mic UI is the native macOS popup, and it
+        // fires exactly when the user first starts listening (their first real mic use).
+        // No custom permission screens. If granted, the engine restarts in BOTH mode so
+        // it hears the user's voice (mic) AND the interviewer (system-audio tap). If
+        // denied, we continue with system audio only and never nag again.
+        let micAuth = AVCaptureDevice.authorizationStatus(for: .audio)
+        if micAuth == .notDetermined {
+            // Guard prevents a re-entrant loop: user hammers Space while popup is open →
+            // second call would requestAccess again → callback calls handleSpacePress again.
+            guard !isMicPermissionRequesting else { return }
+            isMicPermissionRequesting = true
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.isMicPermissionRequesting = false
+                    self.permMicrophone = granted
+                    self.micDenied = !granted
+                    if granted && self.engine.isRunning {
+                        // Pick up the mic without losing the session: restart the
+                        // engine — it now launches in BOTH mode (mic + system tap).
+                        dlog("Mic granted on first Space — restarting engine in BOTH mode", tag: "SPACE")
+                        self.engine.stop()
+                        self.engine.start(smKey: self.session.speechmaticsKey)
                     }
+                    self.handleSpacePress(source: source)
                 }
-                return
             }
-            if micAuth != .authorized {
-                openPermissionSetup()
-                return
-            }
+            return
         }
-        // BUG-19 FIX: mic is authorized — proceed even if Accessibility isn't granted.
-        // The local key monitor works without Accessibility; the global Space tap is OPTIONAL.
-        // Previously this gated on !AXIsProcessTrusted() too, blocking the whole app whenever
-        // Accessibility was missing even though mic was authorized and the local monitor worked.
+        if micAuth != .authorized && !engine.systemAudioAvailable {
+            // Mic denied AND no system-audio tap (macOS < 14.2): nothing can capture
+            // audio. Open the mic privacy pane directly — no custom UI in between.
+            NSWorkspace.shared.open(
+                URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+            return
+        }
+        // Mic denied but the system-audio tap works → keep going with system audio only.
+        // Accessibility is never a gate here: the local key monitor works without it.
 
         dlog("SPACE pressed from \(source) | loggedIn=\(session.isLoggedIn) | engineRunning=\(engine.isRunning) | isMuted=\(isMuted) | isProcessing=\(isProcessing)", tag: "SPACE")
 
@@ -571,7 +552,12 @@ class MainViewModel {
 
     private func startAI(manualQuestion: String? = nil) {
         let q = manualQuestion ?? extractLatestQuestion(from: transcript)
-        guard !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { updateMicUI(); return }
+        guard !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            // Honest feedback instead of silently doing nothing — the #1 "is it broken?"
+            // moment is pressing Space twice and seeing zero reaction.
+            aiAnswerHint = "No speech was captured. Speak (or play the interviewer's audio), then press Space again."
+            updateMicUI(); return
+        }
         guard session.isLoggedIn else { aiAnswer = "⚠ Please sign in to use AI answers."; return }
         guard session.isUnlimited || session.credits > 0 else {
             aiAnswer = "⚠ 0 credits remaining. Visit coopilotxai.com to top up."; return

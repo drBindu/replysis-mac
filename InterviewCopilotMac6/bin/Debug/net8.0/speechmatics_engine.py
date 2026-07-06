@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import argparse
 import asyncio
 import pyaudio
@@ -123,7 +124,7 @@ print(f">>> Data folder   : {APP_DATA}", flush=True)
 print(f">>> API key       : {args.key[:8]}...", flush=True)
 print(f">>> Audio mode    : {args.mode}", flush=True)
 
-if args.mode in ("mic", "both"):
+if args.mode == "mic":
     mic_ok = test_microphone()
     if not mic_ok:
         print(">>> FATAL: Microphone unavailable. Exiting.", flush=True)
@@ -303,8 +304,14 @@ def open_mic(fatal=True):
             exit(1)
         return False
 
-if args.mode in ("mic", "both"):
+if args.mode == "mic":
     open_mic(fatal=True)
+elif args.mode == "both":
+    # In both-mode the mic is a best-effort add-on: if it can't open (permission
+    # denied, no input device) we keep going with system audio only instead of dying.
+    if not open_mic(fatal=False):
+        print(">>> BOTH mode: mic unavailable — continuing with SYSTEM audio only", flush=True)
+        args.mode = "system"
 
 # BlackHole fallback for system audio (when no SystemAudioCapture binary)
 if args.mode == "both" and args.syscapture is None:
@@ -462,6 +469,8 @@ def start_sys_capture():
 
 
 def read_sys_capture_chunk(num_frames):
+    """Non-blocking system-audio read (used in BOTH mode, where the blocking mic
+    read paces the loop). Returns whatever is buffered, or silence if empty."""
     needed = num_frames * 2
     with sys_capture_lock:
         # If buffer has grown beyond 2 seconds, drop the oldest audio so we
@@ -475,6 +484,33 @@ def read_sys_capture_chunk(num_frames):
             del sys_capture_buffer[:needed]
             return data
     return SILENCE
+
+
+def read_sys_capture_chunk_paced(num_frames):
+    """Blocking, real-time-paced system-audio read (used in SYSTEM-only mode).
+
+    CRITICAL: this must never return instantly when the buffer is empty. The
+    Speechmatics SDK calls read() in a tight loop — if we return synthetic
+    silence immediately, the websocket gets flooded with fabricated silence far
+    faster than real time, real captured audio queues behind it, the 2s cap
+    trims it away, and the transcript stays empty forever (the 'buffer=2000ms
+    pegged / empty PARTIAL' failure). Instead we wait up to one chunk-duration
+    for real audio, and only then emit ONE real-time-paced silence chunk."""
+    needed = num_frames * 2
+    deadline = time.monotonic() + (num_frames / SAMPLE_RATE)
+    while True:
+        with sys_capture_lock:
+            if len(sys_capture_buffer) > SCK_BUF_MAX:
+                excess = len(sys_capture_buffer) - SCK_BUF_MAX
+                del sys_capture_buffer[:excess]
+            if len(sys_capture_buffer) >= needed:
+                data = bytes(sys_capture_buffer[:needed])
+                del sys_capture_buffer[:needed]
+                return data
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return SILENCE   # nothing playing — emit silence at real-time pace
+        time.sleep(min(0.005, remaining))
 
 
 using_screencapturekit = False
@@ -598,6 +634,10 @@ class SmartAudioStream:
                     mic_stream.read(num_frames, exception_on_overflow=False)
                 except Exception:
                     pass
+            else:
+                # No mic stream to pace the loop — sleep one chunk-duration so the
+                # paused stream emits silence at REAL-TIME rate, never in a tight loop.
+                time.sleep(num_frames / SAMPLE_RATE)
             # Drain captured system audio too — the ScreenCaptureKit thread keeps
             # filling sys_capture_buffer while paused, so without this up to ~2s of
             # audio captured during mute gets transcribed right after unmute,
@@ -621,13 +661,21 @@ class SmartAudioStream:
             data = apply_noise_gate(data)
         elif mode == "system":
             if using_screencapturekit:
-                data = read_sys_capture_chunk(num_frames)
+                # Paced read — blocks until real audio arrives (or one chunk-duration
+                # passes), so the websocket is never flooded with synthetic silence.
+                data = read_sys_capture_chunk_paced(num_frames)
             elif sys_stream:
                 data = sys_stream.read(num_frames, exception_on_overflow=False)
             else:
                 data = SILENCE
         elif mode == "both":
-            raw_mic  = mic_stream.read(num_frames, exception_on_overflow=False) if mic_stream else SILENCE
+            # The blocking mic read paces this loop at real time.
+            try:
+                raw_mic = mic_stream.read(num_frames, exception_on_overflow=False) if mic_stream else SILENCE
+            except OSError:
+                raw_mic = SILENCE
+            if not mic_stream:
+                time.sleep(num_frames / SAMPLE_RATE)   # keep real-time pace without a mic
             mic_data = apply_noise_gate(raw_mic)   # gate before mixing
             if using_screencapturekit:
                 sys_data = read_sys_capture_chunk(num_frames)
@@ -640,6 +688,7 @@ class SmartAudioStream:
                 sys_data = SILENCE
             data = mix_audio(mic_data, sys_data)
         else:
+            time.sleep(num_frames / SAMPLE_RATE)   # unknown mode — pace, never tight-loop
             data = SILENCE
 
         if os.path.exists(RECORD_FLAG):
