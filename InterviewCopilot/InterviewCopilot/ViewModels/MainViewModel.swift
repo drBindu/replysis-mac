@@ -424,7 +424,11 @@ class MainViewModel {
     private func setupHotkeys() {
         // Guard: creating a second GlobalHotkey tears down the current tap for ~1 frame,
         // causing observable hotkey dropouts. Only create if not already registered.
-        guard hotkey == nil else { return }
+        guard hotkey == nil else {
+            dlog("setupHotkeys: already have an instance — skipping (this is normal)", tag: "HOTKEY")
+            return
+        }
+        dlog("setupHotkeys: creating new GlobalHotkey instance", tag: "HOTKEY")
         hotkey = GlobalHotkey(
             onSpacePressed: { [weak self] in self?.handleSpacePress(source: "GLOBAL") },
             onF8Pressed:    { [weak self] in self?.runScreenAnalysis() },
@@ -448,6 +452,7 @@ class MainViewModel {
     /// Called by AppDelegate after setActivationPolicy(.accessory) — the policy change can
     /// invalidate CGEventTaps created earlier. Re-create the tap in the final policy state.
     func reinstateHotkeys() {
+        dlog("reinstateHotkeys called — AXIsProcessTrusted=\(AXIsProcessTrusted())", tag: "HOTKEY")
         hotkey = nil
         if AXIsProcessTrusted() { setupHotkeys(); hotkeyActive = true }
     }

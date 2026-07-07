@@ -20,8 +20,15 @@ class GlobalHotkey {
 
     /// Called on the main thread whenever sign-in state or text-field focus changes.
     func updateGate(loggedIn: Bool, editing: Bool) {
+        let changed = gateLoggedIn != loggedIn || gateEditing != editing
         gateLoggedIn = loggedIn
         gateEditing  = editing
+        // Only log actual transitions (this fires often — the 1s safety-net poll calls it
+        // every tick) so a captured log shows exactly WHEN the gate became correct/incorrect
+        // relative to when Space was pressed, instead of a wall of identical lines.
+        if changed {
+            Task { @MainActor in dlog("Gate updated → loggedIn=\(loggedIn) editing=\(editing)", tag: "HOTKEY") }
+        }
     }
 
     private var lastSpaceTime: Date = .distantPast
