@@ -266,32 +266,28 @@ def apply_noise_gate(data: bytes) -> bytes:
 mic_stream = None
 sys_stream = None
 p = None
-# The mic is opened but NOT started at launch (start=False below), so macOS shows NO
-# orange microphone indicator while the app sits idle. It's started on the first unmute
-# and then kept running for the rest of the session (see set_mic_active).
 mic_stream_active = False
 _mic_starting = False   # guards against spawning multiple starter threads
 
+# INSTANT-RESPONSE DESIGN (chosen over "dot only while listening" after measuring the
+# real cost on-device): mic_stream.start_stream() can take ~20+ seconds the FIRST time —
+# a one-time macOS/CoreAudio hardware wake-up that has nothing to do with mute state or
+# whether any audio is playing (confirmed: it fires on its own timeline regardless).
+# Paying that cost on the user's first Space press meant their own voice wasn't picked up
+# for ~20+ seconds into their first turn. Instead we warm the mic up ONCE, in the
+# background, the moment the engine starts (see warmup_mic(), called right after
+# open_mic() below) — while the user is still on the sign-in/resume screen, well before
+# they could plausibly press Space. The trade-off, accepted deliberately: the orange mic
+# indicator is on for the whole time the app runs in 'System audio + my voice' mode, not
+# just while actively listening. Users who want zero indicator use 'System audio only'.
 
-def set_mic_active(active: bool):
-    """Start the mic ONCE, in a BACKGROUND thread, then leave it running.
 
-    Why a thread: on macOS, mic_stream.start_stream() can BLOCK for many seconds when the
-    app is also running a Core Audio system-audio tap — the mic input won't start until the
-    shared audio system becomes active, which (with an aggregate tap device present) only
-    happens once some audio is actually flowing. Confirmed in a live log: start_stream()
-    hung ~18s and unblocked the exact instant system audio began playing. Calling it inline
-    froze the ENTIRE audio read loop, so nothing (not even system audio) was transcribed
-    until then. Running it off-thread keeps the loop responsive — it just uses silence for
-    the mic channel until the mic actually comes up, then reads it normally.
-
-    Why keep it running (no stop on mute): stopping and restarting re-incurs that startup
-    cost. Once warm, we leave it on and gate to silence in software when muted. In
-    'System audio + my voice' mode the orange indicator therefore stays on for the session
-    (which is inherent to using the mic); users who want zero indicator pick the
-    'System audio only' mode, which never opens the mic at all."""
+def warmup_mic():
+    """Start the mic ONCE, in a background thread, as early in the engine's life as
+    possible — see the module-level comment above for why this trades an always-on
+    indicator for eliminating the real first-listen delay."""
     global mic_stream, mic_stream_active, _mic_starting
-    if mic_stream is None or not active or mic_stream_active or _mic_starting:
+    if mic_stream is None or mic_stream_active or _mic_starting:
         return
     _mic_starting = True
 
@@ -300,7 +296,7 @@ def set_mic_active(active: bool):
         try:
             mic_stream.start_stream()
             mic_stream_active = True
-            print(">>> MIC: recording ON (listening)", flush=True)
+            print(">>> MIC: warmed up and recording (starts at launch, stays on for the session)", flush=True)
         except Exception as e:
             print(f">>> MIC start error: {e}", flush=True)
         finally:
@@ -364,12 +360,15 @@ def open_mic(fatal=True):
 
 if args.mode == "mic":
     open_mic(fatal=True)
+    warmup_mic()   # start now, at launch — see the design comment above warmup_mic()
 elif args.mode == "both":
     # In both-mode the mic is a best-effort add-on: if it can't open (permission
     # denied, no input device) we keep going with system audio only instead of dying.
     if not open_mic(fatal=False):
         print(">>> BOTH mode: mic unavailable — continuing with SYSTEM audio only", flush=True)
         args.mode = "system"
+    else:
+        warmup_mic()   # start now, at launch — see the design comment above warmup_mic()
 
 # BlackHole fallback for system audio (when no SystemAudioCapture binary)
 if args.mode == "both" and args.syscapture is None:
@@ -705,9 +704,10 @@ class SmartAudioStream:
 
         paused = os.path.exists(PAUSE_FLAG)
 
-        # Helper: read the mic WITHOUT ever blocking the loop. Only touch the stream once
-        # it's actually running (started off-thread by set_mic_active); until then, silence.
-        # Draining it even while paused prevents PortAudio input-overflow build-up.
+        # Helper: read the mic WITHOUT ever blocking the loop. The mic is warmed up ONCE at
+        # engine launch (see warmup_mic(), called at startup, not here) — by the time the
+        # user is even signed in this is normally already true. Until it's confirmed active,
+        # silence, so a slow warmup can never freeze the read loop.
         def _read_mic():
             if mic_stream_active and mic_stream is not None:
                 try:
@@ -726,10 +726,6 @@ class SmartAudioStream:
                 with sys_capture_lock:
                     sys_capture_buffer.clear()
             return SILENCE
-
-        # LISTENING → kick off the mic (once, in the background — never blocks this loop).
-        if args.mode in ("mic", "both"):
-            set_mic_active(True)
 
         mode = args.mode
 
