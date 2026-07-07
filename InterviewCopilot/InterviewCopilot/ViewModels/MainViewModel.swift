@@ -227,18 +227,35 @@ class MainViewModel {
         permMicrophone      = micStatus == .authorized
         micDenied           = micStatus == .denied
 
+        dlog("checkAndRequestPermissions: AXIsProcessTrusted=\(permAccessibility) mic=\(micStatus.rawValue)", tag: "PERM")
+
         // NO upfront mic popup — the native mic prompt fires on the FIRST Space press
         // (the first real mic use, see handleSpacePress). Screen Recording prompts
-        // natively on the first F9. The only launch-time prompt is Accessibility (needed
-        // for the global Space bar), and it's shown ONCE ever — never again after that.
+        // natively on the first F9.
+        //
+        // Accessibility is what powers the global Space bar (the CGEventTap). If it isn't
+        // granted, Space only works while our own window is focused — the "I have to click
+        // the app every time" bug. We MUST prompt whenever it's genuinely not granted.
+        //
+        // BUG FIX (the real cause of the recurring complaint): this used to prompt only
+        // once ever, tracked in a UserDefaults flag — but UserDefaults PERSISTS across app
+        // reinstalls (and even a full uninstall + data wipe), so after the very first
+        // install the app NEVER re-requested Accessibility again, even on a fresh reinstall
+        // where macOS had wiped the grant. The user was left permanently without the global
+        // hotkey and the app silently never asked. Now we prompt every launch that starts
+        // untrusted (the in-session hasPromptedAccessibility guard stops within-run spam;
+        // macOS itself only shows its dialog once per launch anyway).
         if !permAccessibility {
-            let promptedKey = "didPromptAccessibility"
-            if !UserDefaults.standard.bool(forKey: promptedKey) {
-                UserDefaults.standard.set(true, forKey: promptedKey)
-                requestAccessibilityPrompt()
-            }
+            dlog("Accessibility NOT granted — prompting + opening System Settings so the global Space bar can work", tag: "PERM")
+            requestAccessibilityPrompt()
+            // Also jump straight to the right Settings pane — the bare system prompt is easy
+            // to miss/dismiss, and a stale grant (toggle looks ON but AXIsProcessTrusted is
+            // false after an app replacement) is only fixable by the user toggling it here.
+            NSWorkspace.shared.open(
+                URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+            showHotkeyBanner = true
         }
-        startPermissionPolling()   // auto-attaches the global hotkey the moment AX is granted
+        startPermissionPolling()   // relaunches the moment AX flips to granted (see the poll loop)
 
         if permAccessibility {
             setupHotkeys()
