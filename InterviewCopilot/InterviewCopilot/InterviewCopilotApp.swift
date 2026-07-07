@@ -149,6 +149,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.contentView?.clearLayerBackgrounds()
 
         panel.makeKeyAndOrderFront(nil)
+        // Activate the app so its panel is the KEY window immediately. Without this, an
+        // .accessory app can show a visible panel that is NOT the active window, so the
+        // in-app (local) Space/F8/F9 monitor receives nothing until the user clicks the
+        // panel — the "I have to click the app before Space works" bug. Activating here
+        // makes Space work the moment the window appears. (Background/other-app use still
+        // relies on the global Accessibility tap.)
+        NSApp.activate(ignoringOtherApps: true)
         self.panel = panel
         vm.mainPanel = panel   // give ViewModel a direct reference (needed with .accessory policy)
     }
@@ -158,6 +165,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { false }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        NSApp.activate(ignoringOtherApps: true)
         panel?.makeKeyAndOrderFront(nil)
         return false
     }

@@ -141,8 +141,8 @@ class SpeechmaticsEngine {
         let settingsPath = appDataFolder.appendingPathComponent("settings.json")
         let micCaptureEnabled: Bool = {
             guard let data = try? Data(contentsOf: settingsPath),
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
-            return obj["micCaptureEnabled"] as? Bool ?? false
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return true }
+            return obj["micCaptureEnabled"] as? Bool ?? true
         }()
         let micGranted = micCaptureEnabled && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         var startedSysTap = false

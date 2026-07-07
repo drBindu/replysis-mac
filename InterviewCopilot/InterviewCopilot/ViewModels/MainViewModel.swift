@@ -1161,10 +1161,10 @@ class MainViewModel {
             mainWindowOpacity = obj["mainOpacity"] as? Double ?? 1.0
             overlayOpacity = obj["overlayOpacity"] as? Double ?? 0.90
             conciseAnswers = obj["concise"] as? Bool ?? false
-            // Default OFF: system-audio-only, so a fresh install is fully invisible (no
-            // mic, no orange indicator) until the user explicitly opts into their own
-            // voice being transcribed too, from Settings.
-            micCaptureEnabled = obj["micCaptureEnabled"] as? Bool ?? false
+            // Default ON: system audio + the user's own voice, so Space captures both out
+            // of the box. Users who want to stay fully invisible in a real interview can
+            // switch to system-audio-only in Settings.
+            micCaptureEnabled = obj["micCaptureEnabled"] as? Bool ?? true
         }
     }
 
@@ -1178,13 +1178,14 @@ class MainViewModel {
 
     // MARK: - Audio capture mode (Settings toggle)
 
-    /// Off (default) = system-audio-only: only the interviewer is transcribed, the mic is
-    /// NEVER opened, so macOS shows no orange indicator — fully invisible, safe to use in
-    /// a real interview with nothing to reveal if the mic icon is checked.
-    /// On = system audio + the user's own voice via the microphone. macOS will show its
-    /// orange mic indicator while actively listening (this cannot be hidden — it's an OS
-    /// privacy guarantee no app can bypass), but the mic only records during those moments.
-    var micCaptureEnabled = false
+    /// On (default) = system audio + the user's own voice via the microphone, so Space
+    /// captures both the interviewer AND what the user says. macOS shows its orange mic
+    /// indicator while actively listening (this cannot be hidden — it's an OS privacy
+    /// guarantee no app can bypass), but the mic only records during those moments.
+    /// Off = system-audio-only: only the interviewer is transcribed, the mic is NEVER
+    /// opened, so there's no orange indicator — fully invisible, for users who want to
+    /// stay hidden in a real interview with nothing to reveal if the mic icon is checked.
+    var micCaptureEnabled = true
 
     /// Called from Settings when the user switches audio-capture mode. Applies immediately:
     /// requests the native mic permission if needed, and restarts the engine so the change

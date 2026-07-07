@@ -135,7 +135,13 @@ class GlobalHotkey {
         case kVK_Space:
             // Signed out, or typing in our Ask box / a sign-in field → let Space behave
             // normally (type a space, scroll the front app). Don't toggle, don't consume.
-            if !gateLoggedIn || gateEditing { return false }
+            if !gateLoggedIn || gateEditing {
+                // Diagnostic: this is why a background Space press can appear to "do
+                // nothing" — the global tap DID see it but passed it through. If this logs
+                // while the user expects a toggle, the gate mirror is the culprit.
+                Task { @MainActor in dlog("GLOBAL Space passed through (gateLoggedIn=\(self.gateLoggedIn) gateEditing=\(self.gateEditing))", tag: "HOTKEY") }
+                return false
+            }
             let now = Date()
             // Swallow duplicates too, so a fast double-tap can never leak one Space out.
             guard now.timeIntervalSince(lastSpaceTime) >= spaceDebounceSecs else { return true }
