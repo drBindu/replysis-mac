@@ -233,6 +233,20 @@ class MainViewModel {
 
         dlog("checkAndRequestPermissions: AXIsProcessTrusted=\(permAccessibility) mic=\(micStatus.rawValue)", tag: "PERM")
 
+        // EARLIEST-POSSIBLE mic warmup: if mic is already authorized (the common case on
+        // every launch after the first), start priming the hardware right NOW — before the
+        // engine even spawns, before login/credits/key-fetch network calls, before anything.
+        // Measured on-device: the OS-level mic hardware wake-up takes ~18-20s NO MATTER WHEN
+        // it's triggered — moving the trigger earlier doesn't shorten it, it just gives more
+        // wall-clock time for it to finish in the background before the user wants to speak.
+        // This is strictly earlier than the engine's own warmup (which waits for sign-in +
+        // credits + key fetch first), so it buys several extra seconds of head start for
+        // free. Consistent with the user's chosen trade-off: the mic indicator may appear
+        // this early too, in exchange for the best possible shot at feeling instant.
+        if micCaptureEnabled && micStatus == .authorized {
+            MicPrimer.shared.start()
+        }
+
         // INSTANT-FIRST-LISTEN FIX: when the default "System audio + my voice" mode is on
         // and the mic hasn't been decided yet, request it NOW (at launch) instead of on the
         // first Space press. Confirmed cause of "the first Space is slow": granting the mic
@@ -249,6 +263,7 @@ class MainViewModel {
                     guard let self else { return }
                     self.permMicrophone = granted
                     self.micDenied = !granted
+                    if granted { MicPrimer.shared.start() }
                     // If the engine already came up in system-only mode before the user
                     // answered this popup, restart it into BOTH mode NOW (during launch,
                     // while they're still reading the UI) — so the FIRST Space press lands
