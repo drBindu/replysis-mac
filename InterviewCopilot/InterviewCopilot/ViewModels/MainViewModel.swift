@@ -302,9 +302,20 @@ class MainViewModel {
                 self.permInputMonitoring = MainViewModel.inputMonitoringGranted()
                 let prevAX = self.permAccessibility
                 self.permAccessibility   = AXIsProcessTrusted()
-                // Auto-setup hotkeys the instant Accessibility is granted — no relaunch needed.
+                // ROOT CAUSE of "Space only works after I click inside the app, every
+                // time": a CGEventTap created with .defaultTap only actually receives
+                // events reliably when Accessibility was ALREADY granted before this
+                // process launched (see GlobalHotkey.swift's own long-standing comment on
+                // this). Calling setupHotkeys() again in-place, mid-session, right after
+                // the user grants Accessibility in System Settings, creates a tap object
+                // that LOOKS fine (hotkeyActive=true, no error) but silently never fires —
+                // so the user is left thinking the global hotkey works when only the
+                // LOCAL monitor (window must be key) actually does, forever, for that
+                // whole run. The only reliable fix is a full relaunch: the NEW process
+                // starts already trusted, so its tap attaches correctly from birth.
                 if !prevAX && self.permAccessibility {
-                    self.setupHotkeys(); self.hotkeyActive = true
+                    dlog("Accessibility newly granted — relaunching so the global Space tap attaches correctly", tag: "HOTKEY")
+                    MainViewModel.relaunchApp()
                 }
                 let micStatus            = AVCaptureDevice.authorizationStatus(for: .audio)
                 self.permMicrophone      = micStatus == .authorized
