@@ -89,8 +89,22 @@ class SpeechmaticsEngine {
             .appendingPathComponent("Contents")
             .appendingPathComponent("Resources")
 
-        let binaryPath = baseDir.appendingPathComponent("speechmatics_engine")
-        let hasBinary = FileManager.default.fileExists(atPath: binaryPath.path)
+        // PyInstaller ONEDIR build (current): a FOLDER named speechmatics_engine containing
+        // the executable of the same name plus its dependencies, extracted once at BUILD
+        // time. This replaces the old onefile build, which re-extracted its entire bundled
+        // Python + numpy + pyaudio + speechmatics payload into a fresh /var/folders temp dir
+        // on EVERY launch — that self-extraction was the multi-second delay between process
+        // spawn and the engine's first printed line (confirmed in the debug log: the
+        // "Script folder" was a fresh _MEIxxxxx dir every time). Onedir removes that entirely.
+        let onedirPath = baseDir.appendingPathComponent("speechmatics_engine").appendingPathComponent("speechmatics_engine")
+        let hasOnedir = FileManager.default.fileExists(atPath: onedirPath.path)
+
+        // Legacy flat-file (onefile) layout — kept as a fallback only, so an older build
+        // artifact still runs during a transition instead of hard-failing with NO ENGINE.
+        let flatPath = baseDir.appendingPathComponent("speechmatics_engine")
+        let hasFlat = !hasOnedir && FileManager.default.fileExists(atPath: flatPath.path)
+        let hasBinary = hasOnedir || hasFlat
+        let binaryPath = hasOnedir ? onedirPath : flatPath
 
         let execDir = URL(fileURLWithPath: Bundle.main.executablePath ?? "")
             .deletingLastPathComponent()
@@ -102,7 +116,7 @@ class SpeechmaticsEngine {
         let hasSysCapture = FileManager.default.fileExists(atPath: syscapturePath.path)
 
         dlog("SM binary search:", tag: "SM")
-        dlog("  Resources path: \(binaryPath.path) → exists=\(hasBinary)", tag: "SM")
+        dlog("  Resources path: \(binaryPath.path) → exists=\(hasBinary) (onedir=\(hasOnedir))", tag: "SM")
         dlog("  Exec dir path:  \(devBinary.path) → exists=\(hasDevBinary)", tag: "SM")
         dlog("  SystemCapture:  \(syscapturePath.path) → exists=\(hasSysCapture)", tag: "SM")
         dlog("  AppDataFolder:  \(appDataFolder.path)", tag: "SM")

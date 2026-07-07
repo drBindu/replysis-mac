@@ -60,16 +60,22 @@ jobs:
           pip install --upgrade pip
           pip install pyinstaller speechmatics-python pyaudio numpy certifi
           pyinstaller speechmatics_engine.spec --distpath "$RUNNER_TEMP/enginedist" --workpath "$RUNNER_TEMP/enginebuild" -y
+          chmod +x "$RUNNER_TEMP/enginedist/speechmatics_engine/speechmatics_engine"
+          # ONEDIR build: dist/speechmatics_engine is a FOLDER (executable + hundreds of
+          # dependency files under _internal/), not a single file — this removes the
+          # multi-second self-extraction-to-temp delay onefile builds pay on EVERY app
+          # launch (confirmed locally: onefile took 5-7s just to print its first line;
+          # onedir prints it in ~0.1s). It is intentionally kept OUT of the Xcode-managed
+          # source tree (see .gitignore) and injected directly into the exported .app
+          # further down, after "Export signed .app" — Xcode's file-system-synchronized
+          # Resources group copies nested folders file-by-file and collides on duplicate
+          # basenames across multiple _internal/*.dist-info dirs (entry_points.txt,
+          # top_level.txt, etc. repeat per package) if placed in the source tree instead.
           # Smoke test: binary must start and print its startup banner (no key → exit 1 is OK)
-          "$RUNNER_TEMP/enginedist/speechmatics_engine" 2>&1 | head -20 || true
-          cp -f "$RUNNER_TEMP/enginedist/speechmatics_engine" \
-            InterviewCopilot/InterviewCopilot/Resources/speechmatics_engine
-          echo "Engine rebuilt: $(du -sh InterviewCopilot/InterviewCopilot/Resources/speechmatics_engine | cut -f1)"
+          "$RUNNER_TEMP/enginedist/speechmatics_engine/speechmatics_engine" 2>&1 | head -20 || true
 
       - name: Make bundled binaries executable
         run: |
-          [ -f InterviewCopilot/InterviewCopilot/Resources/speechmatics_engine ] && \
-            chmod +x InterviewCopilot/InterviewCopilot/Resources/speechmatics_engine || true
           [ -f InterviewCopilot/InterviewCopilot/Resources/SystemAudioCapture ] && \
             chmod +x InterviewCopilot/InterviewCopilot/Resources/SystemAudioCapture || true
 
@@ -119,6 +125,17 @@ jobs:
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
             -exportPath "$RUNNER_TEMP/export"
 
+      - name: Inject speechmatics_engine into the exported app
+        run: |
+          # Copied here (post-export) rather than into the source tree pre-archive, so
+          # Xcode's Resources build phase never touches this folder — see the comment in
+          # "Build speechmatics_engine from source" for why that flattens/collides.
+          APP="$RUNNER_TEMP/export/InterviewCopilot.app"
+          rm -rf "$APP/Contents/Resources/speechmatics_engine"
+          cp -R "$RUNNER_TEMP/enginedist/speechmatics_engine" "$APP/Contents/Resources/speechmatics_engine"
+          chmod +x "$APP/Contents/Resources/speechmatics_engine/speechmatics_engine"
+          echo "Engine injected: $(du -sh "$APP/Contents/Resources/speechmatics_engine" | cut -f1)"
+
       - name: Re-sign bundled helper binaries with Hardened Runtime
         env:
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
@@ -142,14 +159,29 @@ jobs:
           # ("speechmatics_engine") and macOS feeds them silence even when the app has mic.
           for BIN in speechmatics_engine SystemAudioCapture; do
             BIN_PATH="$APP/Contents/Resources/$BIN"
-            [ -f "$BIN_PATH" ] || continue
-            codesign --force --options runtime \
-              --entitlements "$RUNNER_TEMP/helper.entitlements" \
-              --sign "$IDENTITY" \
-              --identifier "com.bindualekhya.InterviewCopilot" \
-              --keychain "$RUNNER_TEMP/build.keychain" \
-              "$BIN_PATH"
-            echo "Signed: $BIN ($(codesign -dv "$BIN_PATH" 2>&1 | grep Identifier || echo 'ok'))"
+            if [ -d "$BIN_PATH" ]; then
+              # ONEDIR folder: sign every Mach-O inside (main executable + bundled
+              # dylibs/so files) so the whole tree passes `codesign --verify --deep
+              # --strict` later. Signing order among these doesn't matter.
+              find "$BIN_PATH" -type f \( -name "*.dylib" -o -name "*.so" -o -perm -u+x \) -print0 \
+                | while IFS= read -r -d '' F; do
+                    codesign --force --options runtime \
+                      --entitlements "$RUNNER_TEMP/helper.entitlements" \
+                      --sign "$IDENTITY" \
+                      --identifier "com.bindualekhya.InterviewCopilot" \
+                      --keychain "$RUNNER_TEMP/build.keychain" \
+                      "$F" 2>/dev/null || true
+                  done
+              echo "Signed folder: $BIN"
+            elif [ -f "$BIN_PATH" ]; then
+              codesign --force --options runtime \
+                --entitlements "$RUNNER_TEMP/helper.entitlements" \
+                --sign "$IDENTITY" \
+                --identifier "com.bindualekhya.InterviewCopilot" \
+                --keychain "$RUNNER_TEMP/build.keychain" \
+                "$BIN_PATH"
+              echo "Signed: $BIN ($(codesign -dv "$BIN_PATH" 2>&1 | grep Identifier || echo 'ok'))"
+            fi
           done
           # Inject the Google OAuth client secret (from the GOOGLE_CLIENT_SECRET repo
           # secret) into the app's Info.plist so "Continue with Google" can complete the

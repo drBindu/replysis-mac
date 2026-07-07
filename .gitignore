@@ -17,3 +17,14 @@ InterviewCopilotMac6/
 *.pdb
 dist/
 SystemAudioCaptureSrc/SystemAudioCapture
+
+# PyInstaller ONEDIR build output for speechmatics_engine. It's a FOLDER (executable +
+# hundreds of dependency files under _internal/), never committed: Xcode's file-system-
+# synchronized Resources group copies nested folders file-by-file and collides on
+# duplicate basenames across _internal/*.dist-info dirs (entry_points.txt, top_level.txt,
+# etc). CI builds this fresh each release and copies it directly into the EXPORTED,
+# already-archived .app bundle — bypassing Xcode's Copy Bundle Resources phase for this
+# path entirely. Local devs who need to test the Python engine build it themselves via
+# `pyinstaller speechmatics_engine.spec` and copy the output into the BUILT app's
+# Contents/Resources/speechmatics_engine (not this source folder).
+InterviewCopilot/InterviewCopilot/Resources/speechmatics_engine/
