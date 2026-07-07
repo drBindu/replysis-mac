@@ -275,13 +275,13 @@ class MainViewModel {
         // untrusted (the in-session hasPromptedAccessibility guard stops within-run spam;
         // macOS itself only shows its dialog once per launch anyway).
         if !permAccessibility {
-            dlog("Accessibility NOT granted — prompting + opening System Settings so the global Space bar can work", tag: "PERM")
+            dlog("Accessibility NOT granted — firing the single system prompt for the global Space bar", tag: "PERM")
+            // ONE prompt only. The system Accessibility dialog already has its own "Open
+            // System Settings" button, so we DON'T also fling System Settings open — that
+            // (on top of the mic dialog) was the "too many popups" pile-up. A subtle in-app
+            // banner points here if they dismiss it, and the poll loop relaunches the moment
+            // they grant it.
             requestAccessibilityPrompt()
-            // Also jump straight to the right Settings pane — the bare system prompt is easy
-            // to miss/dismiss, and a stale grant (toggle looks ON but AXIsProcessTrusted is
-            // false after an app replacement) is only fixable by the user toggling it here.
-            NSWorkspace.shared.open(
-                URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
             showHotkeyBanner = true
         }
         startPermissionPolling()   // relaunches the moment AX flips to granted (see the poll loop)

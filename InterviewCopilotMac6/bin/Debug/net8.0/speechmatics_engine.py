@@ -267,29 +267,46 @@ mic_stream = None
 sys_stream = None
 p = None
 # The mic is opened but NOT started at launch (start=False below), so macOS shows NO
-# orange microphone indicator while the app sits idle. We start/stop the stream on
-# unmute/mute so the indicator — which macOS forces on for any live mic and no app can
-# hide — appears ONLY while the user is actually listening, then disappears again.
+# orange microphone indicator while the app sits idle. It's started on the first unmute
+# and then kept running for the rest of the session (see set_mic_active).
 mic_stream_active = False
+_mic_starting = False   # guards against spawning multiple starter threads
 
 
 def set_mic_active(active: bool):
-    """Start or stop the mic IO so the macOS orange indicator is on only while listening.
-    Keeps the stream OPEN either way, so toggling is instant (no slow re-open)."""
-    global mic_stream, mic_stream_active
-    if mic_stream is None:
+    """Start the mic ONCE, in a BACKGROUND thread, then leave it running.
+
+    Why a thread: on macOS, mic_stream.start_stream() can BLOCK for many seconds when the
+    app is also running a Core Audio system-audio tap — the mic input won't start until the
+    shared audio system becomes active, which (with an aggregate tap device present) only
+    happens once some audio is actually flowing. Confirmed in a live log: start_stream()
+    hung ~18s and unblocked the exact instant system audio began playing. Calling it inline
+    froze the ENTIRE audio read loop, so nothing (not even system audio) was transcribed
+    until then. Running it off-thread keeps the loop responsive — it just uses silence for
+    the mic channel until the mic actually comes up, then reads it normally.
+
+    Why keep it running (no stop on mute): stopping and restarting re-incurs that startup
+    cost. Once warm, we leave it on and gate to silence in software when muted. In
+    'System audio + my voice' mode the orange indicator therefore stays on for the session
+    (which is inherent to using the mic); users who want zero indicator pick the
+    'System audio only' mode, which never opens the mic at all."""
+    global mic_stream, mic_stream_active, _mic_starting
+    if mic_stream is None or not active or mic_stream_active or _mic_starting:
         return
-    try:
-        if active and not mic_stream_active:
+    _mic_starting = True
+
+    def _starter():
+        global mic_stream_active, _mic_starting
+        try:
             mic_stream.start_stream()
             mic_stream_active = True
             print(">>> MIC: recording ON (listening)", flush=True)
-        elif not active and mic_stream_active:
-            mic_stream.stop_stream()
-            mic_stream_active = False
-            print(">>> MIC: recording OFF (muted) — indicator clears", flush=True)
-    except Exception as e:
-        print(f">>> MIC set_active error: {e}", flush=True)
+        except Exception as e:
+            print(f">>> MIC start error: {e}", flush=True)
+        finally:
+            _mic_starting = False
+
+    threading.Thread(target=_starter, daemon=True).start()
 
 
 def open_mic(fatal=True):
@@ -686,37 +703,42 @@ class SmartAudioStream:
     def read(self, num_frames, exception_on_overflow=False):
         global is_recording, recording_frames
 
-        if os.path.exists(PAUSE_FLAG):
-            # MUTED → physically stop the mic so the macOS orange indicator disappears.
-            # The stream stays OPEN, so unmuting is instant (no slow re-open).
-            set_mic_active(False)
-            # Pace the loop at real time (mic is stopped, so it can't pace us anymore).
-            time.sleep(num_frames / SAMPLE_RATE)
-            # Drain captured system audio too — the ScreenCaptureKit thread keeps
-            # filling sys_capture_buffer while paused, so without this up to ~2s of
-            # audio captured during mute gets transcribed right after unmute,
-            # undermining mute for system audio.
+        paused = os.path.exists(PAUSE_FLAG)
+
+        # Helper: read the mic WITHOUT ever blocking the loop. Only touch the stream once
+        # it's actually running (started off-thread by set_mic_active); until then, silence.
+        # Draining it even while paused prevents PortAudio input-overflow build-up.
+        def _read_mic():
+            if mic_stream_active and mic_stream is not None:
+                try:
+                    return mic_stream.read(num_frames, exception_on_overflow=False)
+                except OSError:
+                    return SILENCE
+            return None   # mic not up yet → caller paces / uses silence
+
+        if paused:
+            # MUTED → keep the (already-warm) mic running but throw its audio away, and
+            # drain the system-audio buffer so nothing captured during mute leaks out on
+            # unmute. Pace the loop ourselves if the mic isn't the pacing source yet.
+            if _read_mic() is None:
+                time.sleep(num_frames / SAMPLE_RATE)
             if using_screencapturekit:
                 with sys_capture_lock:
                     sys_capture_buffer.clear()
             return SILENCE
 
-        # LISTENING → make sure the mic is actually recording (indicator on only now).
+        # LISTENING → kick off the mic (once, in the background — never blocks this loop).
         if args.mode in ("mic", "both"):
             set_mic_active(True)
 
         mode = args.mode
 
         if mode == "mic":
-            # BUG-5 FIX: catch OSError/IOError (device disconnect, driver hiccup) so a
-            # transient hardware error doesn't propagate up and kill the audio thread.
-            # Guard against mic_stream being None (e.g. a system→mic fallback where the
-            # mic couldn't be opened) so we degrade to silence instead of crashing.
-            try:
-                data = mic_stream.read(num_frames, exception_on_overflow=False) if mic_stream else SILENCE
-            except OSError:
-                data = SILENCE
-            data = apply_noise_gate(data)
+            mic_raw = _read_mic()
+            if mic_raw is None:
+                time.sleep(num_frames / SAMPLE_RATE)   # mic still warming → pace with silence
+                mic_raw = SILENCE
+            data = apply_noise_gate(mic_raw)
         elif mode == "system":
             if using_screencapturekit:
                 # Paced read — blocks until real audio arrives (or one chunk-duration
@@ -727,14 +749,13 @@ class SmartAudioStream:
             else:
                 data = SILENCE
         elif mode == "both":
-            # The blocking mic read paces this loop at real time.
-            try:
-                raw_mic = mic_stream.read(num_frames, exception_on_overflow=False) if mic_stream else SILENCE
-            except OSError:
-                raw_mic = SILENCE
-            if not mic_stream:
-                time.sleep(num_frames / SAMPLE_RATE)   # keep real-time pace without a mic
-            mic_data = apply_noise_gate(raw_mic)   # gate before mixing
+            mic_raw = _read_mic()
+            if mic_raw is None:
+                # Mic hasn't come up yet — don't stall; pace on the system-audio clock so
+                # the interviewer is still transcribed while the mic warms in the background.
+                time.sleep(num_frames / SAMPLE_RATE)
+                mic_raw = SILENCE
+            mic_data = apply_noise_gate(mic_raw)   # gate before mixing
             if using_screencapturekit:
                 sys_data = read_sys_capture_chunk(num_frames)
             elif sys_stream:
