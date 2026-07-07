@@ -1064,6 +1064,16 @@ class MainViewModel {
         // Unlock the global Space tap the instant we know the user is signed in — don't
         // wait for the network calls below (same fix as restoreSession()).
         refreshHotkeyGate()
+        // BUG FIX: Google sign-in opens the system browser for the OAuth flow, which takes
+        // focus away from us for the whole exchange. Nothing brought focus back afterward —
+        // so if the native mic-permission dialog (requested at launch) was still pending, it
+        // sat hidden behind the browser the whole time. The user never saw it to click
+        // Allow, mic authorization stayed stuck at "not decided," and only reactivating the
+        // app some OTHER way (e.g. opening the debug log) coincidentally surfaced it —
+        // which looked like "F12 turns on the mic." Reclaim focus now so any pending system
+        // dialog is immediately visible again.
+        NSApp.activate(ignoringOtherApps: true)
+        mainPanel?.makeKeyAndOrderFront(nil)
         Task { @MainActor in
             await fetchCredits()
             let smOk = await session.fetchSpeechmaticsKeyAsync()
