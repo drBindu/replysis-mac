@@ -133,7 +133,11 @@ class MainViewModel {
     // MARK: - State
     private var justStartedListening = false
     private var listenStartTicks = 0
-    private let suppressTickCount = 7
+    // Suppress the transcript for the first few 150ms ticks after unmute so a stale line
+    // from the previous turn doesn't flash before the reset lands. Was 7 (~1s), which made
+    // listening feel laggy to start; 3 (~0.45s) is enough to swallow the stale frame while
+    // showing fresh words noticeably sooner.
+    private let suppressTickCount = 3
     private var lastSpaceTime: Date = .distantPast
     private let spaceDebounceMs: Double = 0.4
     private var sessionNumber = 1
@@ -229,9 +233,34 @@ class MainViewModel {
 
         dlog("checkAndRequestPermissions: AXIsProcessTrusted=\(permAccessibility) mic=\(micStatus.rawValue)", tag: "PERM")
 
-        // NO upfront mic popup — the native mic prompt fires on the FIRST Space press
-        // (the first real mic use, see handleSpacePress). Screen Recording prompts
-        // natively on the first F9.
+        // INSTANT-FIRST-LISTEN FIX: when the default "System audio + my voice" mode is on
+        // and the mic hasn't been decided yet, request it NOW (at launch) instead of on the
+        // first Space press. Confirmed cause of "the first Space is slow": granting the mic
+        // on first Space forced the already-running system-only engine to STOP and relaunch
+        // into mic mode at that exact moment, so the user waited ~5s on a cold restart +
+        // reconnect. Prompting at launch lets the engine start in mic mode from the start
+        // (see restoreSession/onLoginSuccess, which read the mic status when they spawn it),
+        // so by the time the user presses Space the pipeline is already warm and it's
+        // instant. Screen Recording still prompts lazily on the first F9.
+        if micCaptureEnabled && micStatus == .notDetermined {
+            dlog("Requesting mic at launch (mic-capture mode on) so the engine starts warm in BOTH mode — no first-Space restart", tag: "PERM")
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.permMicrophone = granted
+                    self.micDenied = !granted
+                    // If the engine already came up in system-only mode before the user
+                    // answered this popup, restart it into BOTH mode NOW (during launch,
+                    // while they're still reading the UI) — so the FIRST Space press lands
+                    // on an already-warm mic pipeline instead of triggering the restart.
+                    if granted && self.engine.isRunning {
+                        dlog("Mic granted at launch — warming engine into BOTH mode before first Space", tag: "PERM")
+                        self.engine.stop()
+                        self.engine.start(smKey: self.session.speechmaticsKey)
+                    }
+                }
+            }
+        }
         //
         // Accessibility is what powers the global Space bar (the CGEventTap). If it isn't
         // granted, Space only works while our own window is focused — the "I have to click
