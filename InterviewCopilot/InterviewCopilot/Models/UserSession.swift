@@ -189,12 +189,6 @@ class UserSession {
     // MARK: - Speechmatics Key
 
     func fetchSpeechmaticsKeyAsync() async -> Bool {
-        // Use hardcoded key immediately — no network call needed
-        if !AppConfig.speechmaticsApiKey.isEmpty {
-            self.speechmaticsKey = AppConfig.speechmaticsApiKey
-            dlog("SM key: using built-in key", tag: "AUTH")
-            return true
-        }
         guard !idToken.isEmpty else {
             dlog("SM key fetch: no idToken — not logged in", tag: "AUTH")
             return false
@@ -235,7 +229,6 @@ enum AppConfig {
     // sign-in is completely unaffected. fetchRemoteConfig() can also fill this if a
     // backend ever serves it.
     static var googleClientSecret = (Bundle.main.infoDictionary?["GoogleClientSecret"] as? String) ?? ""
-    static let speechmaticsApiKey  = ""   // fetched from backend
 
     // Fetches GoogleClientSecret (and optionally other keys) from the original backend.
     // Must be called once before Google sign-in.

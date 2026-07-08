@@ -4,5 +4,15 @@
 <dict>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Interview Copilot captures your computer's audio so it can transcribe the interviewer's questions during a call.</string>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/moto123a/interview-copilot-mac/main/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>Z/GmlGrdWA8lVxVMbukzNBwqDBRLZi9YbOqSH4hClsI=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<key>SUAllowsAutomaticUpdates</key>
+	<true/>
 </dict>
 </plist>

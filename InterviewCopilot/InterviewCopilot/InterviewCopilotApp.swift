@@ -80,6 +80,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return   // don't build the panel — the user needs to relaunch from /Applications
         }
 
+        // Start the Sparkle updater now — it checks SUFeedURL in the background once a day
+        // and lets Settings trigger a manual check. See AppUpdater.swift for why this exists.
+        _ = AppUpdater.shared
+
         // Permission requests are handled by the in-app setup screen (PermissionSetupView).
         buildPanel()
 

@@ -74,6 +74,11 @@ struct SettingsView: View {
                                     infoRow("Account", UserSession.shared.email)
                                     infoRow("Plan", "\(UserSession.shared.plan) / \(UserSession.shared.credits) credits")
                                 }
+                                Button("Check for Updates…") { AppUpdater.shared.checkForUpdates() }
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(Color(hex: "#38bdf8"))
+                                    .buttonStyle(.plain)
+                                    .padding(.top, 4)
                             }
                         }
 

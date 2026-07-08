@@ -290,7 +290,7 @@ jobs:
           body: |
             ## Install on macOS
             **First time?** Download **InterviewCopilot-mac.dmg** → drag to Applications.
-            **Already installed?** The app updates automatically.
+            **Already installed?** The app checks for updates automatically (once a day, or any time from Settings → Check for Updates) and installs them via Sparkle.
 
             Signed and notarized by Apple. No security warnings on install.
           files: |
@@ -298,3 +298,46 @@ jobs:
             InterviewCopilot-update.zip
           draft: false
           prerelease: false
+
+      # Real auto-update: regenerate appcast.xml (the feed Sparkle polls, see SUFeedURL in
+      # Info.plist) with this release's signed entry, then publish it to main so
+      # raw.githubusercontent.com/.../appcast.xml — what every installed copy is already
+      # polling — picks it up. Requires the SPARKLE_PRIVATE_KEY repo secret (paste the key
+      # from `generate_keys -x` there); until that secret exists this step no-ops and
+      # existing installs simply keep finding nothing new, same as today.
+      - name: Update Sparkle appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "SPARKLE_PRIVATE_KEY secret not set — skipping appcast update. Auto-update stays inert until this secret is added."
+            exit 0
+          fi
+          curl -sL -o "$RUNNER_TEMP/sparkle-tools.tar.xz" "https://github.com/sparkle-project/Sparkle/releases/download/2.9.4/Sparkle-2.9.4.tar.xz"
+          mkdir -p "$RUNNER_TEMP/sparkle-tools"
+          tar -xf "$RUNNER_TEMP/sparkle-tools.tar.xz" -C "$RUNNER_TEMP/sparkle-tools"
+          chmod +x "$RUNNER_TEMP/sparkle-tools/bin/generate_appcast"
+
+          APPCAST_DIR="$RUNNER_TEMP/appcast_dir"
+          mkdir -p "$APPCAST_DIR"
+          cp InterviewCopilot-update.zip "$APPCAST_DIR/"
+          # Reuse the existing appcast if one is already published, so old entries aren't lost.
+          curl -sL -o "$APPCAST_DIR/appcast.xml" "https://raw.githubusercontent.com/moto123a/interview-copilot-mac/main/appcast.xml" || true
+          grep -q "<rss" "$APPCAST_DIR/appcast.xml" 2>/dev/null || rm -f "$APPCAST_DIR/appcast.xml"
+
+          echo "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle-tools/bin/generate_appcast" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/moto123a/interview-copilot-mac/releases/download/v${{ steps.version.outputs.VERSION }}/" \
+            "$APPCAST_DIR"
+
+          cp "$APPCAST_DIR/appcast.xml" appcast.xml
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          if git diff --cached --quiet; then
+            echo "No appcast changes to commit"
+          else
+            git commit -m "Update appcast for v${{ steps.version.outputs.VERSION }}"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
