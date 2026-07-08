@@ -1,0 +1,14 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>InterviewCopilot</title>
+        <item>
+            <title>1.0.207</title>
+            <pubDate>Wed, 08 Jul 2026 06:06:16 +0000</pubDate>
+            <sparkle:version>207</sparkle:version>
+            <sparkle:shortVersionString>1.0.207</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/moto123a/interview-copilot-mac/releases/download/v1.0.207/InterviewCopilot-update.zip" length="18095461" type="application/octet-stream" sparkle:edSignature="pgsylwx1PLXiQW6r6q3/j1YExCtUqm+sLNFE1j6YHir6FhqoJdu2UM/ofyeLqa26kUqN85cns31q3ru431DACA=="/>
+        </item>
+    </channel>
+</rss>
