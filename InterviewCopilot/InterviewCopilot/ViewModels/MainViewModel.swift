@@ -65,7 +65,7 @@ class MainViewModel {
     // MARK: - Window / Overlay
     var showCameraOverlay = false
     var isPinnedOnTop = false       // when true, window floats above other apps
-    var mainWindowOpacity: Double = 1.0
+    var mainWindowOpacity: Double = 0.40
     var overlayOpacity: Double = 0.90
     var isScreenAnalyzing = false
     var isWatchMode = false         // continuous screen watch mode
@@ -1297,21 +1297,35 @@ class MainViewModel {
         if let data = try? Data(contentsOf: path),
            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             useGroq = obj["useGroq"] as? Bool ?? true
-            mainWindowOpacity = obj["mainOpacity"] as? Double ?? 1.0
+            mainWindowOpacity = obj["mainOpacity"] as? Double ?? 0.40
             overlayOpacity = obj["overlayOpacity"] as? Double ?? 0.90
             conciseAnswers = obj["concise"] as? Bool ?? false
             // Default ON: system audio + the user's own voice, so Space captures both out
             // of the box. Users who want to stay fully invisible in a real interview can
             // switch to system-audio-only in Settings.
             micCaptureEnabled = obj["micCaptureEnabled"] as? Bool ?? true
+
+            // ONE-TIME migration: the default window opacity changed from 100% to 40%.
+            // Existing users already have a saved mainOpacity (100%, the old default) from
+            // before this change, so without this they'd never see the new default even
+            // though their settings.json never reflected an intentional choice. Applies once
+            // per install, then the slider fully respects whatever the user sets afterward.
+            if obj["opacityDefaultV2Applied"] == nil {
+                mainWindowOpacity = 0.40
+                opacityDefaultV2Applied = true
+                saveSettings()
+            }
         }
     }
+
+    private var opacityDefaultV2Applied = false
 
     func saveSettings() {
         let path = engine.appDataFolder.appendingPathComponent("settings.json")
         let obj: [String: Any] = ["useGroq": useGroq, "mainOpacity": mainWindowOpacity,
                                   "overlayOpacity": overlayOpacity, "concise": conciseAnswers,
-                                  "micCaptureEnabled": micCaptureEnabled]
+                                  "micCaptureEnabled": micCaptureEnabled,
+                                  "opacityDefaultV2Applied": true]
         try? JSONSerialization.data(withJSONObject: obj).write(to: path)
     }
 
