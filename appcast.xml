@@ -3,6 +3,14 @@
     <channel>
         <title>InterviewCopilot</title>
         <item>
+            <title>1.0.214</title>
+            <pubDate>Wed, 08 Jul 2026 16:47:38 +0000</pubDate>
+            <sparkle:version>214</sparkle:version>
+            <sparkle:shortVersionString>1.0.214</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/moto123a/interview-copilot-mac/releases/download/v1.0.214/InterviewCopilot-update.zip" length="19578702" type="application/octet-stream" sparkle:edSignature="rO8tqj+0ut2O7Yz6LGrXoZK38ctzEZgTxvRi3hU++wZ2eCVpB0JwVKjDimayE3mhX+aSfh2Nx4PRgbdkVtpWAA=="/>
+        </item>
+        <item>
             <title>1.0.213</title>
             <pubDate>Wed, 08 Jul 2026 16:40:07 +0000</pubDate>
             <sparkle:version>213</sparkle:version>
@@ -44,14 +52,6 @@
             <sparkle:shortVersionString>1.0.208</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <enclosure url="https://github.com/moto123a/interview-copilot-mac/releases/download/v1.0.208/InterviewCopilot-update.zip" length="18096179" type="application/octet-stream" sparkle:edSignature="bNkfp835tGzLrKAZX+RfVoO2kqIQXBQ/YX91NBU9x8aV8maThUu9t2GSzcaHZgBgFFRH3WoaOQ/vmVViXymlDA=="/>
-        </item>
-        <item>
-            <title>1.0.207</title>
-            <pubDate>Wed, 08 Jul 2026 06:06:16 +0000</pubDate>
-            <sparkle:version>207</sparkle:version>
-            <sparkle:shortVersionString>1.0.207</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/moto123a/interview-copilot-mac/releases/download/v1.0.207/InterviewCopilot-update.zip" length="18095461" type="application/octet-stream" sparkle:edSignature="pgsylwx1PLXiQW6r6q3/j1YExCtUqm+sLNFE1j6YHir6FhqoJdu2UM/ofyeLqa26kUqN85cns31q3ru431DACA=="/>
         </item>
     </channel>
 </rss>
