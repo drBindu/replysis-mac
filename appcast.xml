@@ -3,6 +3,14 @@
     <channel>
         <title>InterviewCopilot</title>
         <item>
+            <title>1.0.211</title>
+            <pubDate>Wed, 08 Jul 2026 08:21:52 +0000</pubDate>
+            <sparkle:version>211</sparkle:version>
+            <sparkle:shortVersionString>1.0.211</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/moto123a/interview-copilot-mac/releases/download/v1.0.211/InterviewCopilot-update.zip" length="18109726" type="application/octet-stream" sparkle:edSignature="dPj6fuABNvAt/8XPu07tggspbBLWnhUxS8pR6yjvl5SS5suQXX9ncFjE0/NdMfQDut1RiNvK7CWH8Wv5WC3ZAg=="/>
+        </item>
+        <item>
             <title>1.0.210</title>
             <pubDate>Wed, 08 Jul 2026 07:26:11 +0000</pubDate>
             <sparkle:version>210</sparkle:version>
