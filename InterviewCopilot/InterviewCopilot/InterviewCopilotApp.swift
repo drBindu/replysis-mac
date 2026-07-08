@@ -35,6 +35,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let vm = MainViewModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Start crash reporting FIRST — before any other launch work — so if something
+        // below crashes on a user's Mac, the report still gets captured. No-op in debug.
+        CrashReporter.start()
+
         // SINGLE-INSTANCE GUARD: if another copy of this app is already running, activate
         // that one and quit THIS launch immediately — before creating a window, spawning
         // the engine, or touching hotkeys/permissions. Without this, a user double-clicking

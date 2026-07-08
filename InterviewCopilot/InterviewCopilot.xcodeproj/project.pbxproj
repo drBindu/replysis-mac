@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		8EB3D2746BB5DA7EF77DC865 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 33C1A1C7F28A92AD593D1E31 /* Sentry */; };
 		CFA3B509AAC6525B427B270C /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = BB908EB03DE00E6E21C501FB /* Sparkle */; };
 /* End PBXBuildFile section */
 
@@ -30,6 +31,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				CFA3B509AAC6525B427B270C /* Sparkle in Frameworks */,
+				8EB3D2746BB5DA7EF77DC865 /* Sentry in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -73,6 +75,7 @@
 			name = InterviewCopilot;
 			packageProductDependencies = (
 				BB908EB03DE00E6E21C501FB /* Sparkle */,
+				33C1A1C7F28A92AD593D1E31 /* Sentry */,
 			);
 			productName = InterviewCopilot;
 			productReference = 4E4B03942FF071C300D7CE89 /* InterviewCopilot.app */;
@@ -104,6 +107,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				BD47424F6B825E888EDFBD6C /* XCRemoteSwiftPackageReference "Sparkle" */,
+				561FB877A5D9A082924FC8C0 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 4E4B03952FF071C300D7CE89 /* Products */;
@@ -352,6 +356,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		561FB877A5D9A082924FC8C0 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/getsentry/sentry-cocoa";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.21.0;
+			};
+		};
 		BD47424F6B825E888EDFBD6C /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sparkle-project/Sparkle";
@@ -363,6 +375,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		33C1A1C7F28A92AD593D1E31 /* Sentry */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 561FB877A5D9A082924FC8C0 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
+			productName = Sentry;
+		};
 		BB908EB03DE00E6E21C501FB /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = BD47424F6B825E888EDFBD6C /* XCRemoteSwiftPackageReference "Sparkle" */;
