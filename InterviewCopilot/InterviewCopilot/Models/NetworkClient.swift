@@ -87,6 +87,10 @@ class NetworkClient {
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                 req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                // Sent alongside the token unconditionally — the backend only consults this
+                // for the free-trial-without-sign-in path, and ignores it whenever the
+                // Authorization header carries a valid Firebase token (see IdentityResolverService).
+                req.setValue(DeviceIdentity.current, forHTTPHeaderField: "X-Device-Id")
                 req.httpBody = body
                 do {
                     let (bytes, response) = try await session.bytes(for: req)
@@ -140,6 +144,7 @@ class NetworkClient {
             var req = URLRequest(url: url)
             req.timeoutInterval = 8
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.setValue(DeviceIdentity.current, forHTTPHeaderField: "X-Device-Id")
             _ = try? await shortSession.data(for: req)
         }
     }
@@ -165,6 +170,7 @@ class NetworkClient {
         guard let url = URL(string: "\(AppConfig.backendUrl)/api/v1/interview/credits") else { return nil }
         var req = URLRequest(url: url)
         req.setValue("Bearer \(UserSession.shared.idToken)", forHTTPHeaderField: "Authorization")
+        req.setValue(DeviceIdentity.current, forHTTPHeaderField: "X-Device-Id")
 
         do {
             let (data, _) = try await shortSession.data(for: req)

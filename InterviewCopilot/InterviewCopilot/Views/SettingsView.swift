@@ -70,7 +70,16 @@ struct SettingsView: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 infoRow("Version", Self.appVersion)
                                 infoRow("Backend", AppConfig.backendUrl)
-                                if UserSession.shared.isLoggedIn {
+                                if UserSession.shared.isGuestSession {
+                                    infoRow("Account", "Free trial (not signed in)")
+                                    infoRow("Credits", "\(UserSession.shared.credits) left")
+                                    Button("Sign in for more credits") {
+                                        NotificationCenter.default.post(name: .showLogin, object: nil)
+                                    }
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(Color(hex: "#38bdf8"))
+                                    .buttonStyle(.plain)
+                                } else if UserSession.shared.isLoggedIn {
                                     infoRow("Account", UserSession.shared.email)
                                     infoRow("Plan", "\(UserSession.shared.plan) / \(UserSession.shared.credits) credits")
                                 }

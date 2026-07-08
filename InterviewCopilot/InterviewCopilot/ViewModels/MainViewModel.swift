@@ -212,7 +212,33 @@ class MainViewModel {
             // BUG-4 FIX: check showProfile BEFORE awaiting to close the TOCTOU window where
             // the user taps "Continue As" while this Task is in flight and both paths reach
             // startNewSession(). showProfile=true is our mutex for "session already active".
-            guard restored && !showProfile else { isRestoringSession = false; return }
+            guard restored && !showProfile else {
+                isRestoringSession = false
+                // No real saved account — try the free trial (device-ID based, see
+                // UserSession.startGuestSession()) instead of immediately locking Space
+                // behind a sign-in prompt. Fails harmlessly if offline or this device's
+                // free credits are already used up; Space then falls back to the existing
+                // "not signed in" prompt exactly as before this feature existed.
+                if !showProfile {
+                    showProfile = true   // same mutex, same TOCTOU protection as the real-account path
+                    let guestOk = await session.startGuestSession()
+                    if guestOk {
+                        refreshHotkeyGate()
+                        profileName = "Guest"
+                        profilePlan = "Free trial"
+                        avatarInitials = "GU"
+                        showCreditsBadge = true
+                        let smOk = await session.fetchSpeechmaticsKeyAsync()
+                        startNewSession()
+                        if smOk && !engine.isRunning {
+                            engine.start(smKey: session.speechmaticsKey)
+                        }
+                    } else {
+                        showProfile = false   // release the mutex — no session was actually started
+                    }
+                }
+                return
+            }
             showProfile = true   // claim the mutex before any await below
             // ROOT-CAUSE FIX for "Space does nothing until I click something": isLoggedIn
             // is already true here, but the two awaits below (credits, Speechmatics key)
@@ -789,7 +815,16 @@ class MainViewModel {
             },
             onError: { [weak self] err in
                 guard let self = self, self.answerEpoch == epoch else { return }
-                if err == "NO_CREDITS"       { self.aiAnswer = "⚠ Not enough credits. Visit coopilotxai.com/pricing." }
+                if err == "NO_CREDITS" {
+                    if self.session.isGuestSession {
+                        // A guest has no account to buy more credits on — the only next
+                        // step that makes sense is signing in for a real (paid) plan.
+                        self.aiAnswer = "⚠ Your free trial is used up. Sign in to keep going."
+                        NotificationCenter.default.post(name: .showLogin, object: nil)
+                    } else {
+                        self.aiAnswer = "⚠ Not enough credits. Visit coopilotxai.com/pricing."
+                    }
+                }
                 else if err == "SESSION_EXPIRED" { self.engine.stop(); self.session.clear(); self.setLoggedOutUI() }
                 else                         { self.aiAnswer = "⚠ Something went wrong. Please try again." }
                 self.stopThinkingUI()
@@ -905,7 +940,10 @@ class MainViewModel {
             onError: { [weak self] err in
                 guard let self = self, self.answerEpoch == epoch else { return }
                 dlog("Screen analysis error: \(err)", tag: "SCREEN")
-                if !self.isWatchMode {
+                if err == "NO_CREDITS" && self.session.isGuestSession {
+                    self.aiAnswer = "⚠ Your free trial is used up. Sign in to keep going."
+                    NotificationCenter.default.post(name: .showLogin, object: nil)
+                } else if !self.isWatchMode {
                     self.aiAnswer = "⚠ Screen analysis error: \(err)"
                 }
                 self.stopThinkingUI()

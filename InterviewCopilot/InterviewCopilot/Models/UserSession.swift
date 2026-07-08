@@ -56,6 +56,13 @@ class UserSession {
     var isUnlimited = false
     var speechmaticsKey = ""
 
+    // True for the free-trial-without-sign-in path (see startGuestSession()) — isLoggedIn
+    // is also true in this state so every existing `session.isLoggedIn` gate throughout
+    // MainViewModel (Space handling, engine start, ask/analyze credit checks) works for
+    // guests with zero changes to those call sites. This flag exists only so the UI can
+    // show honest "free trial" messaging and so a real sign-in is never confused with it.
+    var isGuestSession = false
+
     private let sessionFile: URL = {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let dir = support.appendingPathComponent("InterviewCopilot")
@@ -134,6 +141,7 @@ class UserSession {
 
     func clear() {
         isLoggedIn = false
+        isGuestSession = false
         email = ""; name = ""; idToken = ""; refreshToken = ""
         userId = ""; credits = 0; plan = "free"; isUnlimited = false
         speechmaticsKey = ""
@@ -186,11 +194,32 @@ class UserSession {
         return result
     }
 
+    // MARK: - Guest (free trial without sign-in)
+
+    // Tries to start a device-ID-based free trial when there's no real saved account to
+    // restore. Fails harmlessly (returns false) if offline or this device's free credits
+    // are already used up — callers fall back to the existing "not signed in" prompt.
+    func startGuestSession() async -> Bool {
+        guard let result = await NetworkClient.shared.fetchCredits(), result.credits > 0 else {
+            dlog("Guest session: no free credits available for this device", tag: "AUTH")
+            return false
+        }
+        isGuestSession = true
+        isLoggedIn = true
+        credits = result.credits
+        plan = result.plan
+        isUnlimited = result.isUnlimited
+        name = "Guest"
+        email = ""
+        dlog("Guest session started — credits=\(result.credits)", tag: "AUTH")
+        return true
+    }
+
     // MARK: - Speechmatics Key
 
     func fetchSpeechmaticsKeyAsync() async -> Bool {
-        guard !idToken.isEmpty else {
-            dlog("SM key fetch: no idToken — not logged in", tag: "AUTH")
+        guard !idToken.isEmpty || isGuestSession else {
+            dlog("SM key fetch: no idToken and not a guest session — not logged in", tag: "AUTH")
             return false
         }
         let urlStr = "\(AppConfig.backendUrl)/api/v1/stt/key"
@@ -199,6 +228,7 @@ class UserSession {
         var req = URLRequest(url: url)
         req.timeoutInterval = 10
         req.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
+        req.setValue(DeviceIdentity.current, forHTTPHeaderField: "X-Device-Id")
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 0
