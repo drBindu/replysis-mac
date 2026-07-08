@@ -1102,6 +1102,9 @@ class MainViewModel {
                 let resumeName = ResumeParser.extractName(resumeText)
                 let header = "SESSION \(sessionNumber) | \(useGroq ? "groq" : "openai") | \(fmt.string(from: Date())) | RESUME: \(resumeName)\n\n"
                 try (header + entry).write(to: path, atomically: true, encoding: .utf8)
+                // Interview transcripts hold the questions asked plus every AI answer built
+                // from the resume — lock to owner-only, same as the resume itself.
+                try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
                 return
             }
             let handle = try FileHandle(forWritingTo: path)
@@ -1282,12 +1285,27 @@ class MainViewModel {
 
     func saveResume() {
         let path = engine.appDataFolder.appendingPathComponent("resume.txt")
-        try? resumeText.write(to: path, atomically: true, encoding: .utf8)
+        Self.writeSecurely(resumeText, to: path)
     }
 
     func saveHints() {
         let path = engine.appDataFolder.appendingPathComponent("hints.txt")
-        try? liveHints.write(to: path, atomically: true, encoding: .utf8)
+        Self.writeSecurely(liveHints, to: path)
+    }
+
+    /// Write text to disk, then lock the file to owner-only (0o600). Used for everything
+    /// that contains personal data — the resume, saved resumes, live hints, and interview
+    /// transcripts. macOS already puts ~/Library at 0700, but these files default to 0644,
+    /// so any process running as another local user (or a lax backup/sync tool) could read
+    /// full resume PII and interview answers. 0600 closes that gap — defense in depth for
+    /// data at rest, costing nothing.
+    static func writeSecurely(_ text: String, to path: URL) {
+        do {
+            try text.write(to: path, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
+        } catch {
+            dlog("writeSecurely failed for \(path.lastPathComponent): \(error.localizedDescription)", tag: "FILE")
+        }
     }
 
     // MARK: - Resume library (switch between previously uploaded resumes)
@@ -1318,7 +1336,7 @@ class MainViewModel {
         let safe = name.replacingOccurrences(of: "/", with: "-").trimmingCharacters(in: .whitespaces)
         let finalName = safe.isEmpty ? "Resume \(savedResumes.count + 1)" : safe
         let url = resumesFolder.appendingPathComponent("\(finalName).txt")
-        try? resumeText.write(to: url, atomically: true, encoding: .utf8)
+        Self.writeSecurely(resumeText, to: url)
         refreshSavedResumes()
     }
 

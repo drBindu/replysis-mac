@@ -14,7 +14,13 @@ private enum Keychain {
         SecItemDelete(base as CFDictionary)   // replace any existing item
         var add = base
         add[kSecValueData as String]      = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        // ...ThisDeviceOnly: the auth token never leaves this Mac — it's excluded from
+        // iCloud Keychain sync and from encrypted backups that could be restored onto a
+        // different machine. For a login credential that's the correct, device-bound
+        // choice; the app only ever reads it locally, so behavior is unchanged. Still
+        // AfterFirstUnlock (not WhenUnlocked) so session restore works right after a
+        // reboot even before the user re-unlocks.
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         SecItemAdd(add as CFDictionary, nil)
     }
 
@@ -135,8 +141,22 @@ class UserSession {
         }
         tokenSavedAt = Date(timeIntervalSince1970: savedAt)
         isLoggedIn = !idToken.isEmpty
-        dlog("Session: loaded from disk — email=\(email), loggedIn=\(isLoggedIn), age=\(Int(ageMinutes))min", tag: "AUTH")
+        // Log a MASKED email, never the full address. The debug log is a file users are
+        // actively told to Reveal and share for support (see DebugLogView) — a full email
+        // in there leaks PII the moment it's forwarded or pasted. The mask still identifies
+        // the account well enough to debug ("pk***@gmail.com").
+        dlog("Session: loaded from disk — email=\(Self.maskEmail(email)), loggedIn=\(isLoggedIn), age=\(Int(ageMinutes))min", tag: "AUTH")
         return isLoggedIn
+    }
+
+    /// Mask an email for logging: keep the first 2 chars of the local part and the full
+    /// domain, star out the rest — enough to recognize the account, not enough to expose it.
+    static func maskEmail(_ email: String) -> String {
+        let parts = email.split(separator: "@", maxSplits: 1)
+        guard parts.count == 2 else { return email.isEmpty ? "(none)" : "***" }
+        let local = String(parts[0])
+        let head = local.count <= 2 ? local : String(local.prefix(2))
+        return "\(head)***@\(parts[1])"
     }
 
     func clear() {

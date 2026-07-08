@@ -256,7 +256,7 @@ class GoogleSignIn {
         let userId       = obj["localId"]      as? String ?? ""
         var displayName  = obj["displayName"]  as? String ?? ""
         if displayName.isEmpty { displayName = email.components(separatedBy: "@").first ?? email }
-        dlog("Google sign-in success: \(email)", tag: "GOOGLE")
+        dlog("Google sign-in success: \(UserSession.maskEmail(email))", tag: "GOOGLE")
         return Result(success: true, idToken: idToken, refreshToken: refreshToken,
                       email: email, displayName: displayName, userId: userId, error: "")
     }
