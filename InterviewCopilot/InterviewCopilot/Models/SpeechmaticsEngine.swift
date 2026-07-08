@@ -189,7 +189,13 @@ class SpeechmaticsEngine {
             args += ["-mode", "mic"]
             dlog("  Audio mode: mic only (system-audio tap unavailable)", tag: "SM")
         }
-        args += ["-max-delay", "0.7"]   // Speechmatics enforces a HARD minimum of 0.7 — lower is rejected
+        // ACCURACY over raw finalization speed: 1.0 gives the recognizer ~0.3s more
+        // right-context per word before committing a FINAL, which measurably improves
+        // hard/ambiguous words. Paired with max_delay_mode="flexible" in the Python engine,
+        // the engine only spends this extra time when it's unsure. The live transcript is
+        // driven by partials (unaffected), so the on-screen speed feels the same; only the
+        // final text handed to the AI gets more accurate. (0.7 is Speechmatics' hard floor.)
+        args += ["-max-delay", "1.0"]
 
         // Key ONLY via env var (matches the working .NET app); APP_DATA_DIR points the
         // engine at the same folder the UI polls.

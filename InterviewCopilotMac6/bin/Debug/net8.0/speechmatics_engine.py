@@ -943,10 +943,15 @@ async def main():
                     language="en",
                     operating_point="enhanced",
                     max_delay=args.max_delay,
-                    # "fixed" enforces a hard ceiling on latency (max_delay) instead of
-                    # letting the engine extend it for tricky words — keeps transcripts
-                    # arriving as fast and predictably as possible for real-time use.
-                    max_delay_mode="fixed",
+                    # ACCURACY: "flexible" lets the engine take a little extra time (up to
+                    # max_delay) to resolve a word it's unsure about, then catch back up —
+                    # instead of "fixed", which forced it to commit whatever it had at the
+                    # deadline even when it was still guessing. The live on-screen transcript
+                    # is driven by PARTIAL results, which stream continuously and aren't
+                    # affected by this, so the perceived speed is unchanged; what improves is
+                    # the FINAL text that actually gets sent to the AI. A slightly-later but
+                    # correct word beats a fast wrong one for answer quality.
+                    max_delay_mode="flexible",
                     enable_partials=True,
                     punctuation_overrides={
                         "permitted_marks": [".", ",", "?", "!"],
