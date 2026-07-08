@@ -11,7 +11,10 @@ struct SessionEntry: Identifiable, Equatable {
     let sessionNumber: Int
     var questionCount: Int { content.components(separatedBy: "\n").filter { $0.hasPrefix("Q:") }.count }
     var model: String {
-        if header.lowercased().contains("gpt-4o") { return "GPT-4o" }
+        // Session headers are written by appendToSessionLog as "groq" or "openai" —
+        // those two must be recognized here or every session badge just says "AI".
+        if header.lowercased().contains("groq") { return "Groq" }
+        if header.lowercased().contains("gpt-4o") || header.lowercased().contains("openai") { return "GPT-4o" }
         if header.lowercased().contains("gpt-4") { return "GPT-4" }
         if header.lowercased().contains("gpt") { return "GPT" }
         if header.lowercased().contains("claude") { return "Claude" }

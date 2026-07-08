@@ -440,7 +440,10 @@ class PromptBuilder {
         sb += "  Before every answer: scan ALL prior Q&A in this conversation.\n"
         sb += "  If the topic was already answered -> reuse that answer.\n"
         sb += "  If it's a drill-down -> pull the exact fact (MICRO: 1-2 sentences).\n"
-        sb += "  If brand new -> FULL mode with bullets.\n\n"
+        // Deliberately says "spoken paragraphs", never "bullets" — an earlier version said
+        // "FULL mode with bullets" here, directly contradicting the bullet ban above, and
+        // the model would occasionally obey the wrong instruction and emit a bulleted list.
+        sb += "  If brand new -> a full answer: a few short spoken paragraphs.\n\n"
 
         if hasResume {
             sb += "RULE 2 — CURRENT JOB FIRST:\n"

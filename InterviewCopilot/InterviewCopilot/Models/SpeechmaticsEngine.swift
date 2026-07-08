@@ -37,6 +37,16 @@ class SpeechmaticsEngine {
     // When SystemAudioCapture crashes (typically permission denied on first run), fall back
     // to mic-only for the rest of the session so we don't loop permission dialogs every 3s.
     private var sysAudioCrashed = false
+    // True only when stop() was called deliberately (sign-out, mode switch, quit). The
+    // retry timer checks THIS — not engineCancelled — to decide whether to keep retrying.
+    // engineCancelled is also set by handleAuthError(), and using it in the retry guard
+    // made the 60s auth-recovery loop cancel itself on its very first tick, so the
+    // promised "resumes automatically when the service is restored" never happened.
+    private var stoppedByUser = false
+    // Consecutive times checkEngine() tried to restart and the process didn't even spawn
+    // (missing/corrupt binary, spawn failure). Bounded so a permanently broken install
+    // shows an honest error instead of retrying every 3 seconds forever.
+    private var consecutiveSpawnFailures = 0
 
     let appDataFolder: URL = {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -80,6 +90,7 @@ class SpeechmaticsEngine {
         retryTimer?.invalidate(); retryTimer = nil
 
         engineCancelled = false
+        stoppedByUser = false      // a fresh start supersedes any earlier deliberate stop
         authErrorHandled = false   // fresh start → allow a new auth error to be reported
         isReady = false            // becomes true when the engine reports it's online
         nukePreviousProcesses()
@@ -122,6 +133,10 @@ class SpeechmaticsEngine {
         dlog("  AppDataFolder:  \(appDataFolder.path)", tag: "SM")
 
         guard let engineURL = hasBinary ? binaryPath : (hasDevBinary ? devBinary : nil) else {
+            // Must clear isStarting on this early exit — leaving it true made every later
+            // start() call (the NO MIC retry button, a Space-press restart, the monitor
+            // loop) silently no-op as a "duplicate" for the rest of the session.
+            isStarting = false
             statusText = "NO ENGINE"
             dlog("SM FATAL: speechmatics_engine binary NOT FOUND in any location", tag: "SM")
             return
@@ -356,6 +371,22 @@ class SpeechmaticsEngine {
                 return
             }
             start(smKey: key)
+            // start() sets isRunning the moment the process spawns. If it's STILL false
+            // here, the engine couldn't even launch (binary missing from the bundle,
+            // spawn failure) — a permanent condition retrying every 3s will never fix.
+            // Give it a few chances (transient failures do happen), then stop the loop
+            // and leave an honest status instead of spamming the log forever while the
+            // UI pretends everything is fine.
+            if isRunning {
+                consecutiveSpawnFailures = 0
+            } else {
+                consecutiveSpawnFailures += 1
+                if consecutiveSpawnFailures >= 5 {
+                    monitorTimer?.invalidate(); monitorTimer = nil
+                    statusText = "ENGINE ERR"
+                    dlog("checkEngine: engine failed to launch \(consecutiveSpawnFailures) times in a row — giving up. The app bundle is likely damaged; reinstalling should fix it.", tag: "SM")
+                }
+            }
         }
     }
 
@@ -370,6 +401,7 @@ class SpeechmaticsEngine {
 
     func stop() {
         engineCancelled = true
+        stoppedByUser = true      // deliberate stop — retry loops must not resurrect it
         isReady = false
         sysAudioCrashed = false   // reset for next session — will try sys audio again
         if #available(macOS 14.2, *) { SystemAudioTapper.shared.stop() }   // stop the in-app tap
@@ -447,7 +479,10 @@ class SpeechmaticsEngine {
                 guard let self else { return }
                 // BUG-7/21 FIX: if the engine is already running (restarted by other path)
                 // or the user explicitly stopped it, cancel the timer and do nothing.
-                guard !self.isRunning, !self.engineCancelled else {
+                // Checks stoppedByUser — NOT engineCancelled — because handleAuthError()
+                // sets engineCancelled too, and checking that here made this timer cancel
+                // itself on its first tick after every auth error, killing auto-recovery.
+                guard !self.isRunning, !self.stoppedByUser else {
                     self.retryTimer?.invalidate()
                     self.retryTimer = nil
                     return

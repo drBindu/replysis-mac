@@ -683,6 +683,12 @@ class MainViewModel {
                 engine.startRetryTimer()
                 return
             }
+            // Key is present but the engine is dead (e.g. it errored earlier and its
+            // monitor/retry timers are gone). This used to fall through and unmute into
+            // a dead engine — the mic showed LISTENING while nothing transcribed. Start
+            // it now; if it's genuinely mid-restart elsewhere, start() safely no-ops.
+            dlog("SPACE: restarting dead engine before unmuting", tag: "SPACE")
+            engine.start(smKey: key)
         }
 
         if isMuted {
@@ -1157,12 +1163,29 @@ class MainViewModel {
 
     // MARK: - Login / Logout
     func onLoginSuccess() {
+        // A guest free-trial session claims showProfile too — but it is NOT a real
+        // signed-in session, and a successful real login must REPLACE it, not get
+        // swallowed by the duplicate-session guard below. Without this, a guest who
+        // signs in (e.g. after exhausting the trial) stayed labeled "Guest / Free
+        // trial" forever even though their account was genuinely authenticated.
+        if session.isGuestSession {
+            dlog("onLoginSuccess: replacing guest trial session with real account", tag: "AUTH")
+            session.isGuestSession = false
+            showProfile = false
+        }
         // BUG-4 FIX: guard with showProfile mutex before the Task — closes the TOCTOU
         // window where restoreSession() and continueAsSaved() both reach startNewSession().
         guard !showProfile else {
             dlog("onLoginSuccess: session already active — skipping duplicate start", tag: "AUTH")
             return
         }
+        // Sign-out (setLoggedOutUI) stops the transcript/thinking/credits timers, and
+        // onAppear — the only other place that starts them — runs once per launch. So a
+        // sign-out → sign-in without relaunching left live transcription display dead
+        // (the engine wrote latest.txt but nothing polled it), the Thinking animation
+        // frozen, and credits never refreshing. Restart them here; each is a no-op when
+        // already running.
+        startTranscriptTimer(); startThinkingTimer(); startCreditsTimer()
         showProfile = true; profileName = session.firstName
         profilePlan = "\(session.plan) plan"; avatarInitials = session.initials
         showCreditsBadge = true

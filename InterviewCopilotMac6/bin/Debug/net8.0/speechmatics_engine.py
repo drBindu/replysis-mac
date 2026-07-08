@@ -165,7 +165,11 @@ def save_recording():
         print(f">>> Save error: {ex}", flush=True)
 
 
-CHUNK_FRAMES = 1024   # 64 ms per chunk — audio reaches server twice as fast (was 2048/128ms)
+CHUNK_FRAMES = 512    # 32 ms per chunk — audio reaches the server twice as fast again
+                      # (was 1024/64ms, which itself was already halved from 2048/128ms).
+                      # Pure latency win: smaller chunks just mean each one is ready and
+                      # sent to Speechmatics sooner after being captured — doesn't change
+                      # what gets transcribed or how accurately, only how soon.
 SAMPLE_RATE  = 16000
 # Maximum SCK buffer size: 2 seconds worth of audio.
 # If the engine falls behind, old audio is dropped so we always transcribe fresh speech.
@@ -189,8 +193,12 @@ _noise_calibrating   = True
 _noise_cal_samples: list = []
 _noise_gate_rms      = 0
 _ema_noise_floor     = None   # updated during quiet frames
-_NOISE_CAL_CHUNKS    = 20     # ~1.3 s calibration (was 50/~3s) — faster startup
-_EMA_ALPHA           = 0.005  # very slow drift — stable but self-correcting
+_NOISE_CAL_CHUNKS    = 40     # ~1.3 s calibration real time — doubled from 20 to 40 when
+                              # CHUNK_FRAMES halved 1024→512, so calibration takes the same
+                              # wall-clock time instead of half as many audio samples.
+_EMA_ALPHA           = 0.0025 # very slow drift — halved from 0.005 alongside CHUNK_FRAMES so
+                              # the real-world adaptation speed is unchanged (chunks now
+                              # arrive twice as often, so the per-chunk factor must halve too)
 
 # Hysteresis state
 _gate_open           = False
@@ -199,15 +207,20 @@ _gate_hold_counter   = 0
 _GATE_OPEN_STREAK    = 1      # consecutive loud frames needed to open (was 2 — a user
                               # sitting a bit further from the mic has softer voice onsets
                               # that don't reliably clear the threshold twice in a row)
-_GATE_HOLD_FRAMES    = 26     # frames to hold open after going quiet (~520 ms, was 400ms —
-                              # softer trailing syllables from farther away need more margin
+_GATE_HOLD_FRAMES    = 52     # frames to hold open after going quiet (~520 ms real time —
+                              # doubled from 26 to 52 when CHUNK_FRAMES halved 1024→512, so
+                              # this stays the same real-world duration, not half of it.
+                              # Softer trailing syllables from farther away need this margin
                               # so words don't get chopped mid-sentence)
 
-# Gate threshold = ambient floor * this multiplier, clamped to [MIN, MAX] RMS. Lowered from
-# 2.0x/150/1000 so a user sitting a bit further from the mic (quieter voice, closer to the
-# room's ambient level) still clears the threshold and gets transcribed instead of silenced.
-_GATE_FLOOR_MULT     = 1.5
-_GATE_MIN_RMS        = 110
+# Gate threshold = ambient floor * this multiplier, clamped to [MIN, MAX] RMS. Lowered again
+# (was 2.0x/150/1000, then 1.5x/110/800) so a voice from further across the room — quieter,
+# closer to the room's own ambient level — still clears the threshold instead of being
+# silenced outright. Going much lower risks the gate picking up HVAC/fan hum as "speech";
+# this is a real trade-off, not a free win — worth testing in your actual room and adjusting
+# _GATE_MIN_RMS up a bit if you notice false triggers on background noise.
+_GATE_FLOOR_MULT     = 1.3
+_GATE_MIN_RMS        = 80
 _GATE_MAX_RMS        = 800
 
 
@@ -645,9 +658,10 @@ def mix_audio(mic_data, sys_data):
 
     mixed = mixed_f.clip(-32768, 32767).astype(np.int16)
 
-    # Log audio levels every ~50 chunks (~3 seconds) so we can see signal strength
+    # Log audio levels every ~100 chunks (~3 seconds real time — doubled from 50 alongside
+    # CHUNK_FRAMES) so we can see signal strength without doubling log volume too
     _mix_log_counter += 1
-    if _mix_log_counter % 50 == 0:
+    if _mix_log_counter % 100 == 0:
         mic_rms = int(np.sqrt(np.mean(mic_arr ** 2)))
         sys_rms = int(np.sqrt(np.mean(sys_arr ** 2)))
         mix_rms = int(np.sqrt(np.mean(mixed_f ** 2)))
