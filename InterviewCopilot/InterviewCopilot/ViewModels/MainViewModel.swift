@@ -116,10 +116,33 @@ class MainViewModel {
         _ = AXIsProcessTrustedWithOptions(opts)
     }
 
-    func registerScreenRecording() {
-        // Permission is handled naturally by SCScreenshotManager when the user clicks Analyze.
-        // macOS shows its own prompt automatically — no manual setup needed.
-        permScreenRecording = true
+    /// Eagerly request Screen Recording from the permissions setup screen, instead of
+    /// waiting for the user's first F9/Analyze. CGRequestScreenCaptureAccess() is the
+    /// dedicated Core Graphics API for exactly this: it shows the native system dialog if
+    /// not yet decided, and returns the current authorization synchronously. Called off the
+    /// main thread since it can block while the system dialog is on screen (same pattern as
+    /// the other permission calls). Screen Recording — like Accessibility — needs the app to
+    /// be relaunched for a NEW grant to actually take effect; startPermissionPolling()'s
+    /// existing timer already watches for exactly this transition and relaunches.
+    func requestScreenRecordingPermission() {
+        // BUG FIX: this used to call CGRequestScreenCaptureAccess() — a DIFFERENT Apple API
+        // than the one Analyze actually uses (ScreenCaptureKit's SCShareableContent, in
+        // captureScreen() below). Confirmed live: real capture succeeded via
+        // SCShareableContent while CGRequestScreenCaptureAccess() kept reporting false — the
+        // two APIs don't reliably agree, so the setup screen's card could never show
+        // Granted even though Analyze already worked. Fixed by requesting through the EXACT
+        // same call captureScreen() uses, so there is no possibility of disagreement: if
+        // this succeeds, Analyze is guaranteed to also work, and vice versa.
+        Task { @MainActor in
+            do {
+                _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                self.permScreenRecording = true
+                dlog("Screen recording permission request (via ScreenCaptureKit) → granted", tag: "PERM")
+            } catch {
+                self.permScreenRecording = false
+                dlog("Screen recording permission request (via ScreenCaptureKit) → denied/error: \(error.localizedDescription)", tag: "PERM")
+            }
+        }
     }
 
     // MARK: - Timers (not tracked by @Observable)
@@ -226,7 +249,12 @@ class MainViewModel {
     private func checkAndRequestPermissions() {
         permInputMonitoring = MainViewModel.inputMonitoringGranted()
         permAccessibility   = AXIsProcessTrusted()
-        permScreenRecording = true   // screencapture binary has implicit permission; never call CGPreflightScreenCaptureAccess()
+        // CGPreflightScreenCaptureAccess() is a cheap, one-shot status READ (not a capture
+        // call), so it's safe here — the old "never call it" note was about repeatedly
+        // POLLING actual ScreenCaptureKit content APIs, which shows a persistent "Currently
+        // Sharing" system indicator. A single preflight check has no such side effect, and
+        // the setup screen now needs the REAL status to show Granted/Pending accurately.
+        permScreenRecording = CGPreflightScreenCaptureAccess()
         let micStatus       = AVCaptureDevice.authorizationStatus(for: .audio)
         permMicrophone      = micStatus == .authorized
         micDenied           = micStatus == .denied
@@ -247,57 +275,16 @@ class MainViewModel {
             MicPrimer.shared.start()
         }
 
-        // INSTANT-FIRST-LISTEN FIX: when the default "System audio + my voice" mode is on
-        // and the mic hasn't been decided yet, request it NOW (at launch) instead of on the
-        // first Space press. Confirmed cause of "the first Space is slow": granting the mic
-        // on first Space forced the already-running system-only engine to STOP and relaunch
-        // into mic mode at that exact moment, so the user waited ~5s on a cold restart +
-        // reconnect. Prompting at launch lets the engine start in mic mode from the start
-        // (see restoreSession/onLoginSuccess, which read the mic status when they spawn it),
-        // so by the time the user presses Space the pipeline is already warm and it's
-        // instant. Screen Recording still prompts lazily on the first F9.
-        if micCaptureEnabled && micStatus == .notDetermined {
-            dlog("Requesting mic at launch (mic-capture mode on) so the engine starts warm in BOTH mode — no first-Space restart", tag: "PERM")
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.permMicrophone = granted
-                    self.micDenied = !granted
-                    if granted { MicPrimer.shared.start() }
-                    // If the engine already came up in system-only mode before the user
-                    // answered this popup, restart it into BOTH mode NOW (during launch,
-                    // while they're still reading the UI) — so the FIRST Space press lands
-                    // on an already-warm mic pipeline instead of triggering the restart.
-                    if granted && self.engine.isRunning {
-                        dlog("Mic granted at launch — warming engine into BOTH mode before first Space", tag: "PERM")
-                        self.engine.stop()
-                        self.engine.start(smKey: self.session.speechmaticsKey)
-                    }
-                }
-            }
-        }
-        //
-        // Accessibility is what powers the global Space bar (the CGEventTap). If it isn't
-        // granted, Space only works while our own window is focused — the "I have to click
-        // the app every time" bug. We MUST prompt whenever it's genuinely not granted.
-        //
-        // BUG FIX (the real cause of the recurring complaint): this used to prompt only
-        // once ever, tracked in a UserDefaults flag — but UserDefaults PERSISTS across app
-        // reinstalls (and even a full uninstall + data wipe), so after the very first
-        // install the app NEVER re-requested Accessibility again, even on a fresh reinstall
-        // where macOS had wiped the grant. The user was left permanently without the global
-        // hotkey and the app silently never asked. Now we prompt every launch that starts
-        // untrusted (the in-session hasPromptedAccessibility guard stops within-run spam;
-        // macOS itself only shows its dialog once per launch anyway).
-        if !permAccessibility {
-            dlog("Accessibility NOT granted — firing the single system prompt for the global Space bar", tag: "PERM")
-            // ONE prompt only. The system Accessibility dialog already has its own "Open
-            // System Settings" button, so we DON'T also fling System Settings open — that
-            // (on top of the mic dialog) was the "too many popups" pile-up. A subtle in-app
-            // banner points here if they dismiss it, and the poll loop relaunches the moment
-            // they grant it.
-            requestAccessibilityPrompt()
-            showHotkeyBanner = true
+        // ENTERPRISE PERMISSION PATTERN: explain BEFORE asking, never fire a native system
+        // popup straight from launch code with no context. If ANYTHING the app uses still
+        // needs deciding — mic, Accessibility, or Screen Recording — show our own calm
+        // "Set up permissions" screen (PermissionSetupView) instead — its buttons are what
+        // actually trigger the real macOS dialogs, one at a time, each with a plain-language
+        // reason shown first. All three are asked in this ONE place; once each is decided,
+        // returning launches never show this screen again for that permission.
+        if micStatus == .notDetermined || !permAccessibility || !permScreenRecording {
+            dlog("Permissions incomplete (mic=\(micStatus.rawValue) AX=\(permAccessibility) screenRec=\(permScreenRecording)) — showing the explain-first setup screen", tag: "PERM")
+            needsPermissionSetup = true
         }
         startPermissionPolling()   // relaunches the moment AX flips to granted (see the poll loop)
 
@@ -347,6 +334,18 @@ class MainViewModel {
                 guard let self else { return }
                 self.permMicrophone = granted
                 self.micDenied = !granted   // BUG-12 FIX: was missing — UI showed wrong denied state
+                if granted {
+                    MicPrimer.shared.start()   // earliest possible warmup — see MicPrimer's doc comment
+                    // If the engine already came up in system-only mode before the user
+                    // answered this popup, restart it into BOTH mode NOW — so the first Space
+                    // press lands on an already-warm mic pipeline instead of triggering a
+                    // restart at that moment.
+                    if self.engine.isRunning {
+                        dlog("Mic granted — restarting engine into BOTH mode ahead of first Space", tag: "PERM")
+                        self.engine.stop()
+                        self.engine.start(smKey: self.session.speechmaticsKey)
+                    }
+                }
             }
         }
     }
@@ -363,6 +362,30 @@ class MainViewModel {
                 self.permInputMonitoring = MainViewModel.inputMonitoringGranted()
                 let prevAX = self.permAccessibility
                 self.permAccessibility   = AXIsProcessTrusted()
+                let micStatus            = AVCaptureDevice.authorizationStatus(for: .audio)
+                self.permMicrophone      = micStatus == .authorized
+                self.micDenied           = micStatus == .denied
+                // CGPreflightScreenCaptureAccess() is a cheap status READ, safe to poll —
+                // it's actually calling into ScreenCaptureKit content (SCShareableContent
+                // etc.) repeatedly that triggers the "Currently Sharing" system indicator,
+                // and we don't do that here.
+                //
+                // BUG FIX: this used to unconditionally overwrite permScreenRecording every
+                // second with whatever CGPreflightScreenCaptureAccess() reports. Confirmed
+                // live: that API can disagree with the ScreenCaptureKit call the setup
+                // screen's button now uses (requestScreenRecordingPermission) — the button
+                // would correctly set permScreenRecording=true, then THIS poll tick, firing
+                // a second later, would read the stale/disagreeing CG API and flip it right
+                // back to false, so the card never visibly showed Granted even though the
+                // permission genuinely was. Fixed: only let this poll RAISE the flag
+                // (false→true, to catch a grant made directly in System Settings and trigger
+                // the relaunch below); never let it lower a flag that a more authoritative
+                // check already confirmed true.
+                let prevScreenRec = self.permScreenRecording
+                if !self.permScreenRecording {
+                    self.permScreenRecording = CGPreflightScreenCaptureAccess()
+                }
+
                 // ROOT CAUSE of "Space only works after I click inside the app, every
                 // time": a CGEventTap created with .defaultTap only actually receives
                 // events reliably when Accessibility was ALREADY granted before this
@@ -374,13 +397,15 @@ class MainViewModel {
                 // LOCAL monitor (window must be key) actually does, forever, for that
                 // whole run. The only reliable fix is a full relaunch: the NEW process
                 // starts already trusted, so its tap attaches correctly from birth.
-                if !prevAX && self.permAccessibility {
-                    dlog("Accessibility newly granted — relaunching so the global Space tap attaches correctly", tag: "HOTKEY")
+                // Screen Recording has the exact same "needs a fresh process" requirement.
+                // Both are checked into ONE combined relaunch call — triggering it twice in
+                // the same tick (if both flip true together) would race two new instances
+                // against each other, so `newlyGranted` collapses them into a single call.
+                let newlyGranted = (!prevAX && self.permAccessibility) || (!prevScreenRec && self.permScreenRecording)
+                if newlyGranted {
+                    dlog("Accessibility=\(self.permAccessibility) ScreenRecording=\(self.permScreenRecording) newly granted — relaunching so both take effect", tag: "PERM")
                     MainViewModel.relaunchApp()
                 }
-                let micStatus            = AVCaptureDevice.authorizationStatus(for: .audio)
-                self.permMicrophone      = micStatus == .authorized
-                self.micDenied           = micStatus == .denied
                 // Safety net for the global-Space gate: re-sync it every second for the
                 // first 5 minutes after launch, in ADDITION to the explicit refreshes at
                 // login/logout. This guarantees Space can never get stuck thinking the user
@@ -388,8 +413,6 @@ class MainViewModel {
                 // exact bug that made Space (and the mic) do nothing until something else
                 // (like opening the debug log) happened to trigger a refresh.
                 self.refreshHotkeyGate()
-                // permScreenRecording is set once by registerScreenRecording() via SCKit.
-                // Do not poll it here — polling SCKit every second causes "Currently Sharing".
                 // Stop after 5 min from the first activation, even across multiple reopens.
                 if let start = self.permPollingStarted, Date().timeIntervalSince(start) > 300 {
                     let t = self.permTimer
@@ -436,23 +459,52 @@ class MainViewModel {
         }
     }
 
+    /// Guards against calling relaunchApp() twice concurrently (e.g. Accessibility and
+    /// Screen Recording both flipping to granted around the same moment) — a second call
+    /// while one is already in flight would race two new instances against each other.
+    private static var isRelaunching = false
+
     /// Relaunch the app cleanly: open a fresh instance, then quit this one. Used after
-    /// Accessibility is granted so the global hotkey (CGEventTap) can register — it only
-    /// works in a process that was already trusted at launch.
+    /// Accessibility or Screen Recording is granted, since both only take effect in a
+    /// process that was already trusted/authorized at launch.
+    /// Read by the NEW process's applicationDidFinishLaunching to distinguish an
+    /// intentional relaunch (where the OLD instance is expected to still be alive for a
+    /// brief moment) from an accidental duplicate launch (e.g. the user double-clicking the
+    /// icon again) — the single-instance guard in InterviewCopilotApp.swift checks this so
+    /// it doesn't mistake this deliberate handoff for a duplicate and kill the new instance.
+    static let relaunchEnvKey = "INTERVIEWCOPILOT_RELAUNCHING"
+
     static func relaunchApp() {
+        guard !isRelaunching else { return }
+        isRelaunching = true
         let url = Bundle.main.bundleURL
         let config = NSWorkspace.OpenConfiguration()
         config.createsNewApplicationInstance = true
+        config.environment = [relaunchEnvKey: "1"]
         // BUG-10 FIX: check the error before quitting — if the new instance fails to open
         // (corrupt bundle, read-only volume) the old instance must NOT terminate, otherwise
         // the user is left with zero app instances and has to relaunch manually.
         NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
             guard error == nil else {
                 dlog("relaunchApp: failed to open new instance — \(error!.localizedDescription)", tag: "APP")
+                isRelaunching = false   // allow a future retry — the old instance is still alive
                 return
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                dlog("relaunchApp: new instance confirmed open — terminating this (old) instance now", tag: "APP")
                 NSApp.terminate(nil)
+                // HARDENING: seen live — NSApp.terminate(nil) can be silently swallowed
+                // (observed on this .accessory-policy app: the old process kept running
+                // indefinitely alongside the new one, producing two visible windows). This
+                // isn't a cosmetic bug — a stray old instance can hold stale state, an
+                // un-upgraded hotkey tap, or a duplicate mic/engine session. If the graceful
+                // path hasn't actually exited within 1.5s, force it unconditionally: the
+                // NEW instance is already confirmed up and running, so there is no
+                // "zero instances" risk here — only ever the OLD, redundant one.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    dlog("relaunchApp: still alive 1.5s after terminate() — forcing hard exit", tag: "APP")
+                    exit(0)
+                }
             }
         }
     }
@@ -1285,6 +1337,13 @@ class MainViewModel {
 
         if enabled && AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
             requestMicrophonePermission()   // native popup; engine restart below picks it up
+        } else if !enabled {
+            // BUG FIX: MicPrimer may already be running from earlier in this session (it
+            // starts as soon as mic is authorized, before the user ever touches Settings).
+            // Without this, switching to "System audio only" correctly changed what the
+            // Python engine does, but the already-warmed AVAudioEngine kept running — mic
+            // stayed open and the orange indicator stayed on regardless of the new setting.
+            MicPrimer.shared.stop()
         }
         guard session.isLoggedIn, engine.isRunning else { return }
         engine.stop()

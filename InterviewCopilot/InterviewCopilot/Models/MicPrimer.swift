@@ -61,4 +61,20 @@ final class MicPrimer {
             }
         }
     }
+
+    /// BUG FIX: start() had no counterpart — once primed, the mic (and the orange menu-bar
+    /// indicator) stayed on for the rest of the session even if the user switched Settings
+    /// to "System audio only" afterward. Confirmed live: settings.json correctly saved
+    /// micCaptureEnabled=false, but the ALREADY-RUNNING AVAudioEngine from an earlier moment
+    /// (when it was still true) had nothing telling it to stop. Called from
+    /// MainViewModel.setMicCaptureEnabled(false) so switching modes actually releases the
+    /// mic and clears the indicator, not just changes what the Python engine does with it.
+    func stop() {
+        guard started else { return }
+        started = false
+        dlog("MicPrimer: stopping — mic capture disabled, releasing hardware", tag: "MICPRIME")
+        engine?.inputNode.removeTap(onBus: 0)
+        engine?.stop()
+        engine = nil
+    }
 }

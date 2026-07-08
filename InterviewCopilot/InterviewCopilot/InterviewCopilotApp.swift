@@ -35,6 +35,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let vm = MainViewModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // SINGLE-INSTANCE GUARD: if another copy of this app is already running, activate
+        // that one and quit THIS launch immediately — before creating a window, spawning
+        // the engine, or touching hotkeys/permissions. Without this, a user double-clicking
+        // the icon again (easy to do for an accessory app with no normal Dock presence)
+        // produces a confusing second window alongside the first.
+        //
+        // SKIPPED when this launch is itself an intentional relaunch (see
+        // MainViewModel.relaunchApp, fired after Accessibility/Screen Recording is newly
+        // granted) — that flow deliberately keeps the OLD instance alive for ~0.4s while
+        // the NEW one starts up, so the new instance must NOT see the old one and mistake
+        // it for a duplicate. The env var set on that specific launch tells us which case
+        // this is.
+        let isIntentionalRelaunch = ProcessInfo.processInfo.environment[MainViewModel.relaunchEnvKey] == "1"
+        if !isIntentionalRelaunch, let bundleID = Bundle.main.bundleIdentifier {
+            let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+                .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+            if let existing = others.first {
+                dlog("Another instance is already running (pid=\(existing.processIdentifier)) — activating it and quitting this launch", tag: "BOOT")
+                existing.activate(options: [.activateAllWindows])
+                NSApp.terminate(nil)
+                return
+            }
+        }
+
         // LSUIElement=YES in Info.plist makes the process start as .accessory from birth
         // (no menu bar entry, no Dock icon). The runtime call below is belt-and-suspenders
         // in case something re-sets the policy, and also clears any SwiftUI default menus.

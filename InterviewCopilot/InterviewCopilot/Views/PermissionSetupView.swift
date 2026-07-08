@@ -1,34 +1,36 @@
 import SwiftUI
 import AppKit
-import AVFoundation
+
+// ══════════════════════════════════════════════════════════════════════════
+// Enterprise-style permission onboarding: explain WHY before asking, and let
+// the user's own click fire each native macOS dialog — never a system popup
+// appearing out of nowhere with no context. Shown once, only for whatever is
+// still undecided (MainViewModel.checkAndRequestPermissions decides when).
+//
+// All three permissions the app actually uses — Microphone, Accessibility,
+// Screen Recording — are requested from THIS one screen so there's a single,
+// complete, one-time setup. Each is only ever asked again if it's still
+// undecided on a later launch; once granted, this screen doesn't reappear
+// for it.
+// ══════════════════════════════════════════════════════════════════════════
 
 struct PermissionSetupView: View {
     @Environment(MainViewModel.self) var vm
 
+    // IMPORTANT: read permission state through the @Observable ViewModel's tracked
+    // properties (permMicrophone / micDenied), NOT by calling AVCaptureDevice.
+    // authorizationStatus directly in the view body. A raw OS API call is invisible to
+    // SwiftUI's diffing — the card would keep showing "Allow microphone" even after the
+    // OS actually granted it, because nothing told SwiftUI to re-render. vm's properties
+    // ARE tracked, so referencing them here re-renders the instant requestMicrophonePermission()'s
+    // completion handler updates them. (Caught this exact bug live before shipping it.)
+    private var micDecided: Bool { vm.permMicrophone || vm.micDenied }
+
     var body: some View {
         ZStack {
-            Color(red: 9/255, green: 13/255, blue: 21/255).ignoresSafeArea()
+            Color(hex: "#0d1117").ignoresSafeArea()
 
             VStack(spacing: 0) {
-
-                // ── Close button — only visible once all permissions are granted ──
-                HStack {
-                    Spacer()
-                    if vm.hotkeyReadyToActivate {
-                        Button(action: { vm.closeHotkeySetup() }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 18))
-                                .foregroundColor(Color.white.opacity(0.18))
-                        }
-                        .buttonStyle(.plain)
-                        .help("Close")
-                    } else {
-                        // Placeholder so layout doesn't jump
-                        Color.clear.frame(width: 18, height: 18)
-                    }
-                }
-                .padding([.top, .trailing], 16)
-
                 // ── Header ───────────────────────────────────────────
                 VStack(spacing: 8) {
                     ZStack {
@@ -37,171 +39,95 @@ struct PermissionSetupView: View {
                                 colors: [Color(hex: "#1d3a5f"), Color(hex: "#0a2236")],
                                 startPoint: .topLeading, endPoint: .bottomTrailing))
                             .frame(width: 52, height: 52)
-                        Image(systemName: "lock.shield.fill")
-                            .font(.system(size: 23, weight: .semibold))
+                        Image(systemName: "shield.lefthalf.filled")
+                            .font(.system(size: 22, weight: .semibold))
                             .foregroundColor(Color(hex: "#38bdf8"))
                     }
-                    Text("Set Up Permissions")
-                        .font(.system(size: 21, weight: .bold))
+                    Text("Set up permissions")
+                        .font(.system(size: 19, weight: .medium))
                         .foregroundColor(.white)
-                    Text("Grant these now — so nothing blocks you mid-interview.")
+                    Text("Grant these once so nothing interrupts your interview.")
                         .font(.system(size: 12))
-                        .foregroundColor(Color.white.opacity(0.38))
+                        .foregroundColor(Color.white.opacity(0.4))
                 }
-                .padding(.top, 2)
-                .padding(.bottom, 22)
+                .padding(.top, 34)
+                .padding(.bottom, 24)
 
-                // ── Step cards ───────────────────────────────────────
+                // ── Cards ────────────────────────────────────────────
                 VStack(spacing: 10) {
-
-                    // Step 1 — Microphone
-                    StepCard(
-                        step: 1,
+                    PermCard(
                         icon: "mic.fill",
                         iconColor: Color(hex: "#4ade80"),
                         title: "Microphone",
-                        badge: "REQUIRED",
-                        description: "Captures your voice for real-time speech-to-text transcription.",
-                        isGranted: vm.permMicrophone,
-                        buttonLabel: micButtonLabel,
-                        extraInfo: nil,
+                        reason: "So Space can pick up your voice during the interview.",
+                        state: vm.permMicrophone ? .granted
+                             : vm.micDenied      ? .denied
+                             : .pending,
+                        primaryLabel: vm.micDenied ? "Open Settings" : "Allow microphone",
                         action: micAction
                     )
 
-                    // Step 2 — Accessibility
-                    StepCard(
-                        step: 2,
-                        icon: "figure.wave",
+                    PermCard(
+                        icon: "keyboard",
                         iconColor: Color(hex: "#a78bfa"),
                         title: "Accessibility",
-                        badge: "REQUIRED",
-                        description: "Lets the Space bar work while Zoom or your browser is in front.",
-                        isGranted: vm.permAccessibility,
-                        buttonLabel: "Open Settings",
-                        extraInfo: vm.permAccessibility ? nil :
-                            "① Click Open Settings  ② Find InterviewCopilot → toggle ON  ③ Click Relaunch below",
-                        action: openAccessibilitySettings
+                        reason: "So Space works from any app, not just this window.",
+                        state: vm.permAccessibility ? .granted : .pending,
+                        primaryLabel: "Allow accessibility",
+                        action: { vm.requestAccessibilityPrompt() }
                     )
 
-                    // Step 3 — Screen Recording
-                    StepCard(
-                        step: 3,
+                    PermCard(
                         icon: "rectangle.dashed",
                         iconColor: Color(hex: "#f59e0b"),
-                        title: "Screen Recording",
-                        badge: "RECOMMENDED",
-                        description: "Analyze code or questions on your screen with F9 — highly recommended.",
-                        isGranted: vm.permScreenRecording,
-                        buttonLabel: "Open Settings",
-                        extraInfo: vm.permScreenRecording ? nil :
-                            "① Click Open Settings  ② Find InterviewCopilot → toggle ON  (not listed? click + to add it)  ③ Return here",
-                        action: openScreenSettings
+                        title: "Screen recording",
+                        reason: "So Analyze can read code or questions on your screen.",
+                        state: vm.permScreenRecording ? .granted : .pending,
+                        primaryLabel: "Allow screen recording",
+                        action: { vm.requestScreenRecordingPermission() }
                     )
                 }
-                .padding(.horizontal, 32)
+                .padding(.horizontal, 28)
 
-                Spacer(minLength: 16)
+                Spacer(minLength: 20)
 
-                // ── Bottom action ─────────────────────────────────────
-                VStack(spacing: 10) {
-                    Text(statusMessage)
-                        .font(.system(size: 11))
-                        .foregroundColor(statusColor)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 16)
-
-                    Button(action: { vm.permissionGrantedContinue() }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: vm.hotkeyReadyToActivate ? "arrow.clockwise" : "lock.fill")
-                                .font(.system(size: 13, weight: .semibold))
-                            Text(relaunchButtonLabel)
-                                .fontWeight(.semibold)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 13)
-                        .background(
-                            vm.hotkeyReadyToActivate
-                            ? AnyView(LinearGradient(
-                                colors: [Color(hex: "#1d4ed8"), Color(hex: "#1e40af")],
-                                startPoint: .top, endPoint: .bottom))
-                            : AnyView(Color.white.opacity(0.05))
-                        )
-                        .cornerRadius(11)
-                        .foregroundColor(vm.hotkeyReadyToActivate
-                                         ? .white : Color.white.opacity(0.28))
+                // ── Continue ─────────────────────────────────────────
+                // Only the microphone gates Continue — it's the one the app's core function
+                // (transcription) cannot work at all without. Accessibility and Screen
+                // Recording are asked here too, but skipping them for now still leaves the
+                // app usable (local key monitor, and Analyze prompts again on first use).
+                VStack(spacing: 8) {
+                    Button(action: { vm.needsPermissionSetup = false }) {
+                        Text("Continue")
+                            .font(.system(size: 13, weight: .medium))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(micDecided ? Color(hex: "#1d4ed8") : Color.white.opacity(0.05))
+                            .foregroundColor(micDecided ? .white : Color.white.opacity(0.3))
+                            .cornerRadius(10)
                     }
                     .buttonStyle(.plain)
-                    .disabled(!vm.hotkeyReadyToActivate)
+                    .disabled(!micDecided)
+
+                    if !micDecided {
+                        Text("Respond to the microphone prompt above to continue.")
+                            .font(.system(size: 11))
+                            .foregroundColor(Color.white.opacity(0.35))
+                    }
                 }
-                .padding(.horizontal, 32)
-                .padding(.bottom, 24)
+                .padding(.horizontal, 28)
+                .padding(.bottom, 28)
             }
         }
-        .frame(width: 520, height: 570)
-        .onAppear {
-            // Register for Screen Recording so the app appears in the list.
-            vm.registerScreenRecording()
-        }
-        .onDisappear {
-            vm.closeHotkeySetup()   // stops permTimer — otherwise it keeps firing after swipe-dismiss
-        }
-        .animation(.easeInOut(duration: 0.22), value: vm.permMicrophone)
-        .animation(.easeInOut(duration: 0.22), value: vm.permAccessibility)
-        .animation(.easeInOut(duration: 0.22), value: vm.permScreenRecording)
-    }
-
-    // MARK: - Helpers
-
-    private var relaunchButtonLabel: String {
-        if !vm.hotkeyReadyToActivate { return "Waiting for Accessibility…" }
-        if vm.micDenied { return "Open Mic Settings" }
-        return "Relaunch & Start Session"
-    }
-
-    private var statusColor: Color {
-        if !vm.hotkeyReadyToActivate { return Color.white.opacity(0.35) }
-        if !vm.permMicrophone || !vm.permScreenRecording { return Color(hex: "#f59e0b") }
-        return Color(hex: "#4ade80")
-    }
-
-    private var statusMessage: String {
-        if !vm.hotkeyReadyToActivate {
-            return "Grant Accessibility access to continue."
-        }
-        if vm.micDenied {
-            return "Microphone was denied — click Relaunch to open Mic settings, toggle ON, then click Relaunch again."
-        }
-        if !vm.permMicrophone {
-            return "Click Relaunch — a microphone permission popup will appear."
-        }
-        if !vm.permScreenRecording {
-            return "Ready — also grant Screen Recording for F9 screen analysis."
-        }
-        return "All set — click Relaunch to start your first session."
-    }
-
-    // MARK: - Actions
-
-    private func openAccessibilitySettings() {
-        vm.requestAccessibilityPrompt()
-        NSWorkspace.shared.open(
-            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-    }
-
-    private func openScreenSettings() {
-        vm.registerScreenRecording()
-        NSWorkspace.shared.open(
-            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
-    }
-
-    private var micButtonLabel: String {
-        AVCaptureDevice.authorizationStatus(for: .audio) == .denied ? "Open Settings" : "Allow Access"
+        .frame(width: 480, height: 470)
+        .animation(.easeInOut(duration: 0.2), value: vm.permAccessibility)
+        .animation(.easeInOut(duration: 0.2), value: vm.permMicrophone)
+        .animation(.easeInOut(duration: 0.2), value: vm.micDenied)
+        .animation(.easeInOut(duration: 0.2), value: vm.permScreenRecording)
     }
 
     private func micAction() {
-        let status = AVCaptureDevice.authorizationStatus(for: .audio)
-        if status == .denied {
+        if vm.micDenied {
             NSWorkspace.shared.open(
                 URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
         } else {
@@ -210,111 +136,71 @@ struct PermissionSetupView: View {
     }
 }
 
-// MARK: - StepCard
+// MARK: - PermCard
 
-private struct StepCard: View {
-    let step: Int
+private enum PermState { case pending, granted, denied }
+
+private struct PermCard: View {
     let icon: String
     let iconColor: Color
     let title: String
-    let badge: String
-    let description: String
-    let isGranted: Bool
-    let buttonLabel: String
-    let extraInfo: String?
+    let reason: String
+    let state: PermState
+    let primaryLabel: String?
     let action: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(iconColor.opacity(0.12))
+                    .frame(width: 36, height: 36)
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(iconColor)
+            }
 
-                // Step number / granted checkmark
-                ZStack {
-                    Circle()
-                        .fill(isGranted
-                              ? Color.green.opacity(0.14)
-                              : Color.white.opacity(0.05))
-                        .frame(width: 38, height: 38)
-                    if isGranted {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundColor(.green)
-                    } else {
-                        Text("\(step)")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(Color.white.opacity(0.4))
-                    }
-                }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.white)
+                Text(reason)
+                    .font(.system(size: 11))
+                    .foregroundColor(Color.white.opacity(0.4))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 4)
 
-                // Text
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(title)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.white)
-                        Text(badge)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(badge == "REQUIRED"
-                                             ? .orange : Color.white.opacity(0.35))
-                            .padding(.horizontal, 5).padding(.vertical, 2)
-                            .background((badge == "REQUIRED"
-                                         ? Color.orange : Color.white).opacity(0.1))
-                            .cornerRadius(4)
-                    }
-                    Text(description)
-                        .font(.system(size: 11))
-                        .foregroundColor(Color.white.opacity(0.35))
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 8)
-
-                // Action / granted badge
-                if isGranted {
+                switch state {
+                case .granted:
                     HStack(spacing: 5) {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 15))
+                            .font(.system(size: 13))
                             .foregroundColor(.green)
                         Text("Granted")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(.green)
                     }
-                } else {
-                    Button(buttonLabel, action: action)
-                        .font(.system(size: 11, weight: .medium))
+                case .pending, .denied:
+                    Button(primaryLabel ?? "Allow", action: action)
+                        .font(.system(size: 11.5, weight: .medium))
                         .foregroundColor(.white)
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(Color.white.opacity(0.09))
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .background(state == .denied ? Color.white.opacity(0.09) : Color(hex: "#1d4ed8"))
                         .cornerRadius(7)
                         .buttonStyle(.plain)
                 }
             }
-            .padding(14)
 
-            // Inline guide for Accessibility (shown only when not granted)
-            if !isGranted, let info = extraInfo {
-                Text(info)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(Color(hex: "#38bdf8").opacity(0.65))
-                    .padding(.leading, 64)
-                    .padding(.trailing, 14)
-                    .padding(.bottom, 12)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Spacer(minLength: 0)
         }
+        .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 11)
-                .fill(isGranted
-                      ? Color.green.opacity(0.04)
-                      : Color.white.opacity(0.025))
+            RoundedRectangle(cornerRadius: 12)
+                .fill(state == .granted ? Color.green.opacity(0.04) : Color.white.opacity(0.03))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 11)
-                        .stroke(isGranted
-                                ? Color.green.opacity(0.18)
-                                : Color.white.opacity(0.06), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(state == .granted ? Color.green.opacity(0.18) : Color.white.opacity(0.08), lineWidth: 1)
                 )
         )
-        .animation(.easeInOut(duration: 0.22), value: isGranted)
     }
 }

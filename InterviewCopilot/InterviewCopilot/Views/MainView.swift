@@ -62,12 +62,14 @@ struct MainView: View {
         .sheet(isPresented: $showSessions)  { SessionsView() }
         .sheet(isPresented: $showLogin)     { LoginView() }
         .sheet(isPresented: $showDebugLog)  { DebugLogView() }
-        // OPTIONAL hotkey setup (fixed-size sheet so it can never stretch the window).
-        // Shown only when the user taps "Enable Space bar" — the app is fully usable
-        // without it via the mic button, so this is a dismissible upgrade, never a wall.
+        // First-run permission explainer (fixed-size sheet so it can never stretch the
+        // window). Shown only when something is still undecided — see
+        // MainViewModel.checkAndRequestPermissions. Blocks swipe-to-dismiss only until the
+        // microphone prompt has been answered either way; Accessibility can be granted here
+        // or skipped for now (the app still works via the local key monitor without it).
         .sheet(isPresented: Bindable(vm).needsPermissionSetup) {
             PermissionSetupView()
-                .interactiveDismissDisabled(!vm.hotkeyReadyToActivate)
+                .interactiveDismissDisabled(!vm.permMicrophone && !vm.micDenied)
         }
         .alert("Resume Upload Failed", isPresented: $showResumeError) {
             Button("OK") {}
