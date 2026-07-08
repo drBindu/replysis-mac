@@ -82,7 +82,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Start the Sparkle updater now — it checks SUFeedURL in the background once a day
         // and lets Settings trigger a manual check. See AppUpdater.swift for why this exists.
-        _ = AppUpdater.shared
+        // .controller is `lazy` (needs `self` fully initialized first as the Sparkle
+        // delegate) — touch it explicitly so the daily background check actually starts
+        // now, not only whenever Settings happens to be opened.
+        _ = AppUpdater.shared.controller
 
         // Permission requests are handled by the in-app setup screen (PermissionSetupView).
         buildPanel()
