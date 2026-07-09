@@ -188,7 +188,48 @@ class GoogleSignIn {
         let accessToken: String
     }
 
+    // PRIMARY: exchange via our own backend, which holds the OAuth client secret
+    // server-side (see GoogleAuthController in the backend repo) — the secret never has
+    // to ship inside this app for this path to succeed. FALLBACK: the original
+    // direct-to-Google exchange below, kept so sign-in can never break from this change —
+    // if the backend path has any issue (down, misconfigured), it quietly falls back to
+    // what's already proven working today.
     private static func exchangeCode(_ code: String, redirectUri: String, verifier: String) async -> TokenResponse? {
+        if let viaBackend = await exchangeCodeViaBackend(code, redirectUri: redirectUri, verifier: verifier) {
+            return viaBackend
+        }
+        dlog("Google: backend exchange unavailable — falling back to direct exchange", tag: "GOOGLE")
+        return await exchangeCodeDirect(code, redirectUri: redirectUri, verifier: verifier)
+    }
+
+    private static func exchangeCodeViaBackend(_ code: String, redirectUri: String, verifier: String) async -> TokenResponse? {
+        guard let url = URL(string: "\(AppConfig.backendUrl)/api/v1/auth/google/exchange") else { return nil }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 15
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "code": code, "codeVerifier": verifier, "redirectUri": redirectUri
+        ])
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                dlog("Google: backend exchange HTTP \((resp as? HTTPURLResponse)?.statusCode ?? 0)", tag: "GOOGLE")
+                return nil
+            }
+            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+            let idToken = obj["idToken"] as? String ?? ""
+            let accessToken = obj["accessToken"] as? String ?? ""
+            guard !idToken.isEmpty || !accessToken.isEmpty else { return nil }
+            dlog("Google: backend exchange OK — idToken=\(!idToken.isEmpty) accessToken=\(!accessToken.isEmpty)", tag: "GOOGLE")
+            return TokenResponse(idToken: idToken, accessToken: accessToken)
+        } catch {
+            dlog("Google: backend exchange request failed: \(error.localizedDescription)", tag: "GOOGLE")
+            return nil
+        }
+    }
+
+    private static func exchangeCodeDirect(_ code: String, redirectUri: String, verifier: String) async -> TokenResponse? {
         guard let url = URL(string: "https://oauth2.googleapis.com/token") else { return nil }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
