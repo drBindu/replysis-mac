@@ -825,7 +825,7 @@ class MainViewModel {
                     if self.session.isGuestSession {
                         // A guest has no account to buy more credits on — the only next
                         // step that makes sense is signing in for a real (paid) plan.
-                        self.aiAnswer = "⚠ Your free trial is used up. Sign in to keep going."
+                        self.aiAnswer = "⚠ Your 100 free credits are used up.\n\nSign in to buy more and keep going — your account is where credits are purchased."
                         NotificationCenter.default.post(name: .showLogin, object: nil)
                     } else {
                         self.aiAnswer = "⚠ Not enough credits. Visit coopilotxai.com/pricing."
@@ -947,7 +947,7 @@ class MainViewModel {
                 guard let self = self, self.answerEpoch == epoch else { return }
                 dlog("Screen analysis error: \(err)", tag: "SCREEN")
                 if err == "NO_CREDITS" && self.session.isGuestSession {
-                    self.aiAnswer = "⚠ Your free trial is used up. Sign in to keep going."
+                    self.aiAnswer = "⚠ Your 100 free credits are used up.\n\nSign in to buy more and keep going — your account is where credits are purchased."
                     NotificationCenter.default.post(name: .showLogin, object: nil)
                 } else if !self.isWatchMode {
                     self.aiAnswer = "⚠ Screen analysis error: \(err)"
