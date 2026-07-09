@@ -37,6 +37,10 @@ class GoogleSignIn {
         defer { isSigningIn = false }
         dlog("Google Sign In: starting loopback flow", tag: "GOOGLE")
 
+        // The client secret is loaded from remote config. If it hasn't arrived yet, try
+        // once now so we don't fail the token exchange purely for a missing secret.
+        if AppConfig.googleClientSecret.isEmpty { await AppConfig.fetchRemoteConfig() }
+
         guard let (serverFd, port) = bindListenSocket() else {
             return .failure("Could not bind local port for OAuth redirect.")
         }
@@ -192,13 +196,13 @@ class GoogleSignIn {
         let enc = { (s: String) in
             s.addingPercentEncoding(withAllowedCharacters: .init(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? s
         }
-        // Confirmed in Google Cloud Console: this OAuth client is type "Desktop app", which
-        // Google treats as a public/native client — the PKCE code_verifier alone satisfies
-        // the token exchange, no client_secret needed or expected. Previously a secret was
-        // baked into the shipped app's Info.plist at build time so it could be sent here,
-        // which meant anyone who downloaded the DMG could extract it (a real, if low-risk,
-        // exposure). Removing it entirely closes that gap with zero functionality loss.
-        let bodyStr = "code=\(enc(code))&client_id=\(AppConfig.googleClientId)&redirect_uri=\(enc(redirectUri))&code_verifier=\(verifier)&grant_type=authorization_code"
+        // Include client_secret only when we actually have one. For a "Desktop app" OAuth
+        // client, the PKCE code_verifier alone can satisfy the exchange — so omitting an
+        // empty secret gives sign-in a chance to work even when remote config is down.
+        var bodyStr = "code=\(enc(code))&client_id=\(AppConfig.googleClientId)&redirect_uri=\(enc(redirectUri))&code_verifier=\(verifier)&grant_type=authorization_code"
+        if !AppConfig.googleClientSecret.isEmpty {
+            bodyStr += "&client_secret=\(AppConfig.googleClientSecret)"
+        }
         req.httpBody = bodyStr.data(using: .utf8)
 
         do {

@@ -137,6 +137,8 @@ jobs:
           echo "Engine injected: $(du -sh "$APP/Contents/Resources/speechmatics_engine" | cut -f1)"
 
       - name: Re-sign bundled helper binaries with Hardened Runtime
+        env:
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
         run: |
           IDENTITY=$(security find-identity -v -p codesigning "$RUNNER_TEMP/build.keychain" \
             | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.+)"/\1/')
@@ -181,11 +183,18 @@ jobs:
               echo "Signed: $BIN ($(codesign -dv "$BIN_PATH" 2>&1 | grep Identifier || echo 'ok'))"
             fi
           done
-          # No Google OAuth client secret is injected here anymore: this OAuth client is
-          # "Desktop app" type in Google Cloud Console, which Google treats as a public/
-          # native client — PKCE alone satisfies the token exchange (see GoogleSignIn.swift),
-          # no secret needed. Baking one into the shipped Info.plist used to mean anyone
-          # downloading the DMG could extract it — removed, with no functionality loss.
+          # Inject the Google OAuth client secret (from the GOOGLE_CLIENT_SECRET repo
+          # secret) into the app's Info.plist so "Continue with Google" can complete the
+          # token exchange. Done BEFORE the re-seal so the signature covers it. Entirely
+          # optional: if the secret isn't configured, Google stays disabled and
+          # email/password sign-in is unaffected.
+          if [ -n "${GOOGLE_CLIENT_SECRET}" ]; then
+            /usr/libexec/PlistBuddy -c "Add :GoogleClientSecret string ${GOOGLE_CLIENT_SECRET}" "$APP/Contents/Info.plist" 2>/dev/null \
+              || /usr/libexec/PlistBuddy -c "Set :GoogleClientSecret ${GOOGLE_CLIENT_SECRET}" "$APP/Contents/Info.plist"
+            echo "GoogleClientSecret injected into Info.plist"
+          else
+            echo "GOOGLE_CLIENT_SECRET not set — Google sign-in stays disabled (email/password works)"
+          fi
 
           # Re-seal the whole .app after modifying internals.
           # MUST pass --entitlements explicitly: without it codesign may strip the
