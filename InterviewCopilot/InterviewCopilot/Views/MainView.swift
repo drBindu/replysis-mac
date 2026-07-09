@@ -956,7 +956,12 @@ struct MainView: View {
                         .transition(.scale.combined(with: .opacity))
                     }
 
-                    Spacer()
+                    // minLength (not a plain Spacer): this row can show up to 3 clusters
+                    // at once (label+STAR badge, thinking indicator, 4 action buttons) —
+                    // same defensive treatment as the header fix, so they always keep a
+                    // minimum gap rather than potentially crowding together at narrow
+                    // widths instead of quietly assuming there's always room.
+                    Spacer(minLength: 12)
 
                     // Thinking indicator
                     if vm.showThinking {
@@ -969,7 +974,7 @@ struct MainView: View {
                                 .font(.system(size: 11))
                                 .foregroundColor(Color(hex: "#334466"))
                         }
-                        Spacer()
+                        Spacer(minLength: 12)
                     }
 
                     // Action buttons
