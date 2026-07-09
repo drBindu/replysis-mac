@@ -82,15 +82,21 @@ struct MainView: View {
     // MARK: — HEADER  (matches original exactly)
     // ══════════════════════════════════════════════
     var headerBar: some View {
-        ZStack {
-            // CENTER: primary mic control — perfectly centered regardless of side widths
+        // Was a ZStack with micControl mathematically centered on the WHOLE window,
+        // independent of how wide brandView/rightCluster actually were. That's fine when
+        // both sides are narrow, but rightCluster can show up to 7 optional items at once
+        // (Analyze, eye, pin, session timer, credits, profile, close) — once that content
+        // got wide enough (adding the credits pill was what tipped it over), its left edge
+        // crossed the true center point and visually overlapped the mic control. A plain
+        // HStack with guaranteed minimum gaps can never overlap, regardless of how many
+        // optional buttons are showing — trading perfect mathematical centering (which was
+        // never guaranteed to hold anyway) for a layout that's simply never broken.
+        HStack(spacing: 0) {
+            brandView
+            Spacer(minLength: 16)
             micControl
-
-            HStack(spacing: 0) {
-                brandView
-                Spacer()
-                rightCluster
-            }
+            Spacer(minLength: 16)
+            rightCluster
         }
         .padding(.horizontal, 18)
         .frame(height: 64)
