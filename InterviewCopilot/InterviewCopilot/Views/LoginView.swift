@@ -9,14 +9,9 @@ struct LoginView: View {
     @State private var isLoading   = false
     @State private var errorMsg    = ""
     @State private var successMsg  = ""
-    // Hidden by default: "Continue with Google" only appears once a real client secret is
-    // confirmed available. Google sign-in was ALWAYS failing with a "temporarily
-    // unavailable" error (no GOOGLE_CLIENT_SECRET configured anywhere) — showing a button
-    // that's guaranteed to fail on every click was the actual bug, not a flaky backend.
-    // This is a permanent safety net: if the secret is ever missing again for any reason
-    // (misconfigured secret, backend down), users see a clean email/password form instead
-    // of a dead-end button and a red error banner.
-    @State private var googleSignInAvailable = false
+    // Google sign-in no longer depends on a client secret at all (this OAuth client is
+    // "Desktop app" type — PKCE alone satisfies the token exchange, see GoogleSignIn.swift),
+    // so the button is always available; there's no missing-config state left to gate on.
 
     // Saved account for "Continue As" card
     private var savedEmail: String { UserSession.shared.email }
@@ -189,31 +184,27 @@ struct LoginView: View {
                         .disabled(isLoading)
 
                         // ── OR divider + Continue with Google ──
-                        // Only shown once a real client secret is confirmed present — see
-                        // googleSignInAvailable's declaration for why.
-                        if googleSignInAvailable {
-                            HStack(spacing: 12) {
-                                Rectangle().fill(Color.white.opacity(0.12)).frame(height: 1)
-                                Text("OR").font(.system(size: 11)).foregroundColor(Color(hex: "#4b5563"))
-                                Rectangle().fill(Color.white.opacity(0.12)).frame(height: 1)
-                            }
-
-                            Button(action: signInWithGoogle) {
-                                HStack(spacing: 10) {
-                                    GoogleLogoShape().frame(width: 18, height: 18)
-                                    Text("Continue with Google")
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundColor(.white)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 11)
-                                .background(Color(hex: "#1f2937"))
-                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.18), lineWidth: 1))
-                                .cornerRadius(8)
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(isLoading)
+                        HStack(spacing: 12) {
+                            Rectangle().fill(Color.white.opacity(0.12)).frame(height: 1)
+                            Text("OR").font(.system(size: 11)).foregroundColor(Color(hex: "#4b5563"))
+                            Rectangle().fill(Color.white.opacity(0.12)).frame(height: 1)
                         }
+
+                        Button(action: signInWithGoogle) {
+                            HStack(spacing: 10) {
+                                GoogleLogoShape().frame(width: 18, height: 18)
+                                Text("Continue with Google")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.white)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 11)
+                            .background(Color(hex: "#1f2937"))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.18), lineWidth: 1))
+                            .cornerRadius(8)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isLoading)
                     }
                     .padding(24)
                     .background(Color(hex: "#0d1117").opacity(0.5))
@@ -245,14 +236,6 @@ struct LoginView: View {
         }
         // Tall enough that the Cancel button is always visible without scrolling.
         .frame(width: 400, height: hasSavedAccount ? 700 : 620)
-        .task {
-            // Check whether Google sign-in can actually succeed BEFORE showing its button.
-            // Baked-in secret (set via the GOOGLE_CLIENT_SECRET GitHub secret at build time)
-            // is checked first; if that's empty, try the remote-config fetch once as a
-            // fallback. Either way, the button only appears once this resolves true.
-            if AppConfig.googleClientSecret.isEmpty { await AppConfig.fetchRemoteConfig() }
-            googleSignInAvailable = !AppConfig.googleClientSecret.isEmpty
-        }
     }
 
     // MARK: — Actions

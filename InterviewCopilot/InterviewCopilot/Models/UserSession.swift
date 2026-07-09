@@ -273,19 +273,16 @@ enum AppConfig {
     static let backendUrl         = "https://coopilotxai.com"   // Oracle Cloud — the only backend
     static let firebaseApiKey     = "AIzaSyAGGmuFpR0qkCHLI3q2cPv_o3cQlbIU8lE"
     static let googleClientId     = "745433477203-lvqmnnip9pb241vkfp628qmue8313cre.apps.googleusercontent.com"
-    // Baked into Info.plist at build time from the GOOGLE_CLIENT_SECRET GitHub Actions
-    // secret (see .github/workflows/build-mac-dmg.yml). Empty in local dev or when the
-    // secret isn't configured → "Continue with Google" stays disabled and email/password
-    // sign-in is completely unaffected. fetchRemoteConfig() can also fill this if a
-    // backend ever serves it.
-    static var googleClientSecret = (Bundle.main.infoDictionary?["GoogleClientSecret"] as? String) ?? ""
+    // No client secret: confirmed in Google Cloud Console this OAuth client is type
+    // "Desktop app", which Google treats as a public/native client — PKCE alone (see
+    // GoogleSignIn.exchangeCode) satisfies the token exchange. A secret used to be baked
+    // into Info.plist at build time so it could be sent alongside PKCE, but that meant
+    // anyone downloading the DMG could extract it from the shipped app — a real, if
+    // low-risk, exposure with zero benefit since PKCE alone already worked.
 
-    // Fetches GoogleClientSecret (and optionally other keys) from the original backend.
-    // Must be called once before Google sign-in.
+    // Fetches optional remote config (currently just a fallback SpeechmaticsKey) from the
+    // backend. 404s harmlessly if that endpoint doesn't exist.
     static func fetchRemoteConfig() async {
-        // Optional config (e.g. GoogleClientSecret) from the Oracle backend. Until that
-        // endpoint exists it 404s harmlessly and Google sign-in stays disabled — email/
-        // password sign-in is completely independent of this.
         guard let url = URL(string: "\(backendUrl)/api/config/keys") else { return }
         var configReq = URLRequest(url: url)
         configReq.timeoutInterval = 8
@@ -296,12 +293,6 @@ enum AppConfig {
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             dlog("AppConfig: remote config bad JSON", tag: "CONFIG")
             return
-        }
-        if let secret = obj["GoogleClientSecret"] as? String, !secret.isEmpty {
-            await MainActor.run { googleClientSecret = secret }
-            dlog("AppConfig: got GoogleClientSecret (len=\(secret.count))", tag: "CONFIG")
-        } else {
-            dlog("AppConfig: GoogleClientSecret not in response — keys: \(obj.keys.joined(separator: ","))", tag: "CONFIG")
         }
         if let smKey = obj["SpeechmaticsKey"] as? String, !smKey.isEmpty {
             // BUG-15 FIX: only write the remote config key when the session hasn't already
