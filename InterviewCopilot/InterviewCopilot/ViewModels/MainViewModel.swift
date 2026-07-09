@@ -1055,6 +1055,9 @@ class MainViewModel {
         // handled globally until the user first interacted with the app (e.g. opened the
         // debug log) — the "Space does nothing / had to press F12 first" bug.
         refreshHotkeyGate()
+        // Don't let a background "Update available" alert pop up over an active interview —
+        // see AppUpdater.setInterviewActive for why. Resumed in endSession().
+        AppUpdater.shared.setInterviewActive(true)
         resumeLocked = false
         PromptBuilder.shared.clearHistory()
         let dir = engine.appDataFolder
@@ -1088,6 +1091,7 @@ class MainViewModel {
         isRecording = false; sessionLogPath = nil
         sessionTimerObj?.invalidate(); sessionTimerVisible = false
         PromptBuilder.shared.clearHistory()
+        AppUpdater.shared.setInterviewActive(false)
     }
 
     private func appendToSessionLog(q: String, a: String) {

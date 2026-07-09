@@ -43,4 +43,17 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
     var canCheckForUpdates: Bool {
         controller.updater.canCheckForUpdates
     }
+
+    // Suppress the DAILY BACKGROUND check while an interview is actively being recorded.
+    // An "Update available" alert popping up over the app mid-interview would be a real
+    // problem for a tool used live in front of an interviewer. This only pauses the
+    // automatic schedule — a user-initiated "Check for Updates…" in Settings always still
+    // works immediately, since Sparkle handles those separately regardless of this flag
+    // (see SPUUpdater.automaticallyChecksForUpdates). Called from MainViewModel's
+    // startNewSession()/endSession() — resumes automatically once the interview ends, so
+    // the update is simply found on the next scheduled check rather than lost.
+    func setInterviewActive(_ active: Bool) {
+        controller.updater.automaticallyChecksForUpdates = !active
+        dlog("AppUpdater: automatic background checks \(active ? "paused (interview active)" : "resumed")", tag: "UPDATE")
+    }
 }

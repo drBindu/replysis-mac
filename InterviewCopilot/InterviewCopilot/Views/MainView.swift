@@ -304,7 +304,10 @@ struct MainView: View {
                     Text(vm.profileName)
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(.white)
-                    Text(vm.session.email)
+                    // A guest's session.email is intentionally empty (no account exists
+                    // yet) — showing that blank looked like a rendering bug. Say plainly
+                    // what state they're in instead.
+                    Text(vm.session.isGuestSession ? "Free trial — not signed in" : vm.session.email)
                         .font(.system(size: 11))
                         .foregroundColor(Color(hex: "#64748b"))
                         .lineLimit(1).truncationMode(.middle)
@@ -336,7 +339,16 @@ struct MainView: View {
                         subtitle: "Review previous interviews") {
                     showProfileMenu = false; showSessions = true
                 }
-                if !vm.session.isUnlimited {
+                // A guest (free trial, no account) previously had NO way to reach the
+                // sign-in screen except clicking "Sign Out" — confusing, since they never
+                // signed in to anything. Show a direct "Sign In" entry instead; the real
+                // "Upgrade to Pro" link only makes sense once there's an actual account.
+                if vm.session.isGuestSession {
+                    menuRow(icon: "person.crop.circle.badge.checkmark", title: "Sign In",
+                            subtitle: "Save your progress & unlock more credits", accent: Color(hex: "#38bdf8")) {
+                        showProfileMenu = false; showLogin = true
+                    }
+                } else if !vm.session.isUnlimited {
                     menuRow(icon: "bolt.fill", title: "Upgrade to Pro",
                             subtitle: "Unlimited answers", accent: Color(hex: "#a78bfa")) {
                         showProfileMenu = false
@@ -346,13 +358,17 @@ struct MainView: View {
             }
             .padding(.vertical, 6)
 
-            Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
+            // "Sign Out" only makes sense for a real signed-in account — a guest never
+            // signed anything in, so this row is replaced by "Sign In" above instead.
+            if !vm.session.isGuestSession {
+                Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
 
-            menuRow(icon: "rectangle.portrait.and.arrow.right", title: "Sign Out",
-                    subtitle: nil, accent: Color(hex: "#ef4444"), destructive: true) {
-                showProfileMenu = false; vm.signOut()
+                menuRow(icon: "rectangle.portrait.and.arrow.right", title: "Sign Out",
+                        subtitle: nil, accent: Color(hex: "#ef4444"), destructive: true) {
+                    showProfileMenu = false; vm.signOut()
+                }
+                .padding(.vertical, 6)
             }
-            .padding(.vertical, 6)
         }
         .frame(width: 296)
         .background(Color(hex: "#0b1018"))
