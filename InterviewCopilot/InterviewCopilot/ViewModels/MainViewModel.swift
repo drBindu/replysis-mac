@@ -227,7 +227,12 @@ class MainViewModel {
                         profileName = "Guest"
                         profilePlan = "Free trial"
                         avatarInitials = "GU"
-                        showCreditsBadge = true
+                        // BUG FIX: this only set showCreditsBadge = true without ever calling
+                        // updateCreditsUI(), so the header badge stayed on its default "—"
+                        // placeholder forever — a guest had no visible way to see how many
+                        // free credits they actually had left. startGuestSession() already
+                        // populated session.credits/plan/isUnlimited; just render them.
+                        updateCreditsUI(credits: session.credits, plan: session.plan, isUnlimited: session.isUnlimited)
                         let smOk = await session.fetchSpeechmaticsKeyAsync()
                         startNewSession()
                         if smOk && !engine.isRunning {

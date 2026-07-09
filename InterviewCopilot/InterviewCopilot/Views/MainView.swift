@@ -228,6 +228,23 @@ struct MainView: View {
                 .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
             }
 
+            // Visible credits indicator — previously the ONLY place to see your credit
+            // balance was inside the profile avatar's dropdown, which most users (guests
+            // especially) never think to click. Shows for both guests and signed-in
+            // accounts; tapping opens the same dropdown (full details + Sign In / Top up).
+            if vm.showCreditsBadge {
+                Button(action: { showProfileMenu.toggle() }) {
+                    Text(vm.creditsText)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(vm.creditsColor)
+                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .background(Capsule().fill(Color.white.opacity(0.05)))
+                        .overlay(Capsule().stroke(vm.creditsColor.opacity(0.35), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .help("Credits remaining — click for details")
+            }
+
             Rectangle().fill(Color.white.opacity(0.08)).frame(width: 1, height: 22)
                 .padding(.horizontal, 2)
 
@@ -404,20 +421,26 @@ struct MainView: View {
                         Text("\(vm.session.credits) credits")
                             .font(.system(size: 14, weight: .bold))
                             .foregroundColor(creditsAccent)
-                        Text("\(vm.session.plan.capitalized) plan")
+                        Text(vm.session.isGuestSession ? "Free trial" : "\(vm.session.plan.capitalized) plan")
                             .font(.system(size: 10))
                             .foregroundColor(Color(hex: "#64748b"))
                     }
                     Spacer(minLength: 0)
+                    // A guest has no account to buy credits on — route to Sign In instead of
+                    // a pricing page they can't actually act on. Real accounts keep "Top up".
                     Button(action: {
                         showProfileMenu = false
-                        NSWorkspace.shared.open(URL(string: "https://coopilotxai.com/pricing")!)
+                        if vm.session.isGuestSession {
+                            showLogin = true
+                        } else {
+                            NSWorkspace.shared.open(URL(string: "https://coopilotxai.com/pricing")!)
+                        }
                     }) {
-                        Text("Top up")
+                        Text(vm.session.isGuestSession ? "Sign In" : "Top up")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 12).padding(.vertical, 6)
-                            .background(Capsule().fill(Color(hex: "#1a6b3a")))
+                            .background(Capsule().fill(vm.session.isGuestSession ? Color(hex: "#1d4ed8") : Color(hex: "#1a6b3a")))
                     }
                     .buttonStyle(.plain)
                 }
