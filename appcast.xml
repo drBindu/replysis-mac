@@ -3,6 +3,15 @@
     <channel>
         <title>InterviewCopilot</title>
         <item>
+            <title>1.0.220</title>
+            <pubDate>Thu, 09 Jul 2026 06:12:57 +0000</pubDate>
+            <sparkle:version>220</sparkle:version>
+            <sparkle:shortVersionString>1.0.220</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/moto123a/interview-copilot-mac/releases/download/v1.0.220/InterviewCopilot-update.zip" length="18323656" type="application/octet-stream" sparkle:edSignature="HybK5xH5HGuGGNun4bTZI6iy5/dTSsRjSC0pGKmnOEJadRelr2OdagKnSMn3tI+u/MSHYXOTLU0LKbQ1G8nuDg=="/>
+        </item>
+        <item>
             <title>1.0.219</title>
             <pubDate>Thu, 09 Jul 2026 05:18:57 +0000</pubDate>
             <sparkle:version>219</sparkle:version>
@@ -43,15 +52,6 @@
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/moto123a/interview-copilot-mac/releases/download/v1.0.213/InterviewCopilot-update.zip" length="18314775" type="application/octet-stream" sparkle:edSignature="zWh6jjCa+0TZ63w7pF5OGmaTM824l2844Gl37A10KotD+EVPminKu6yL7Mgk2i9JUgf/lZN9ztFhzIzV3eL2Ag=="/>
-        </item>
-        <item>
-            <title>1.0.210</title>
-            <pubDate>Wed, 08 Jul 2026 07:26:11 +0000</pubDate>
-            <sparkle:version>210</sparkle:version>
-            <sparkle:shortVersionString>1.0.210</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/moto123a/interview-copilot-mac/releases/download/v1.0.210/InterviewCopilot-update.zip" length="17609559" type="application/octet-stream" sparkle:edSignature="e+qUBKyal+1pqZGk1MMxHce/nAo2z/aIK/yHyPSO92qVSuKhmxKZyZCx2ax3zde+9oBIwl8HPvpdnGS9ZdqVBg=="/>
         </item>
     </channel>
 </rss>
