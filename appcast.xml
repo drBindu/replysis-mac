@@ -3,6 +3,14 @@
     <channel>
         <title>InterviewCopilot</title>
         <item>
+            <title>1.0.216</title>
+            <pubDate>Thu, 09 Jul 2026 04:29:21 +0000</pubDate>
+            <sparkle:version>216</sparkle:version>
+            <sparkle:shortVersionString>1.0.216</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/moto123a/interview-copilot-mac/releases/download/v1.0.216/InterviewCopilot-update.zip" length="19567529" type="application/octet-stream" sparkle:edSignature="W9V224wiTXGN2EtGLeuxSfMC/gerQy3t3w6HEyMlRtDf4yDx8hqTbbOCTUx4EhlLeQEfeWggm2Tde9rRX+5LCw=="/>
+        </item>
+        <item>
             <title>1.0.215</title>
             <pubDate>Thu, 09 Jul 2026 02:41:08 +0000</pubDate>
             <sparkle:version>215</sparkle:version>
@@ -26,14 +34,6 @@
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/moto123a/interview-copilot-mac/releases/download/v1.0.213/InterviewCopilot-update.zip" length="18314775" type="application/octet-stream" sparkle:edSignature="zWh6jjCa+0TZ63w7pF5OGmaTM824l2844Gl37A10KotD+EVPminKu6yL7Mgk2i9JUgf/lZN9ztFhzIzV3eL2Ag=="/>
-        </item>
-        <item>
-            <title>1.0.212</title>
-            <pubDate>Wed, 08 Jul 2026 08:25:33 +0000</pubDate>
-            <sparkle:version>212</sparkle:version>
-            <sparkle:shortVersionString>1.0.212</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/moto123a/interview-copilot-mac/releases/download/v1.0.212/InterviewCopilot-update.zip" length="18112752" type="application/octet-stream" sparkle:edSignature="nDGERh73OdT4D0xxgnX1cXWRcPIXnXW5N4nTEOewIIcrFsvyRN9BPh5UfEQXCdrq69dSquP1UuSV8FOURTlZDQ=="/>
         </item>
         <item>
             <title>1.0.210</title>
