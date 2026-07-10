@@ -838,6 +838,16 @@ class MainViewModel {
                 }
                 else if err == "SESSION_EXPIRED" { self.engine.stop(); self.session.clear(); self.setLoggedOutUI() }
                 else                         { self.aiAnswer = "⚠ Something went wrong. Please try again." }
+                // DATA-LOSS FIX: previously the error paths saved nothing, so if the AI
+                // failed (out of credits, connection issue) the interviewer's question was
+                // lost from the session record entirely. Preserve it with a clear
+                // placeholder answer so the session still reflects what was asked. Skipped
+                // for SESSION_EXPIRED — the session is cleared there, so there's nothing to
+                // save into.
+                if err != "SESSION_EXPIRED" {
+                    let reason = err == "NO_CREDITS" ? "out of credits" : "connection issue"
+                    self.appendToSessionLog(q: q, a: "[No answer — \(reason). Question preserved.]")
+                }
                 self.stopThinkingUI()
             }
         )
