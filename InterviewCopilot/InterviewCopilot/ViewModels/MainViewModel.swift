@@ -165,6 +165,8 @@ class MainViewModel {
     private let spaceDebounceMs: Double = 0.4
     private var sessionNumber = 1
     private var sessionLogPath: URL?
+    private var cloudTurns: [NetworkClient.CloudTurn] = []
+    private var cloudSessionId: String?
     private var hotkey: GlobalHotkey?
     private var localKeyMonitor: Any?
 
@@ -1080,6 +1082,7 @@ class MainViewModel {
         while FileManager.default.fileExists(atPath: dir.appendingPathComponent("interview_\(num).txt").path) { num += 1 }
         sessionNumber = num
         sessionLogPath = dir.appendingPathComponent("interview_\(num).txt")
+        cloudTurns = []; cloudSessionId = nil
         isRecording = true
         sessionSeconds = 0; sessionTimerVisible = true
         sessionTimerObj?.invalidate()
@@ -1110,6 +1113,7 @@ class MainViewModel {
     }
 
     private func appendToSessionLog(q: String, a: String) {
+        syncTurnToCloud(q: q, a: a)
         guard let path = sessionLogPath else { return }
         let entry = "Q: \(q)\nA: \(a)\n\n"
         do {
@@ -1132,6 +1136,30 @@ class MainViewModel {
             try handle.close()
         } catch {
             dlog("Session log write failed: \(error)", tag: "SESSION")
+        }
+    }
+
+    // Cloud backup mirror of the local .txt log — same Firestore collection the
+    // website's real-interview page writes to. Guests skipped: they have no
+    // Firebase account for the endpoint to authenticate against. Fire-and-forget:
+    // never blocks or affects the local log above.
+    private func syncTurnToCloud(q: String, a: String) {
+        guard session.isLoggedIn, !session.isGuestSession else { return }
+        cloudTurns.append(.init(role: "interviewer", text: q))
+        cloudTurns.append(.init(role: "candidate", text: a))
+        let turnsSnapshot = cloudTurns
+        let email = session.email, company = companyName, roleText = jobDescription
+        let resume = resumeText, secs = sessionSeconds, existingId = cloudSessionId
+        Task { [weak self] in
+            guard let self = self else { return }
+            if self.session.tokenNeedsRefresh { _ = await self.session.tryRefreshAsync() }
+            NetworkClient.shared.syncSessionToCloud(
+                userEmail: email, sessionId: existingId, companyName: company, role: roleText,
+                resume: resume, turns: turnsSnapshot, durationSecs: secs
+            ) { [weak self] newId in
+                guard let self = self else { return }
+                if self.cloudSessionId == nil, let newId = newId { self.cloudSessionId = newId }
+            }
         }
     }
 

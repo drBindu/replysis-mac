@@ -182,6 +182,104 @@ class NetworkClient {
         } catch { return nil }
     }
 
+    // MARK: - Session Cloud Backup
+
+    struct CloudTurn {
+        let role: String   // "interviewer" | "candidate"
+        let text: String
+    }
+
+    /// Mirrors the website's own /api/sessions upsert (same Firestore collection,
+    /// same auth token) so a session survives even if the local .txt file is lost.
+    /// Fire-and-forget: never blocks or affects the local session log.
+    func syncSessionToCloud(userEmail: String, sessionId: String?, companyName: String,
+                            role: String, resume: String, turns: [CloudTurn], durationSecs: Int,
+                            completion: @escaping (String?) -> Void) {
+        guard let url = URL(string: "\(AppConfig.backendUrl)/api/sessions") else { completion(nil); return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(UserSession.shared.idToken)", forHTTPHeaderField: "Authorization")
+        var body: [String: Any] = [
+            "userEmail":     userEmail,
+            "companyName":   companyName,
+            "role":          role,
+            "resume":        resume,
+            "turns":         turns.map { ["role": $0.role, "text": $0.text] },
+            "durationSecs":  durationSecs
+        ]
+        if let sessionId = sessionId { body["sessionId"] = sessionId }
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        Task {
+            do {
+                let (data, _) = try await shortSession.data(for: req)
+                guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      obj["success"] as? Bool == true else {
+                    dlog("Cloud session sync failed", tag: "SESSION")
+                    completion(nil); return
+                }
+                dlog("Cloud session synced OK — id=\(obj["sessionId"] as? String ?? sessionId ?? "?")", tag: "SESSION")
+                completion(obj["sessionId"] as? String)
+            } catch {
+                dlog("Cloud session sync error: \(error)", tag: "SESSION")
+                completion(nil)
+            }
+        }
+    }
+
+    struct CloudSession {
+        let id: String
+        let content: String   // rebuilt as "Q: ...\nA: ...\n\n" blocks — same shape as the local .txt log
+        let date: Date
+    }
+
+    /// Sessions saved from the website's real-interview page (or from this app's own
+    /// cloud backup) — same Firestore collection, fetched via the same /api/sessions GET
+    /// the website's dashboard uses. Guests skipped: no account to fetch under.
+    func fetchCloudSessions() async -> [CloudSession]? {
+        let email = UserSession.shared.email
+        guard !email.isEmpty,
+              let encoded = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "\(AppConfig.backendUrl)/api/sessions?email=\(encoded)") else { return nil }
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(UserSession.shared.idToken)", forHTTPHeaderField: "Authorization")
+
+        do {
+            let (data, _) = try await shortSession.data(for: req)
+            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let arr = obj["sessions"] as? [[String: Any]] else {
+                dlog("Cloud sessions fetch failed", tag: "SESSION")
+                return nil
+            }
+            return arr.compactMap { dict -> CloudSession? in
+                guard let id = dict["id"] as? String,
+                      let turns = dict["turns"] as? [[String: Any]], !turns.isEmpty else { return nil }
+
+                var content = ""
+                var pendingQ: String?
+                for turn in turns {
+                    guard let role = turn["role"] as? String, let text = turn["text"] as? String else { continue }
+                    if role == "interviewer" {
+                        if let q = pendingQ { content += "Q: \(q)\nA: \n\n" }
+                        pendingQ = text
+                    } else if role == "candidate" {
+                        content += "Q: \(pendingQ ?? "")\nA: \(text)\n\n"
+                        pendingQ = nil
+                    }
+                }
+                if let q = pendingQ { content += "Q: \(q)\nA: \n\n" }
+
+                let secs = (dict["_createdAtSeconds"] as? Double) ?? Double(dict["_createdAtSeconds"] as? Int ?? 0)
+                let date = secs > 0 ? Date(timeIntervalSince1970: secs) : Date()
+                return CloudSession(id: id, content: content, date: date)
+            }
+        } catch {
+            dlog("Cloud sessions fetch error: \(error)", tag: "SESSION")
+            return nil
+        }
+    }
+
     // MARK: - Helpers
 
     private static func parseSSEToken(_ json: String) -> String? {

@@ -9,8 +9,13 @@ struct SessionEntry: Identifiable, Equatable {
     let content: String
     let date: Date
     let sessionNumber: Int
+    var isCloud: Bool = false
+    var cloudDocId: String? = nil
     var questionCount: Int { content.components(separatedBy: "\n").filter { $0.hasPrefix("Q:") }.count }
     var model: String {
+        // Cloud sessions come from the website's real-interview page, which has no
+        // local "groq/openai" header line to parse — badge them distinctly instead.
+        if isCloud { return "Web" }
         // Session headers are written by appendToSessionLog as "groq" or "openai" —
         // those two must be recognized here or every session badge just says "AI".
         if header.lowercased().contains("groq") { return "Groq" }
@@ -193,9 +198,15 @@ struct SessionsView: View {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(isSelected ? Color(hex: "#0369a1") : Color(hex: "#0d1a2b"))
                         .frame(width: 36, height: 36)
-                    Text("#\(session.sessionNumber)")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(isSelected ? .white : Color(hex: "#38bdf8"))
+                    if session.isCloud {
+                        Image(systemName: "icloud.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(isSelected ? .white : Color(hex: "#38bdf8"))
+                    } else {
+                        Text("#\(session.sessionNumber)")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundColor(isSelected ? .white : Color(hex: "#38bdf8"))
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
@@ -253,7 +264,7 @@ struct SessionsView: View {
                 VStack(spacing: 0) {
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("Session #\(sel.sessionNumber)")
+                            Text(sel.isCloud ? "Session (Web)" : "Session #\(sel.sessionNumber)")
                                 .font(.system(size: 15, weight: .bold))
                                 .foregroundColor(.white)
                             HStack(spacing: 8) {
@@ -284,8 +295,12 @@ struct SessionsView: View {
                             actionBtn(icon: "arrow.down.circle", label: "Export", color: Color(hex: "#6366f1")) {
                                 exportSession(sel)
                             }
-                            actionBtn(icon: "trash", label: "Delete", color: Color(hex: "#ef4444")) {
-                                showDeleteConfirm = true
+                            // No delete API for cloud sessions yet — only the local .txt
+                            // file has a matching delete path.
+                            if !sel.isCloud {
+                                actionBtn(icon: "trash", label: "Delete", color: Color(hex: "#ef4444")) {
+                                    showDeleteConfirm = true
+                                }
                             }
                         }
                     }
@@ -440,7 +455,7 @@ struct SessionsView: View {
         Task.detached(priority: .userInitiated) {
             guard let files = try? FileManager.default.contentsOfDirectory(at: dir,
                 includingPropertiesForKeys: [.creationDateKey]) else { return }
-            let entries = files
+            let localEntries = files
                 .filter { $0.lastPathComponent.hasPrefix("interview_") && $0.pathExtension == "txt" }
                 .compactMap { url -> SessionEntry? in
                     guard let content = try? String(contentsOf: url, encoding: .utf8),
@@ -452,12 +467,36 @@ struct SessionsView: View {
                     let num = Int(name.replacingOccurrences(of: "interview_", with: "")) ?? 0
                     return SessionEntry(filename: name, header: header, content: content, date: date, sessionNumber: num)
                 }
-                .sorted { $0.sessionNumber > $1.sessionNumber }
+
             await MainActor.run {
-                self.sessions = entries
-                let first = entries.first
+                self.sessions = localEntries.sorted { $0.date > $1.date }
+                let first = self.sessions.first
                 self.selected = first
                 self.cachedQABlocks = self.computeQABlocks(for: first)
+            }
+
+            // Cloud-backed-up sessions — same Firestore collection the website's
+            // real-interview dashboard reads from. Skipped for guests (no account).
+            guard await UserSession.shared.isLoggedIn, await !UserSession.shared.isGuestSession else { return }
+            if await UserSession.shared.tokenNeedsRefresh { _ = await UserSession.shared.tryRefreshAsync() }
+            guard let cloudSessions = await NetworkClient.shared.fetchCloudSessions() else { return }
+
+            let dateFmt = DateFormatter()
+            dateFmt.dateFormat = "MMM-d"
+            let cloudEntries = cloudSessions.map { cs -> SessionEntry in
+                var e = SessionEntry(filename: "web-\(dateFmt.string(from: cs.date))", header: "",
+                                      content: cs.content, date: cs.date, sessionNumber: 0)
+                e.isCloud = true
+                e.cloudDocId = cs.id
+                return e
+            }
+            await MainActor.run {
+                let merged = (self.sessions + cloudEntries).sorted { $0.date > $1.date }
+                self.sessions = merged
+                if self.selected == nil {
+                    self.selected = merged.first
+                    self.cachedQABlocks = self.computeQABlocks(for: merged.first)
+                }
             }
         }
     }
