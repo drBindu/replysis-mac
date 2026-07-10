@@ -1477,6 +1477,15 @@ class MainViewModel {
 
         if enabled && AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
             requestMicrophonePermission()   // native popup; engine restart below picks it up
+        } else if enabled && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized {
+            // BUG FIX: re-warm the mic hardware the moment the user switches BACK to
+            // "+ my voice". MicPrimer.stop() (below, other branch) tears down the AVAudioEngine
+            // that keeps the mic hardware warm — without a counterpart here, switching back on
+            // left the engine restart below to open the mic cold, paying the ~18-20s one-time
+            // OS hardware wake-up cost itself (see MicPrimer.swift) with nothing transcribed
+            // from the mic in the meantime. Looked exactly like "the mic is broken" until it
+            // silently recovered on its own a bit later.
+            MicPrimer.shared.start()
         } else if !enabled {
             // BUG FIX: MicPrimer may already be running from earlier in this session (it
             // starts as soon as mic is authorized, before the user ever touches Settings).
