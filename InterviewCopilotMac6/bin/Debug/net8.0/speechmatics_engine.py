@@ -182,8 +182,14 @@ SILENCE      = b"\x00" * (CHUNK_FRAMES * 2)
 #      so the gate self-adjusts if the TV gets louder or softer.
 #
 # Confidence filtering happens on the transcript side (see build_text_from_results).
-CONFIDENCE_THRESHOLD = 0.65   # per-word minimum — below this = noise hallucination
-SEGMENT_CONF_FLOOR   = 0.50   # reject entire segment if average confidence < this
+# LOWERED (was 0.65/0.50): a quieter voice naturally produces lower-confidence
+# recognition from Speechmatics even when the words are genuinely correct — the old
+# thresholds were throwing away real quiet speech as if it were noise. Confirmed
+# directly from live logs: segments at avg_conf 0.41-0.46 were being rejected outright.
+# Noise gate / chunking / timing are untouched — this only changes which already-
+# transcribed words get kept vs discarded.
+CONFIDENCE_THRESHOLD = 0.55   # per-word minimum — below this = noise hallucination
+SEGMENT_CONF_FLOOR   = 0.40   # reject entire segment if average confidence < this
 
 _noise_calibrating   = True
 _noise_cal_samples: list = []
