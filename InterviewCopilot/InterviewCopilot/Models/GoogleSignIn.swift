@@ -90,7 +90,7 @@ class GoogleSignIn {
         // no second Firebase call. Gradual rollout via RolloutGate — straight either/or per
         // device, never try-then-fallback with the same code (Google's auth codes are
         // single-use, which is what broke the OLD fallback approach).
-        if RolloutGate.isEnabled("backend_google_exchange", percent: 0) {
+        if RolloutGate.isEnabled("backend_google_exchange", percent: 10) {
             if let result = await exchangeCodeViaBackend(code, redirectUri: redirectUri, verifier: codeVerifier) {
                 return result
             }
