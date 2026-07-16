@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 // ══════════════════════════════════════════════════════════════════════════
 // RolloutGate — turn a risky change on for a small slice of devices first,
@@ -30,8 +31,16 @@ enum RolloutGate {
         guard percent > 0 else { return false }
         guard percent < 100 else { return true }
         let seed = "\(featureKey)-\(DeviceIdentity.current)"
-        // abs() guards against Int.min, whose magnitude has no positive counterpart.
-        let bucket = abs(seed.hashValue) % 100
+        // BUG FIX: String.hashValue is explicitly randomized per process launch in
+        // Swift (documented behavior, not a guarantee — it's randomized for security,
+        // to resist hash-flooding attacks). Using it here would mean the same device
+        // could get a DIFFERENT rollout answer every single app launch — exactly the
+        // "flip on and off between launches" this was built to prevent, silently
+        // broken from day one. SHA256 is stable across launches, processes, and
+        // devices — the same input always produces the same output.
+        let digestBytes = Array(SHA256.hash(data: Data(seed.utf8)))
+        let firstByte = digestBytes.first ?? 0   // 0-255, uniform distribution
+        let bucket = Int(firstByte) % 100
         return bucket < percent
     }
 }
