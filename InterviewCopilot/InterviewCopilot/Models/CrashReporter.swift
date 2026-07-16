@@ -38,4 +38,20 @@ enum CrashReporter {
         }
         #endif
     }
+
+    /// Reports a significant HANDLED failure (not a crash) as a tracked Sentry event —
+    /// e.g. "Google sign-in failed". Without this, a handled error just shows the user a
+    /// message and vanishes; nobody finds out unless the user reports it. This surfaces
+    /// it the moment it happens instead. Scoped to real failures worth knowing about
+    /// immediately, not routine/expected states — don't call this for every dismissed
+    /// error message, only ones that indicate something is actually broken.
+    static func reportIssue(_ message: String, category: String) {
+        #if DEBUG
+        dlog("CrashReporter (debug, not sent): [\(category)] \(message)", tag: "SENTRY")
+        #else
+        SentrySDK.capture(message: message) { scope in
+            scope.setTag(value: category, key: "issue_category")
+        }
+        #endif
+    }
 }

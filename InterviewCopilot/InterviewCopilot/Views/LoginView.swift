@@ -297,6 +297,12 @@ struct LoginView: View {
                 dismiss()
             } else {
                 errorMsg = result.error
+                // Report real failures so they surface automatically instead of only being
+                // known if the user happens to report them — but skip the two cases that
+                // are just the user closing the browser or double-tapping, not a bug.
+                if !result.error.contains("cancelled") && !result.error.contains("already in progress") {
+                    CrashReporter.reportIssue("Google sign-in failed: \(result.error)", category: "google_signin")
+                }
             }
         }
     }

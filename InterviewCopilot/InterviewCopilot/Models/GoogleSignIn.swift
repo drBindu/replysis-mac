@@ -188,18 +188,24 @@ class GoogleSignIn {
         let accessToken: String
     }
 
-    // TEMPORARILY DISABLED: the backend-proxied exchange (exchangeCodeViaBackend) is not
-    // in use right now. Root cause found live in production — Google's authorization codes
-    // are single-use, so once the backend exchange call consumes the code, falling back to
-    // the direct method with that SAME code always fails ("invalid_grant"), even when the
-    // backend's response was merely incomplete rather than a hard failure. A fallback only
-    // works for failures that happen BEFORE the code is spent (network error, HTTP error),
-    // not for "succeeded but incomplete" — which is exactly what was happening. Reverting
-    // to the direct method only (proven reliable for weeks before tonight) until the
-    // backend endpoint itself is fixed and verified with real server-side visibility —
-    // not attempted live again without that. See exchangeCodeViaBackend below; left in
-    // place, unused, for that future fix.
+    // TEMPORARILY DISABLED (percent: 0 below): the backend-proxied exchange
+    // (exchangeCodeViaBackend) is not in use right now. Root cause found live in
+    // production — Google's authorization codes are single-use, so once the backend
+    // exchange call consumes the code, falling back to the direct method with that SAME
+    // code always fails ("invalid_grant"), even when the backend's response was merely
+    // incomplete rather than a hard failure. A fallback only works for failures that
+    // happen BEFORE the code is spent (network error, HTTP error), not for "succeeded but
+    // incomplete" — which is exactly what was happening.
+    //
+    // Once the backend endpoint is fixed and verified with real server-side visibility,
+    // re-enable it gradually via RolloutGate — raise the percentage over time (5, 25, 100)
+    // instead of switching every device over at once. IMPORTANT: this is a straight
+    // either/or choice per device, never try-then-fallback with the same code, since that's
+    // exactly the single-use-code trap described above.
     private static func exchangeCode(_ code: String, redirectUri: String, verifier: String) async -> TokenResponse? {
+        if RolloutGate.isEnabled("backend_google_exchange", percent: 0) {
+            return await exchangeCodeViaBackend(code, redirectUri: redirectUri, verifier: verifier)
+        }
         return await exchangeCodeDirect(code, redirectUri: redirectUri, verifier: verifier)
     }
 
