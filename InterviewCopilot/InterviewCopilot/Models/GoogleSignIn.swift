@@ -188,17 +188,18 @@ class GoogleSignIn {
         let accessToken: String
     }
 
-    // PRIMARY: exchange via our own backend, which holds the OAuth client secret
-    // server-side (see GoogleAuthController in the backend repo) — the secret never has
-    // to ship inside this app for this path to succeed. FALLBACK: the original
-    // direct-to-Google exchange below, kept so sign-in can never break from this change —
-    // if the backend path has any issue (down, misconfigured), it quietly falls back to
-    // what's already proven working today.
+    // TEMPORARILY DISABLED: the backend-proxied exchange (exchangeCodeViaBackend) is not
+    // in use right now. Root cause found live in production — Google's authorization codes
+    // are single-use, so once the backend exchange call consumes the code, falling back to
+    // the direct method with that SAME code always fails ("invalid_grant"), even when the
+    // backend's response was merely incomplete rather than a hard failure. A fallback only
+    // works for failures that happen BEFORE the code is spent (network error, HTTP error),
+    // not for "succeeded but incomplete" — which is exactly what was happening. Reverting
+    // to the direct method only (proven reliable for weeks before tonight) until the
+    // backend endpoint itself is fixed and verified with real server-side visibility —
+    // not attempted live again without that. See exchangeCodeViaBackend below; left in
+    // place, unused, for that future fix.
     private static func exchangeCode(_ code: String, redirectUri: String, verifier: String) async -> TokenResponse? {
-        if let viaBackend = await exchangeCodeViaBackend(code, redirectUri: redirectUri, verifier: verifier) {
-            return viaBackend
-        }
-        dlog("Google: backend exchange unavailable — falling back to direct exchange", tag: "GOOGLE")
         return await exchangeCodeDirect(code, redirectUri: redirectUri, verifier: verifier)
     }
 
