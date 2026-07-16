@@ -212,8 +212,11 @@ _GATE_HOLD_FRAMES    = 26     # frames to hold open after going quiet (~520 ms, 
 # Gate threshold = ambient floor * this multiplier, clamped to [MIN, MAX] RMS. Lowered from
 # 2.0x/150/1000 so a user sitting a bit further from the mic (quieter voice, closer to the
 # room's ambient level) still clears the threshold and gets transcribed instead of silenced.
+# MIN further lowered 110->90 (2026-07-16) for quieter voices specifically — only this one
+# value touched, floor multiplier and max left alone, so the blast radius of this change
+# stays small and easy to reason about if it needs reverting.
 _GATE_FLOOR_MULT     = 1.5
-_GATE_MIN_RMS        = 110
+_GATE_MIN_RMS        = 90
 _GATE_MAX_RMS        = 800
 
 

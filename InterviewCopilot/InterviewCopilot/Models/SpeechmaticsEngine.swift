@@ -189,13 +189,15 @@ class SpeechmaticsEngine {
             args += ["-mode", "mic"]
             dlog("  Audio mode: mic only (system-audio tap unavailable)", tag: "SM")
         }
-        // ACCURACY over raw finalization speed: 1.0 gives the recognizer ~0.3s more
-        // right-context per word before committing a FINAL, which measurably improves
-        // hard/ambiguous words. Paired with max_delay_mode="flexible" in the Python engine,
-        // the engine only spends this extra time when it's unsure. The live transcript is
-        // driven by partials (unaffected), so the on-screen speed feels the same; only the
-        // final text handed to the AI gets more accurate. (0.7 is Speechmatics' hard floor.)
-        args += ["-max-delay", "1.0"]
+        // LOWERED 1.0->0.8 (2026-07-16) for faster finalization. CORRECTED comment: the
+        // Python engine actually runs max_delay_mode="fixed" (not "flexible" as this comment
+        // previously claimed — stale, never updated when that was set) — "fixed" means EVERY
+        // word waits the full max_delay before being committed as FINAL, not just hard ones.
+        // So lowering this directly speeds up every finalized word, not only ambiguous ones.
+        // Partials (live on-screen text) are unaffected either way. Kept at 0.8, a bit above
+        // Speechmatics' documented 0.7 hard floor, to keep some right-context margin rather
+        // than maxing out speed at the further expense of accuracy in the same pass.
+        args += ["-max-delay", "0.8"]
 
         // Key ONLY via env var (matches the working .NET app); APP_DATA_DIR points the
         // engine at the same folder the UI polls.
