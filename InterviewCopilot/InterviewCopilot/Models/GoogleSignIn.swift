@@ -77,9 +77,27 @@ class GoogleSignIn {
         guard let code = cb.code  else { return .failure(cb.error ?? "Google sign-in was cancelled.") }
 
         dlog("Google: got code, exchanging for tokens…", tag: "GOOGLE")
-        guard let tokens = await exchangeCode(code, redirectUri: redirectUri, verifier: codeVerifier) else {
-            // Almost always the client secret couldn't be loaded (config backend down).
-            // Point the user at the email/password path, which works independently.
+
+        // ROOT CAUSE FOUND & CONFIRMED (2026-07-16): the backend endpoint does the ENTIRE
+        // sign-in server-side now (exchanges the code with Google, then calls Firebase's
+        // signInWithIdp itself) and returns an already-complete Firebase session — not raw
+        // Google tokens. The old code here treated it as raw tokens and sent the resulting
+        // (already-Firebase-issued) idToken to Firebase AGAIN as if it still needed
+        // validating as a Google token — which Firebase correctly rejected, since it isn't
+        // one anymore. Verified live: decoded a real token from this endpoint and confirmed
+        // iss=securetoken.google.com/copilotx-ai (a genuine Firebase token), not
+        // accounts.google.com. Fix: the backend path returns a finished Result directly,
+        // no second Firebase call. Gradual rollout via RolloutGate — straight either/or per
+        // device, never try-then-fallback with the same code (Google's auth codes are
+        // single-use, which is what broke the OLD fallback approach).
+        if RolloutGate.isEnabled("backend_google_exchange", percent: 0) {
+            if let result = await exchangeCodeViaBackend(code, redirectUri: redirectUri, verifier: codeVerifier) {
+                return result
+            }
+            return .failure("Google sign-in is temporarily unavailable. Please sign in with your email and password above.")
+        }
+
+        guard let tokens = await exchangeCodeDirect(code, redirectUri: redirectUri, verifier: codeVerifier) else {
             return .failure("Google sign-in is temporarily unavailable. Please sign in with your email and password above.")
         }
 
@@ -188,28 +206,13 @@ class GoogleSignIn {
         let accessToken: String
     }
 
-    // TEMPORARILY DISABLED (percent: 0 below): the backend-proxied exchange
-    // (exchangeCodeViaBackend) is not in use right now. Root cause found live in
-    // production — Google's authorization codes are single-use, so once the backend
-    // exchange call consumes the code, falling back to the direct method with that SAME
-    // code always fails ("invalid_grant"), even when the backend's response was merely
-    // incomplete rather than a hard failure. A fallback only works for failures that
-    // happen BEFORE the code is spent (network error, HTTP error), not for "succeeded but
-    // incomplete" — which is exactly what was happening.
-    //
-    // Once the backend endpoint is fixed and verified with real server-side visibility,
-    // re-enable it gradually via RolloutGate — raise the percentage over time (5, 25, 100)
-    // instead of switching every device over at once. IMPORTANT: this is a straight
-    // either/or choice per device, never try-then-fallback with the same code, since that's
-    // exactly the single-use-code trap described above.
-    private static func exchangeCode(_ code: String, redirectUri: String, verifier: String) async -> TokenResponse? {
-        if RolloutGate.isEnabled("backend_google_exchange", percent: 0) {
-            return await exchangeCodeViaBackend(code, redirectUri: redirectUri, verifier: verifier)
-        }
-        return await exchangeCodeDirect(code, redirectUri: redirectUri, verifier: verifier)
-    }
-
-    private static func exchangeCodeViaBackend(_ code: String, redirectUri: String, verifier: String) async -> TokenResponse? {
+    // Backend does the ENTIRE sign-in server-side and hands back an already-complete
+    // Firebase session: { idToken, refreshToken, email, displayName, localId }. This is
+    // NOT raw Google tokens — do not pass idToken to firebaseSignIn() or any further
+    // Firebase call. Verified live against the real endpoint (2026-07-16): confirmed
+    // HTTP 200 with all 5 fields, and confirmed by decoding idToken that its issuer is
+    // securetoken.google.com (a genuine Firebase token), not accounts.google.com.
+    private static func exchangeCodeViaBackend(_ code: String, redirectUri: String, verifier: String) async -> Result? {
         guard let url = URL(string: "\(AppConfig.backendUrl)/api/v1/auth/google/exchange") else { return nil }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -225,22 +228,19 @@ class GoogleSignIn {
                 return nil
             }
             guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-            let idToken = obj["idToken"] as? String ?? ""
-            let accessToken = obj["accessToken"] as? String ?? ""
-            // BUG FIX: previously accepted the backend result if EITHER token was present.
-            // But the Firebase sign-in step specifically needs accessToken — sending only
-            // idToken forces Firebase into a stricter audience check that failed in
-            // production ("id token is not issued by Google"), even though the token was
-            // completely genuine. Require accessToken specifically; if it's missing (for
-            // any reason, now or in the future), treat this as a failed exchange so the
-            // caller falls back to the proven direct-exchange method instead of pushing an
-            // incomplete result into Firebase.
-            guard !accessToken.isEmpty else {
-                dlog("Google: backend exchange missing accessToken (idToken=\(!idToken.isEmpty)) — treating as unavailable", tag: "GOOGLE")
+            let idToken      = obj["idToken"] as? String ?? ""
+            let refreshToken = obj["refreshToken"] as? String ?? ""
+            let email        = obj["email"] as? String ?? ""
+            let localId      = obj["localId"] as? String ?? ""
+            var displayName  = obj["displayName"] as? String ?? ""
+            if displayName.isEmpty { displayName = email.components(separatedBy: "@").first ?? email }
+            guard !idToken.isEmpty, !localId.isEmpty else {
+                dlog("Google: backend exchange missing required fields — treating as unavailable", tag: "GOOGLE")
                 return nil
             }
-            dlog("Google: backend exchange OK — idToken=\(!idToken.isEmpty) accessToken=\(!accessToken.isEmpty)", tag: "GOOGLE")
-            return TokenResponse(idToken: idToken, accessToken: accessToken)
+            dlog("Google: backend exchange OK (full Firebase session) — \(UserSession.maskEmail(email))", tag: "GOOGLE")
+            return Result(success: true, idToken: idToken, refreshToken: refreshToken,
+                          email: email, displayName: displayName, userId: localId, error: "")
         } catch {
             dlog("Google: backend exchange request failed: \(error.localizedDescription)", tag: "GOOGLE")
             return nil
