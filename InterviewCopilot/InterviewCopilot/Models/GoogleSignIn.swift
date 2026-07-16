@@ -220,7 +220,18 @@ class GoogleSignIn {
             guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
             let idToken = obj["idToken"] as? String ?? ""
             let accessToken = obj["accessToken"] as? String ?? ""
-            guard !idToken.isEmpty || !accessToken.isEmpty else { return nil }
+            // BUG FIX: previously accepted the backend result if EITHER token was present.
+            // But the Firebase sign-in step specifically needs accessToken — sending only
+            // idToken forces Firebase into a stricter audience check that failed in
+            // production ("id token is not issued by Google"), even though the token was
+            // completely genuine. Require accessToken specifically; if it's missing (for
+            // any reason, now or in the future), treat this as a failed exchange so the
+            // caller falls back to the proven direct-exchange method instead of pushing an
+            // incomplete result into Firebase.
+            guard !accessToken.isEmpty else {
+                dlog("Google: backend exchange missing accessToken (idToken=\(!idToken.isEmpty)) — treating as unavailable", tag: "GOOGLE")
+                return nil
+            }
             dlog("Google: backend exchange OK — idToken=\(!idToken.isEmpty) accessToken=\(!accessToken.isEmpty)", tag: "GOOGLE")
             return TokenResponse(idToken: idToken, accessToken: accessToken)
         } catch {
