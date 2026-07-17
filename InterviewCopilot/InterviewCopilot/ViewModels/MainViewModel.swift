@@ -1308,6 +1308,29 @@ class MainViewModel {
             watchModeTimer?.invalidate(); watchModeTimer = nil
         }
         engine.stop(); session.clear(); setLoggedOutUI()
+
+        // BUG FIX: signOut() previously left the user in a fully logged-out state with
+        // no follow-up — the only way back to the free-trial guest state was quitting and
+        // relaunching the app (restoreSession() starts a guest session on boot, but nothing
+        // did the equivalent here). Mirror that same boot-time guest-session logic so
+        // signing out drops straight back into the guest trial instead of a dead end.
+        Task { @MainActor in
+            let guestOk = await session.startGuestSession()
+            guard guestOk else { return }   // offline, or this device's free trial is used up —
+                                             // falls back to the existing "not signed in" state
+            refreshHotkeyGate()
+            profileName = "Guest"; profilePlan = "Free trial"; avatarInitials = "GU"
+            updateCreditsUI(credits: session.credits, plan: session.plan, isUnlimited: session.isUnlimited)
+            // Same timer-restart fix as onLoginSuccess() — setLoggedOutUI() just stopped
+            // these, and onAppear (the only other place that starts them) runs once per
+            // launch, so without this the guest session would render with dead timers.
+            startTranscriptTimer(); startThinkingTimer(); startCreditsTimer()
+            let smOk = await session.fetchSpeechmaticsKeyAsync()
+            startNewSession()
+            if smOk && !engine.isRunning {
+                engine.start(smKey: session.speechmaticsKey)
+            }
+        }
     }
 
     private func setLoggedOutUI() {
