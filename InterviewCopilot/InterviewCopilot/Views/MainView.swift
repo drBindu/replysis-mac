@@ -11,6 +11,7 @@ struct MainView: View {
     @State private var showSignOutConfirm = false
     @State private var showDebugLog    = false
     @State private var showProfileMenu = false
+    @State private var showCreditsPopover = false
     @State private var resumeSaveTimer: Timer?
     @State private var hintsSaveTimer: Timer?
     @State private var resumeOpen = true   // false = collapsed to a compact "loaded" card
@@ -236,10 +237,12 @@ struct MainView: View {
 
             // Visible credits indicator — previously the ONLY place to see your credit
             // balance was inside the profile avatar's dropdown, which most users (guests
-            // especially) never think to click. Shows for both guests and signed-in
-            // accounts; tapping opens the same dropdown (full details + Sign In / Top up).
+            // especially) never think to click. BUG FIX: this used to open the FULL
+            // profile dropdown (Settings/Sessions/Sign Out) on click, which felt wrong —
+            // clicking specifically the credits number shouldn't dump you into the whole
+            // account menu. Now opens its own small popover with just the credits card.
             if vm.showCreditsBadge {
-                Button(action: { showProfileMenu.toggle() }) {
+                Button(action: { showCreditsPopover.toggle() }) {
                     Text(vm.creditsText)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(vm.creditsColor)
@@ -249,6 +252,12 @@ struct MainView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Credits remaining — click for details")
+                .popover(isPresented: $showCreditsPopover, arrowEdge: .bottom) {
+                    creditsCard
+                        .padding(14)
+                        .frame(width: 260)
+                        .background(Color(hex: "#0b1018"))
+                }
             }
 
             Rectangle().fill(Color.white.opacity(0.08)).frame(width: 1, height: 22)
@@ -435,7 +444,10 @@ struct MainView: View {
                     // A guest has no account to buy credits on — route to Sign In instead of
                     // a pricing page they can't actually act on. Real accounts keep "Top up".
                     Button(action: {
+                        // creditsCard is shared between the full profile dropdown and the
+                        // standalone credits popover — close whichever one is actually open.
                         showProfileMenu = false
+                        showCreditsPopover = false
                         if vm.session.isGuestSession {
                             showLogin = true
                         } else {
