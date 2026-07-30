@@ -13,16 +13,13 @@ struct MainView: View {
     @State private var showProfileMenu = false
     @State private var showCreditsPopover = false
     @State private var resumeSaveTimer: Timer?
-    @State private var hintsSaveTimer: Timer?
     @State private var resumeOpen = true   // false = collapsed to a compact "loaded" card
-    @State private var jobOpen = true      // false = Job & Company collapsed to a card
     @State private var showResumeLibrary = false
     @FocusState private var focusedField: FocusField?
-    @State private var askText = ""   // unified Ask / Guide bar input
     @State private var jobSaveTimer: Timer?
-    @State private var leftTab = 0   // 0 = Resume, 1 = Job & Company
     @State private var resumeParseError = ""
     @State private var showResumeError = false
+    @State private var dropTargeted = false   // resume drop-zone hover highlight
 
     var body: some View {
         // ── Outer glass container — matches original #B3080C14 border with CornerRadius 14
@@ -43,14 +40,13 @@ struct MainView: View {
         .ignoresSafeArea()
         .onAppear {
             vm.onAppear()
-            // Start collapsed if already filled — don't make the user hide them manually
+            // Start collapsed if already filled — don't make the user hide it manually
             resumeOpen = vm.resumeText.isEmpty
-            jobOpen = jobIsEmpty
         }
         .onChange(of: vm.resumeLocked) {
-            // Interview started (first answer requested) → tuck away resume & job panels
-            // for a clean, focused view. The user can reopen them anytime.
-            if vm.resumeLocked { withAnimation { resumeOpen = false; jobOpen = false } }
+            // Interview started (first answer requested) → tuck the resume away
+            // for a clean, focused view. The user can reopen it anytime.
+            if vm.resumeLocked { withAnimation { resumeOpen = false } }
         }
         .onChange(of: focusedField) {
             vm.isEditingText = focusedField != nil
@@ -530,24 +526,53 @@ struct MainView: View {
     // ══════════════════════════════════════════════
     // MARK: — RESUME PANEL
     // ══════════════════════════════════════════════
+    // Single-column "Interview Setup" (matches the Windows UI): resume drop zone on top,
+    // then Previous resumes, then the Target Role fields. No tabs, no Ask/Guide box.
     var resumePanel: some View {
-        VStack(spacing: 0) {
-            // Tabs: Resume / Job & Company
-            HStack(spacing: 6) {
-                leftTabButton(title: "Resume", icon: "doc.text.fill", index: 0)
-                leftTabButton(title: "Job & Company", icon: "target", index: 1)
-            }
-            .padding(.bottom, 10)
+        VStack(alignment: .leading, spacing: 16) {
+                // ── Section header ──
+                HStack(spacing: 7) {
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 12)).foregroundColor(Color(hex: "#64748b"))
+                    Text("INTERVIEW SETUP")
+                        .font(.system(size: 11, weight: .bold)).tracking(1.2)
+                        .foregroundColor(Color(hex: "#94A3B8"))
+                    Spacer()
+                }
 
-            if leftTab == 0 { resumeTabContent } else { jobTabContent }
+                // ── Resume: drop zone (empty) or loaded card (filled) ──
+                resumeSetupCard
 
-            // Ask / Guide composer sits right under the resume controls — one tidy group
-            // anchored at the TOP of the sidebar, so any empty space falls at the bottom
-            // (reads as "end of content") instead of floating in the middle.
-            liveHintsBox(expanded: leftTab == 0 && !resumeOpen && !vm.resumeText.isEmpty)
-                .padding(.top, 14)
+                // ── Previous resumes ──
+                if !vm.savedResumes.isEmpty {
+                    Button(action: { showResumeLibrary.toggle() }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Previous resumes")
+                                .font(.system(size: 13, weight: .semibold))
+                            Spacer()
+                        }
+                        .foregroundColor(Color(hex: "#7dd3fc"))
+                        .padding(.horizontal, 14).padding(.vertical, 11)
+                        .frame(maxWidth: .infinity)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color(hex: "#0c2540")))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "#1e3a5f"), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .popover(isPresented: $showResumeLibrary, arrowEdge: .bottom) {
+                        resumeLibraryPopover()
+                    }
+                }
+
+                Rectangle().fill(Color.white.opacity(0.07)).frame(height: 1).padding(.vertical, 2)
+
+                // ── Target role (fills the remaining height so there's no bottom gap) ──
+                targetRoleSection
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(.trailing, 14)
+        .padding(.bottom, 6)
     }
 
     // ── Saved-resumes picker popover ──
@@ -588,347 +613,186 @@ struct MainView: View {
         .background(Color(hex: "#0b1018"))
     }
 
-    // ── Unified Ask / Guide bar (always visible under the tabs) ──
-    // Type a question + Enter → answer it instantly (Parakeet-style, and the 100%-
-    // accuracy fallback when speech mishears). Or 📌 Pin → keep it as context that
-    // steers EVERY answer (Live Hints). One bar, both powers.
-    func liveHintsBox(expanded: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 5) {
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: 10)).foregroundColor(Color(hex: "#fbbf24"))
-                Text("ASK or GUIDE")
-                    .font(.system(size: 10, weight: .bold)).tracking(0.4)
-                    .foregroundColor(Color(hex: "#c79a3c"))
-                Text("· type to ask · 📌 to remember")
-                    .font(.system(size: 9)).foregroundColor(Color(hex: "#6b5630")).italic()
-                Spacer()
-            }
-
-            // Big composer — a real text area that FILLS the sidebar's remaining height,
-            // so the panel reads as full and intentional, not a tiny field at an edge.
-            ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(red: 26/255, green: 20/255, blue: 6/255).opacity(vm.mainWindowOpacity))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(hex: "#fbbf24").opacity(0.28), lineWidth: 1))
-                if askText.isEmpty {
-                    Text("Ask a question to answer it instantly,\nor add context the AI should remember…")
-                        .font(.system(size: 12)).foregroundColor(Color(hex: "#6b5a2a")).italic()
-                        .padding(.horizontal, 13).padding(.vertical, 13).allowsHitTesting(false)
-                }
-                TextEditor(text: $askText)
-                    .font(.system(size: 13))
-                    .foregroundColor(Color(hex: "#fde68a"))
-                    .scrollContentBackground(.hidden)
-                    .background(Color.clear)
-                    .padding(9)
-                    .focused($focusedField, equals: .hints)
-            }
-            .frame(maxHeight: .infinity)   // ← fills the sidebar's leftover vertical space
-
-            // Pinned context (the live hints that steer every answer)
-            if !vm.liveHints.isEmpty {
-                HStack(alignment: .top, spacing: 5) {
-                    Image(systemName: "pin.fill").font(.system(size: 8))
-                        .foregroundColor(Color(hex: "#b08930")).padding(.top, 2)
-                    Text(vm.liveHints)
-                        .font(.system(size: 10)).foregroundColor(Color(hex: "#cbb06a"))
-                        .lineLimit(3)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Button(action: { vm.liveHints = ""; vm.saveHints() }) {
-                        Text("Clear").font(.system(size: 9)).foregroundColor(Color(hex: "#6b7280"))
-                    }.buttonStyle(.plain)
-                }
-                .padding(.horizontal, 10).padding(.vertical, 7)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color(hex: "#fbbf24").opacity(0.06)))
-            }
-
-            // Actions row — Pin (secondary) + Ask (primary, fills the row), anchored at the bottom.
-            HStack(spacing: 8) {
-                Button(action: { vm.addHint(askText); askText = "" }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "pin.fill").font(.system(size: 11, weight: .bold))
-                        Text("Pin").font(.system(size: 12, weight: .semibold))
-                    }
-                    .foregroundColor(Color(hex: "#fbbf24"))
-                    .frame(height: 38).padding(.horizontal, 16)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color(hex: "#3a2e0a")))
-                }
-                .buttonStyle(.plain).help("Pin as context the AI remembers for every answer")
-                .disabled(askText.trimmingCharacters(in: .whitespaces).isEmpty)
-
-                Button(action: { submitAsk() }) {
-                    HStack(spacing: 5) {
-                        Text("Ask").font(.system(size: 13, weight: .bold))
-                        Image(systemName: "arrow.right").font(.system(size: 11, weight: .bold))
-                    }
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity).frame(height: 38)
-                    .background(RoundedRectangle(cornerRadius: 10)
-                        .fill(askText.trimmingCharacters(in: .whitespaces).isEmpty
-                              ? Color(hex: "#1e3a8a").opacity(0.4) : Color(hex: "#2563eb")))
-                }
-                .buttonStyle(.plain).help("Answer this question now")
-                .disabled(askText.trimmingCharacters(in: .whitespaces).isEmpty || vm.isProcessing)
-            }
-        }
-        .frame(maxHeight: .infinity)
-    }
-
-    // Send the bar's text as an immediate question, then clear + unfocus.
-    private func submitAsk() {
-        let t = askText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { return }
-        vm.askManually(t)
-        askText = ""
-        focusedField = nil
-    }
-
-    func leftTabButton(title: String, icon: String, index: Int) -> some View {
-        let active = leftTab == index
-        return Button(action: { withAnimation(.easeOut(duration: 0.12)) { leftTab = index } }) {
-            HStack(spacing: 5) {
-                Image(systemName: icon).font(.system(size: 10, weight: .semibold))
-                Text(title).font(.system(size: 11, weight: .semibold))
-            }
-            .foregroundColor(active ? .white : Color(hex: "#4b5563"))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 7)
-            .background(active ? Color(hex: "#0c2240") : Color.white.opacity(0.03))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(
-                active ? Color(hex: "#0e4c7c") : Color.white.opacity(0.06), lineWidth: 1))
-            .cornerRadius(8)
-        }
-        .buttonStyle(.plain)
-    }
-
-    // ── Resume tab ──
-    var resumeTabContent: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("📄 RESUME")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(Color(hex: "#2A4A6A"))
-                    Text("Your background — set before the interview")
-                        .font(.system(size: 8))
-                        .foregroundColor(Color(hex: "#1a2a3a"))
-                        .italic()
-                        .lineLimit(1)   // truncate instead of squeezing the buttons
-                }
-                Spacer()
-                // Saved-resumes picker — switch between previously uploaded resumes
-                if !vm.savedResumes.isEmpty {
-                    Button(action: { showResumeLibrary.toggle() }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "clock.arrow.circlepath").font(.system(size: 10))
-                            Text("Saved").font(.system(size: 11))
-                        }
-                        .foregroundColor(Color(hex: "#94A3B8"))
-                        .padding(.horizontal, 8).padding(.vertical, 5)
-                        .background(Color(hex: "#1A1F2E"))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.2), lineWidth: 1))
-                        .cornerRadius(8)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Switch between saved resumes")
-                    .popover(isPresented: $showResumeLibrary, arrowEdge: .bottom) {
-                        resumeLibraryPopover()
-                    }
-                }
-                // Collapse / edit toggle — only once a resume exists
-                if !vm.resumeText.isEmpty {
-                    Button(action: { withAnimation(.easeOut(duration: 0.15)) { resumeOpen.toggle() } }) {
-                        Image(systemName: resumeOpen ? "chevron.up" : "pencil").font(.system(size: 10, weight: .bold))
-                            .foregroundColor(Color(hex: "#94A3B8"))
-                            .padding(.horizontal, 8).padding(.vertical, 6)
-                            .background(Color(hex: "#1A1F2E"))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.2), lineWidth: 1))
-                            .cornerRadius(8)
-                    }
-                    .buttonStyle(.plain)
-                    .help(resumeOpen ? "Hide resume" : "Edit resume")
-                }
+    // ── Resume setup card: drop zone when empty, loaded confirmation when filled ──
+    var resumeSetupCard: some View {
+        Group {
+            if vm.resumeText.isEmpty {
+                // Drop zone — matches the Windows "Drop your resume here" panel.
                 Button(action: uploadResume) {
-                    HStack(spacing: 5) {
-                        Text("⬆").font(.system(size: 11))
-                        Text("Upload").font(.system(size: 11)).lineLimit(1)
+                    VStack(spacing: 10) {
+                        ZStack {
+                            Circle().fill(Color(hex: "#0e3a5a")).frame(width: 52, height: 52)
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundColor(Color(hex: "#38bdf8"))
+                        }
+                        Text("Drop your resume here")
+                            .font(.system(size: 15, weight: .semibold)).foregroundColor(.white)
+                        Text("or click to browse")
+                            .font(.system(size: 12)).foregroundColor(Color(hex: "#64748b"))
+                        HStack(spacing: 6) {
+                            ForEach(["PDF", "DOCX", "TXT"], id: \.self) { ext in
+                                Text(ext)
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(Color(hex: "#7dd3fc"))
+                                    .padding(.horizontal, 8).padding(.vertical, 3)
+                                    .background(Capsule().fill(Color(hex: "#0c2540")))
+                            }
+                        }
+                        .padding(.top, 2)
                     }
-                    .fixedSize(horizontal: true, vertical: false)   // never wrap "Upload"
-                    .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(Color(hex: "#1A1F2E"))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.2), lineWidth: 1))
-                    .cornerRadius(8)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 30)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(Color(red: 14/255, green: 18/255, blue: 26/255).opacity(vm.mainWindowOpacity))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .strokeBorder(
+                                        dropTargeted ? Color(hex: "#38bdf8") : Color.white.opacity(0.18),
+                                        style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+                            )
+                    )
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(Color(hex: "#94A3B8"))
-                .help("Upload PDF, DOCX or TXT resume")
-            }
-            .padding(.bottom, 8)
-
-            if resumeOpen || vm.resumeText.isEmpty {
-                ZStack(alignment: .topLeading) {
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(Color(red: 14/255, green: 18/255, blue: 26/255).opacity(vm.mainWindowOpacity))
-                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.12), lineWidth: 1))
-
-                    if vm.resumeText.isEmpty {
-                        Text("Paste your resume here, or drag & drop a PDF / DOCX / TXT file — or click \"Upload\".")
-                            .font(.system(size: 12))
-                            .foregroundColor(Color(hex: "#1e3040"))
-                            .italic()
-                            .padding(16)
-                            .allowsHitTesting(false)
-                    }
-                    TextEditor(text: Bindable(vm).resumeText)
-                        .font(.system(size: 12))
-                        .foregroundColor(Color(hex: "#CBD5E1"))
-                        .scrollContentBackground(.hidden)
-                        .background(Color.clear)
-                        .disabled(vm.resumeLocked)
-                        .opacity(vm.resumeLocked ? 0.6 : 1.0)
-                        .padding(8)
-                        .focused($focusedField, equals: .resume)
-                        .onChange(of: vm.resumeText) { scheduleResumeSave() }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                if vm.resumeLocked {
-                    HStack(alignment: .top, spacing: 4) {
-                        Text("🔒").font(.system(size: 10))
-                        Text("Locked during the interview — type anything new in Live Hints below ↓")
-                            .font(.system(size: 9))
-                            .foregroundColor(Color(hex: "#f59e0b"))
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer()
-                    }
-                    .padding(.top, 6)
+                .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
+                    handleDroppedResume(providers)
                 }
             } else {
-                // Collapsed — compact confirmation card, frees space for Live Hints
-                HStack(spacing: 11) {
-                    Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(Color(hex: "#22c55e"))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Resume loaded")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.white)
-                        Text("\(vm.resumeText.count) characters · tap Edit to view")
-                            .font(.system(size: 9))
-                            .foregroundColor(Color(hex: "#4b5563"))
+                // Loaded — confirmation card with a View/Edit toggle + Replace.
+                VStack(spacing: 0) {
+                    HStack(spacing: 11) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 22)).foregroundColor(Color(hex: "#22c55e"))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Resume loaded")
+                                .font(.system(size: 13, weight: .semibold)).foregroundColor(.white)
+                            Text("\(vm.resumeText.count) characters")
+                                .font(.system(size: 10)).foregroundColor(Color(hex: "#4b5563"))
+                        }
+                        Spacer()
+                        Button(action: { withAnimation(.easeOut(duration: 0.15)) { resumeOpen.toggle() } }) {
+                            Image(systemName: resumeOpen ? "chevron.up" : "pencil")
+                                .font(.system(size: 11, weight: .bold)).foregroundColor(Color(hex: "#94A3B8"))
+                                .padding(.horizontal, 9).padding(.vertical, 6)
+                                .background(Color(hex: "#1A1F2E"))
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.2), lineWidth: 1))
+                                .cornerRadius(8)
+                        }
+                        .buttonStyle(.plain)
+                        .help(resumeOpen ? "Hide resume" : "View / edit resume")
+                        Button(action: uploadResume) {
+                            Text("Replace").font(.system(size: 11, weight: .medium))
+                                .foregroundColor(Color(hex: "#94A3B8"))
+                                .padding(.horizontal, 9).padding(.vertical, 6)
+                                .background(Color(hex: "#1A1F2E"))
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.2), lineWidth: 1))
+                                .cornerRadius(8)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Upload a different resume")
                     }
-                    Spacer()
+                    .padding(12)
+
+                    if resumeOpen {
+                        ZStack(alignment: .topLeading) {
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color(red: 14/255, green: 18/255, blue: 26/255).opacity(vm.mainWindowOpacity))
+                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.12), lineWidth: 1))
+                            TextEditor(text: Bindable(vm).resumeText)
+                                .font(.system(size: 12))
+                                .foregroundColor(Color(hex: "#CBD5E1"))
+                                .scrollContentBackground(.hidden)
+                                .background(Color.clear)
+                                .disabled(vm.resumeLocked)
+                                .opacity(vm.resumeLocked ? 0.6 : 1.0)
+                                .padding(8)
+                                .frame(height: 200)
+                                .focused($focusedField, equals: .resume)
+                                .onChange(of: vm.resumeText) { scheduleResumeSave() }
+                        }
+                        .padding(.horizontal, 12).padding(.bottom, 12)
+                    }
                 }
-                .padding(12)
-                .frame(maxWidth: .infinity)
                 .background(
-                    RoundedRectangle(cornerRadius: 12)
+                    RoundedRectangle(cornerRadius: 14)
                         .fill(Color(red: 10/255, green: 22/255, blue: 14/255).opacity(vm.mainWindowOpacity))
-                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(hex: "#22c55e").opacity(0.25), lineWidth: 1))
+                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(hex: "#22c55e").opacity(0.25), lineWidth: 1))
                 )
             }
         }
     }
 
-    private var jobIsEmpty: Bool {
-        vm.companyName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        vm.jobDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    // Load a resume dropped onto the drop zone (same parse path as the Upload button).
+    private func handleDroppedResume(_ providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first else { return false }
+        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+            guard let url else { return }
+            let name = url.deletingPathExtension().lastPathComponent
+            Task { @MainActor in
+                let text = await Task.detached(priority: .userInitiated) {
+                    ResumeParser.readResumeFile(url)
+                }.value
+                if !text.isEmpty {
+                    vm.resumeText = text
+                    vm.saveResumeToLibrary(name: name)
+                    vm.saveResume()
+                    withAnimation { resumeOpen = false }
+                } else {
+                    resumeParseError = "Couldn't read that file. Try exporting your resume as PDF or pasting the text directly."
+                    showResumeError = true
+                }
+            }
+        }
+        return true
     }
 
-    // ── Job & Company tab ──
-    var jobTabContent: some View {
+    // ── Target role: company + job description (always visible, matches Windows) ──
+    var targetRoleSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("🎯 TARGET ROLE")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(Color(hex: "#2A4A6A"))
-                    Text("Tailors every answer to this role")
-                        .font(.system(size: 8))
-                        .foregroundColor(Color(hex: "#1a2a3a"))
-                        .italic()
-                }
+            HStack(spacing: 7) {
+                Image(systemName: "briefcase.fill")
+                    .font(.system(size: 11)).foregroundColor(Color(hex: "#64748b"))
+                Text("TARGET ROLE")
+                    .font(.system(size: 11, weight: .bold)).tracking(1)
+                    .foregroundColor(Color(hex: "#94A3B8"))
+                Text("tailors every answer")
+                    .font(.system(size: 10)).foregroundColor(Color(hex: "#4b5563"))
                 Spacer()
-                if !jobIsEmpty {
-                    Button(action: { withAnimation(.easeOut(duration: 0.15)) { jobOpen.toggle() } }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: jobOpen ? "chevron.up" : "pencil").font(.system(size: 9, weight: .bold))
-                            Text(jobOpen ? "Hide" : "Edit").font(.system(size: 11))
-                        }
-                        .foregroundColor(Color(hex: "#94A3B8"))
-                        .padding(.horizontal, 9).padding(.vertical, 5)
-                        .background(Color(hex: "#1A1F2E"))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.2), lineWidth: 1))
-                        .cornerRadius(8)
-                    }
-                    .buttonStyle(.plain)
-                }
             }
 
-            if !jobOpen && !jobIsEmpty {
-                HStack(spacing: 11) {
-                    Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 20)).foregroundColor(Color(hex: "#22c55e"))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(vm.companyName.isEmpty ? "Role details saved" : "Targeting \(vm.companyName)")
-                            .font(.system(size: 12, weight: .semibold)).foregroundColor(.white)
-                        Text("tap Edit to view").font(.system(size: 9)).foregroundColor(Color(hex: "#4b5563"))
-                    }
-                    Spacer()
-                }
-                .padding(12).frame(maxWidth: .infinity)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(red: 10/255, green: 22/255, blue: 14/255).opacity(vm.mainWindowOpacity))
-                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(hex: "#22c55e").opacity(0.25), lineWidth: 1))
-                )
-            } else {
+            TextField("Company  (e.g. Google, Stripe, Amazon…)", text: Bindable(vm).companyName)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundColor(.white)
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .background(Color(red: 14/255, green: 18/255, blue: 26/255).opacity(vm.mainWindowOpacity))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.12), lineWidth: 1))
+                .cornerRadius(10)
+                .focused($focusedField, equals: .company)
+                .onChange(of: vm.companyName) { scheduleJobSave() }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("COMPANY")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(Color(hex: "#3d4d5f")).tracking(1)
-                TextField("e.g. Stripe", text: Bindable(vm).companyName)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10).padding(.vertical, 8)
-                    .background(Color(red: 14/255, green: 18/255, blue: 26/255).opacity(vm.mainWindowOpacity))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.12), lineWidth: 1))
-                    .cornerRadius(8)
-                    .focused($focusedField, equals: .company)
-                    .onChange(of: vm.companyName) { scheduleJobSave() }
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("JOB DESCRIPTION")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(Color(hex: "#3d4d5f")).tracking(1)
-                ZStack(alignment: .topLeading) {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(red: 14/255, green: 18/255, blue: 26/255).opacity(vm.mainWindowOpacity))
-                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.12), lineWidth: 1))
-                    if vm.jobDescription.isEmpty {
-                        Text("Paste the job description — responsibilities, required skills, tech stack. The AI connects your answers to exactly what this role needs, and nails \"why this company\".")
-                            .font(.system(size: 11))
-                            .foregroundColor(Color(hex: "#1e3040"))
-                            .italic()
-                            .padding(14)
-                            .allowsHitTesting(false)
-                    }
-                    TextEditor(text: Bindable(vm).jobDescription)
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(red: 14/255, green: 18/255, blue: 26/255).opacity(vm.mainWindowOpacity))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.12), lineWidth: 1))
+                if vm.jobDescription.isEmpty {
+                    Text("Paste the role & requirements: title, must-have skills, tech stack, seniority.")
                         .font(.system(size: 12))
-                        .foregroundColor(Color(hex: "#CBD5E1"))
-                        .scrollContentBackground(.hidden)
-                        .background(Color.clear)
-                        .padding(7)
-                        .focused($focusedField, equals: .job)
-                        .onChange(of: vm.jobDescription) { scheduleJobSave() }
+                        .foregroundColor(Color(hex: "#64748b"))
+                        .padding(14)
+                        .allowsHitTesting(false)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                TextEditor(text: Bindable(vm).jobDescription)
+                    .font(.system(size: 12))
+                    .foregroundColor(Color(hex: "#CBD5E1"))
+                    .scrollContentBackground(.hidden)
+                    .background(Color.clear)
+                    .padding(8)
+                    .focused($focusedField, equals: .job)
+                    .onChange(of: vm.jobDescription) { scheduleJobSave() }
             }
-            }   // end else (expanded job fields)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
@@ -1241,15 +1105,6 @@ struct MainView: View {
         }
         RunLoop.main.add(t, forMode: .common)   // fires even while NSOpenPanel is visible
         resumeSaveTimer = t
-    }
-
-    func scheduleHintsSave() {
-        hintsSaveTimer?.invalidate()
-        let t = Timer(timeInterval: 0.6, repeats: false) { [weak vm] _ in
-            Task { @MainActor in vm?.saveHints() }
-        }
-        RunLoop.main.add(t, forMode: .common)
-        hintsSaveTimer = t
     }
 
     func scheduleJobSave() {
