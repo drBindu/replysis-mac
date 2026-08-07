@@ -3,6 +3,14 @@
     <channel>
         <title>InterviewCopilot</title>
         <item>
+            <title>1.0.244</title>
+            <pubDate>Fri, 07 Aug 2026 06:35:10 +0000</pubDate>
+            <sparkle:version>244</sparkle:version>
+            <sparkle:shortVersionString>1.0.244</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/moto123a/interview-copilot-mac/releases/download/v1.0.244/InterviewCopilot-update.zip" length="19686302" type="application/octet-stream" sparkle:edSignature="3enlBHN+lEY5KYUzFuLUlzn5NOHgGE/S9/sejiuA6ywOupmOob5FEMeYoM6xohrdGIq7fVYUx7kWnWT5PZyIDw=="/>
+        </item>
+        <item>
             <title>1.0.243</title>
             <pubDate>Fri, 07 Aug 2026 06:17:21 +0000</pubDate>
             <sparkle:version>243</sparkle:version>
@@ -17,14 +25,6 @@
             <sparkle:shortVersionString>1.0.242</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <enclosure url="https://github.com/moto123a/interview-copilot-mac/releases/download/v1.0.242/InterviewCopilot-update.zip" length="19666901" type="application/octet-stream" sparkle:edSignature="5HWbG2iZUHVytly0EZXRqJN6A7ZDPqAsJ01ND78ZkmBfMSyIXkLLMPq/h5WLzht7OE2l8hnlAj1iPuwCTms3BA=="/>
-        </item>
-        <item>
-            <title>1.0.241</title>
-            <pubDate>Fri, 07 Aug 2026 05:31:04 +0000</pubDate>
-            <sparkle:version>241</sparkle:version>
-            <sparkle:shortVersionString>1.0.241</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/moto123a/interview-copilot-mac/releases/download/v1.0.241/InterviewCopilot-update.zip" length="19666332" type="application/octet-stream" sparkle:edSignature="eMBapwla3fI8za0g8ba9SVxU4BrlnZNshdf7G+a7sagStZLkreKWV/deMySVyp5hgYWtoIhXJTzPTJSPIkT+Dg=="/>
         </item>
         <item>
             <title>1.0.220</title>
