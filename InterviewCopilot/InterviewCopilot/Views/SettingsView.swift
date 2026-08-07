@@ -62,6 +62,25 @@ struct SettingsView: View {
                             }
                         }
 
+                        // Stealth Mode — hides the window from screen sharing & recording
+                        // (Zoom/Meet/Teams, QuickTime). Default ON. Moved here (off the main
+                        // header) so the toolbar stays clean; this is a set-once preference,
+                        // not something toggled mid-interview.
+                        settingsSection("STEALTH MODE") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                audioModeRow(
+                                    title: "Stealth ON (Recommended)",
+                                    detail: "Hidden from screen sharing & recording — the interviewer never sees this window, even while you share your screen.",
+                                    selected: vm.stealthModeEnabled
+                                ) { vm.setStealthModeEnabled(true) }
+                                audioModeRow(
+                                    title: "Stealth OFF",
+                                    detail: "Window is visible in screen shares and recordings, like any normal app.",
+                                    selected: !vm.stealthModeEnabled
+                                ) { vm.setStealthModeEnabled(false) }
+                            }
+                        }
+
                         // Window opacity is controlled live from the profile menu
                         // (avatar → Window opacity slider), so it's not duplicated here.
 

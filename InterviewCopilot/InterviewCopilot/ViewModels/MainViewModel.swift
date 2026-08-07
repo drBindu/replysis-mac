@@ -180,6 +180,10 @@ class MainViewModel {
     func onAppear() {
         guard !didAppear else { return }
         didAppear = true
+        // Apply the persisted Stealth Mode setting to the window immediately — default is
+        // ON, so a fresh install is invisible to screen sharing/recording from the first
+        // frame, not just after the user finds a toggle somewhere.
+        applyStealthMode()
         // Surface a clear message if the speech service rejects the key, instead of
         // silently showing an empty transcript forever.
         engine.onKeyError = { [weak self] in self?.handleSpeechKeyError() }
@@ -1279,6 +1283,10 @@ class MainViewModel {
             // Camera mode ON: show ONLY the compact overlay, hide the main window
             showCameraOverlay = true
             AnswerOverlayWindow.show(vm: self)
+            // The overlay window is created fresh here on its first-ever show — re-apply
+            // Stealth so a freshly-created window picks up the current setting too, not
+            // just the main panel (which was already covered at launch).
+            applyStealthMode()
             mainPanel?.orderOut(nil)
         }
     }
@@ -1453,6 +1461,9 @@ class MainViewModel {
             // of the box. Users who want to stay fully invisible in a real interview can
             // switch to system-audio-only in Settings.
             micCaptureEnabled = obj["micCaptureEnabled"] as? Bool ?? true
+            // Default ON: hidden from screen sharing/recording out of the box. Settings
+            // can turn it off for anyone who wants the window visible in a recording.
+            stealthModeEnabled = obj["stealthModeEnabled"] as? Bool ?? true
 
             // ONE-TIME migration: the default window opacity changed from 100% to 40%.
             // Existing users already have a saved mainOpacity (100%, the old default) from
@@ -1474,6 +1485,7 @@ class MainViewModel {
         let obj: [String: Any] = ["useGroq": useGroq, "mainOpacity": mainWindowOpacity,
                                   "overlayOpacity": overlayOpacity, "concise": conciseAnswers,
                                   "micCaptureEnabled": micCaptureEnabled,
+                                  "stealthModeEnabled": stealthModeEnabled,
                                   "opacityDefaultV2Applied": true]
         try? JSONSerialization.data(withJSONObject: obj).write(to: path)
     }
@@ -1520,6 +1532,34 @@ class MainViewModel {
         guard session.isLoggedIn, engine.isRunning else { return }
         engine.stop()
         engine.start(smKey: session.speechmaticsKey)
+    }
+
+    // MARK: - Stealth Mode (Settings toggle)
+
+    /// Default ON: hides the window from ALL screen capture — Zoom/Meet/Teams screen
+    /// sharing, screen recording, QuickTime — so the interviewer never sees it even while
+    /// you share your screen. The user still sees it normally; this only affects what a
+    /// *capture* of the screen contains, not your own display.
+    var stealthModeEnabled = true
+
+    /// Push the current Stealth Mode setting to the actual windows. Safe to call anytime —
+    /// no-ops on any window that doesn't exist yet (e.g. Eye Mode never opened this run).
+    /// Called on launch (so the default-ON state takes effect immediately) and whenever a
+    /// window is freshly created or the Settings toggle changes.
+    private func applyStealthMode() {
+        let type: NSWindow.SharingType = stealthModeEnabled ? .none : .readOnly
+        mainPanel?.sharingType = type
+        AnswerOverlayWindow.shared?.sharingType = type
+    }
+
+    /// Called from Settings when the user switches Stealth Mode. Applies immediately —
+    /// no relaunch needed.
+    func setStealthModeEnabled(_ enabled: Bool) {
+        guard stealthModeEnabled != enabled else { return }
+        stealthModeEnabled = enabled
+        saveSettings()
+        dlog("Stealth mode changed → stealthModeEnabled=\(enabled)", tag: "SETTINGS")
+        applyStealthMode()
     }
 
     // MARK: - Helpers

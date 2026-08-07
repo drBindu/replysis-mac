@@ -21,7 +21,6 @@ struct MainView: View {
     @State private var showResumeError = false
     @State private var dropTargeted = false   // resume drop-zone hover highlight
     @State private var didAutoSlide = false    // one-shot: auto-collapse the setup panel when the interview starts
-    @State private var stealthMode = false     // when ON, the window is hidden from screen sharing & recording
 
     var body: some View {
         // ── Outer glass container — matches original #B3080C14 border with CornerRadius 14
@@ -104,10 +103,19 @@ struct MainView: View {
         // never guaranteed to hold anyway) for a layout that's simply never broken.
         HStack(spacing: 0) {
             brandView
+                .layoutPriority(1)
             Spacer(minLength: 16)
             micControl
             Spacer(minLength: 16)
             rightCluster
+                .layoutPriority(1)   // PREMIUM FIX: never let the mic pill's growth (its hint
+                // text is much longer while LISTENING — "Press SPACE again to get answer" vs
+                // "Press SPACE to listen") squeeze rightCluster below its natural size. Without
+                // this, an HStack with only minimum gaps shares the shortfall across ALL
+                // children when content is tight, and rightCluster's own nested icon buttons
+                // would get compressed into overlapping fragments — exactly the broken blob
+                // seen switching MUTED → LISTENING. Giving both edges priority means only the
+                // (already width-capped, see micControl) center pill ever absorbs the squeeze.
         }
         .padding(.horizontal, 18)
         .frame(height: 64)
@@ -157,9 +165,17 @@ struct MainView: View {
                             .font(.system(size: 12, weight: .bold))
                             .foregroundColor(.white)
                     }
+                    // ROOT-CAUSE FIX: the LISTENING hint ("Press SPACE again to get answer")
+                    // is much longer than the idle one ("Press SPACE to listen"), so the pill
+                    // used to grow wider the instant you started listening — squeezing the
+                    // header's right side into an overlapping mess. lineLimit + a fixed frame
+                    // keep this pill's footprint constant across every state.
                     Text(micHintText)
                         .font(.system(size: 9, weight: .medium))
                         .foregroundColor(micHintColor)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .frame(width: 172, alignment: .leading)
                 }
             }
             .padding(.leading, 8).padding(.trailing, 16).padding(.vertical, 6)
@@ -220,31 +236,11 @@ struct MainView: View {
             .buttonStyle(.plain)
             .help("Analyze your screen with AI (F9)")
 
-            // Camera overlay toggle
-            toolButton(icon: "eye.fill", active: vm.showCameraOverlay, help: "Toggle Eye Mode — compact answer overlay") {
-                vm.toggleCamera()
-            }
-
-            // Pin on top — float above other apps (for the actual interview)
-            toolButton(icon: vm.isPinnedOnTop ? "pin.fill" : "pin",
-                       active: vm.isPinnedOnTop,
-                       help: "Pin on top — keep the window floating above other apps") {
-                vm.togglePin()
-            }
-
-            // Stealth — hide the window from screen sharing & recording (Zoom/Meet/Teams,
-            // QuickTime, etc.). sharingType = .none excludes it from all screen capture, so
-            // the interviewer never sees it even while you screen-share. You still see it.
-            toolButton(icon: stealthMode ? "eye.slash.fill" : "eye.slash",
-                       active: stealthMode,
-                       help: stealthMode
-                             ? "Stealth ON — hidden from screen sharing & recording. Tap to show."
-                             : "Stealth — hide this window from screen sharing & recording") {
-                stealthMode.toggle()
-                let type: NSWindow.SharingType = stealthMode ? .none : .readOnly
-                vm.mainPanel?.sharingType = type
-                AnswerOverlayWindow.shared?.sharingType = type
-            }
+            // Eye Mode · Pin · Stealth — one premium segmented glass pill instead of three
+            // separately-bordered floating buttons, so the header reads as a few clean
+            // groups (Analyze / view toggles / status / account) rather than a row of
+            // many individual chips.
+            toolSegmentGroup
 
             // Session timer (live)
             if vm.sessionTimerVisible {
@@ -533,16 +529,22 @@ struct MainView: View {
                     .frame(maxHeight: .infinity)
             }
 
-            // Toggle arrow
+            // Toggle arrow — glass pill, matching the mic control's translucent fill +
+            // hairline border instead of the old flat solid-color block.
             Button(action: { withAnimation(.easeInOut(duration: 0.2)) { resumeCollapsed.toggle() } }) {
-                Text(resumeCollapsed ? "▶" : "◀")
-                    .font(.system(size: 14))
+                Image(systemName: resumeCollapsed ? "chevron.right" : "chevron.left")
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundColor(Color(hex: "#94A3B8"))
                     .frame(width: 22)
                     .frame(maxHeight: .infinity)
-                    .background(Color(hex: "#1A1F2E"))
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.white.opacity(0.035))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.08), lineWidth: 1))
+                    )
             }
             .buttonStyle(.plain)
+            .padding(.horizontal, 3)
 
             // Right panel
             rightPanel
@@ -1045,6 +1047,47 @@ struct MainView: View {
                 .overlay(Capsule().stroke(
                     active ? Color(hex: "#38bdf8").opacity(0.5) : Color.white.opacity(0.08),
                     lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    // ── Eye Mode · Pin — one segmented glass pill ──
+    // Groups the view-toggle buttons into a single premium capsule with a hairline divider,
+    // instead of separately-bordered chips floating with gaps between them. Stealth Mode
+    // moved to Settings (default ON) — it's a set-once preference, not a mid-interview
+    // toggle, so it no longer needs header real estate.
+    var toolSegmentGroup: some View {
+        HStack(spacing: 0) {
+            segmentButton(icon: "eye.fill", active: vm.showCameraOverlay,
+                          activeColor: Color(hex: "#38bdf8"),
+                          help: "Toggle Eye Mode — compact answer overlay") {
+                vm.toggleCamera()
+            }
+            segmentDivider
+            segmentButton(icon: vm.isPinnedOnTop ? "pin.fill" : "pin",
+                          active: vm.isPinnedOnTop,
+                          activeColor: Color(hex: "#38bdf8"),
+                          help: "Pin on top — keep the window floating above other apps") {
+                vm.togglePin()
+            }
+        }
+        .background(Capsule().fill(Color.white.opacity(0.035)))
+        .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
+    }
+
+    private var segmentDivider: some View {
+        Rectangle().fill(Color.white.opacity(0.08)).frame(width: 1, height: 20)
+    }
+
+    private func segmentButton(icon: String, active: Bool, activeColor: Color,
+                                help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(active ? activeColor : Color(hex: "#94A3B8"))
+                .frame(width: 34, height: 32)
+                .background(active ? activeColor.opacity(0.16) : Color.clear)
         }
         .buttonStyle(.plain)
         .help(help)
