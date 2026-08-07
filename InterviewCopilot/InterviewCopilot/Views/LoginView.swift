@@ -6,6 +6,8 @@ struct LoginView: View {
 
     @State private var email       = ""
     @State private var password    = ""
+    @State private var fullName    = ""
+    @State private var isCreatingAccount = false   // false = Sign In form, true = Create Account form
     @State private var isLoading   = false
     @State private var errorMsg    = ""
     @State private var successMsg  = ""
@@ -23,6 +25,28 @@ struct LoginView: View {
     // BUG-14 FIX: check refreshToken (not idToken) — idToken can be populated even when
     // expired, so the "Continue As" card would show for an unusable token.
     private var hasSavedAccount: Bool { !savedEmail.isEmpty && !UserSession.shared.refreshToken.isEmpty }
+
+    private var formHeight: CGFloat {
+        var h: CGFloat = 680   // base + the Sign In/Create Account toggle row
+        if hasSavedAccount && !isCreatingAccount { h += 80 }
+        if isCreatingAccount { h += 70 }   // extra Full Name field
+        return h
+    }
+
+    private func modeTab(_ title: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(active ? .white : Color(hex: "#6b7280"))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(active ? Color(hex: "#1d4ed8") : Color(hex: "#161b22"))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(
+                    active ? Color(hex: "#1d4ed8") : Color.white.opacity(0.12), lineWidth: 1))
+                .cornerRadius(7)
+        }
+        .buttonStyle(.plain)
+    }
 
     var body: some View {
         ZStack {
@@ -50,7 +74,19 @@ struct LoginView: View {
                             .foregroundColor(Color(hex: "#6b7280"))
                     }
                     .padding(.top, 36)
-                    .padding(.bottom, 28)
+                    .padding(.bottom, 20)
+
+                    // ── Sign In / Create Account toggle ───────────────
+                    HStack(spacing: 6) {
+                        modeTab("Sign In", active: !isCreatingAccount) {
+                            isCreatingAccount = false; errorMsg = ""; successMsg = ""
+                        }
+                        modeTab("Create Account", active: isCreatingAccount) {
+                            isCreatingAccount = true; errorMsg = ""; successMsg = ""
+                        }
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.bottom, 20)
 
                     // ── Error / Success Banner ────────────────────────
                     if !errorMsg.isEmpty {
@@ -90,7 +126,7 @@ struct LoginView: View {
                     }
 
                     // ── "Continue As" card ────────────────────────────
-                    if hasSavedAccount {
+                    if hasSavedAccount && !isCreatingAccount {
                         Button(action: continueAsSaved) {
                             HStack(spacing: 12) {
                                 ZStack {
@@ -131,6 +167,24 @@ struct LoginView: View {
                     // ── Card background ───────────────────────────────
                     VStack(spacing: 16) {
 
+                        // Full name field — Create Account mode only
+                        if isCreatingAccount {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Full Name")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(Color(hex: "#9ca3af"))
+                                TextField("Jane Doe", text: $fullName)
+                                    .textFieldStyle(.plain)
+                                    .autocorrectionDisabled()
+                                    .padding(.horizontal, 12).padding(.vertical, 9)
+                                    .background(Color(hex: "#161b22"))
+                                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.12), lineWidth: 1))
+                                    .cornerRadius(7)
+                                    .foregroundColor(.white)
+                                    .font(.system(size: 14))
+                            }
+                        }
+
                         // Email field
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Email")
@@ -154,10 +208,12 @@ struct LoginView: View {
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundColor(Color(hex: "#9ca3af"))
                                 Spacer()
-                                Button("Forgot password?") { forgotPassword() }
-                                    .font(.system(size: 12))
-                                    .foregroundColor(Color(hex: "#38bdf8"))
-                                    .buttonStyle(.plain)
+                                if !isCreatingAccount {
+                                    Button("Forgot password?") { forgotPassword() }
+                                        .font(.system(size: 12))
+                                        .foregroundColor(Color(hex: "#38bdf8"))
+                                        .buttonStyle(.plain)
+                                }
                             }
                             SecureField("••••••••", text: $password)
                                 .textFieldStyle(.plain)
@@ -167,13 +223,18 @@ struct LoginView: View {
                                 .cornerRadius(7)
                                 .foregroundColor(.white)
                                 .font(.system(size: 14))
+                            if isCreatingAccount {
+                                Text("At least 6 characters")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(Color(hex: "#4b5563"))
+                            }
                         }
 
-                        // Sign In button
-                        Button(action: signIn) {
+                        // Sign In / Create Account button
+                        Button(action: { isCreatingAccount ? createAccount() : signIn() }) {
                             HStack(spacing: 8) {
                                 if isLoading { ProgressView().scaleEffect(0.75).tint(.white) }
-                                Text("Sign In")
+                                Text(isCreatingAccount ? "Create Account" : "Sign In")
                                     .font(.system(size: 14, weight: .semibold))
                             }
                             .frame(maxWidth: .infinity)
@@ -201,7 +262,10 @@ struct LoginView: View {
                             Button(action: signInWithGoogle) {
                                 HStack(spacing: 10) {
                                     GoogleLogoShape().frame(width: 18, height: 18)
-                                    Text("Continue with Google")
+                                    // Same OAuth flow either way — Firebase auto-creates the
+                                    // account on a Google sign-in it's never seen before, so
+                                    // this single button already covers "sign up with Google".
+                                    Text(isCreatingAccount ? "Sign up with Google" : "Continue with Google")
                                         .font(.system(size: 14, weight: .semibold))
                                         .foregroundColor(.white)
                                 }
@@ -221,16 +285,18 @@ struct LoginView: View {
                     .cornerRadius(12)
                     .padding(.horizontal, 28)
 
-                    // ── Footer: Sign up link + Cancel ─────────────────
+                    // ── Footer: mode switch + Cancel ──────────────────
                     VStack(spacing: 12) {
                         HStack(spacing: 4) {
-                            Text("Don't have an account?")
+                            Text(isCreatingAccount ? "Already have an account?" : "Don't have an account?")
                                 .font(.system(size: 12))
                                 .foregroundColor(Color(hex: "#6b7280"))
-                            Link("Sign up at replysis.com",
-                                 destination: URL(string: "https://replysis.com")!)
-                                .font(.system(size: 12))
-                                .foregroundColor(Color(hex: "#38bdf8"))
+                            Button(isCreatingAccount ? "Sign in" : "Create one") {
+                                isCreatingAccount.toggle(); errorMsg = ""; successMsg = ""
+                            }
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(Color(hex: "#38bdf8"))
+                            .buttonStyle(.plain)
                         }
 
                         Button("Cancel") { dismiss() }
@@ -243,8 +309,9 @@ struct LoginView: View {
                 }
             }
         }
-        // Tall enough that the Cancel button is always visible without scrolling.
-        .frame(width: 400, height: hasSavedAccount ? 700 : 620)
+        // Tall enough that the Cancel button is always visible without scrolling (the
+        // Sign In/Create Account toggle and the Full Name field both add real height).
+        .frame(width: 400, height: formHeight)
         .task {
             // Check whether Google sign-in can actually succeed BEFORE showing its button.
             // Baked-in secret (set via the GOOGLE_CLIENT_SECRET GitHub secret at build time)
@@ -272,6 +339,33 @@ struct LoginView: View {
                 dismiss()
             } else {
                 errorMsg = result.error ?? "Sign in failed. Please try again."
+            }
+        }
+    }
+
+    func createAccount() {
+        guard !fullName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            errorMsg = "Please enter your name."
+            return
+        }
+        guard !email.isEmpty && !password.isEmpty else {
+            errorMsg = "Please enter your email and password."
+            return
+        }
+        guard password.count >= 6 else {
+            errorMsg = "Password must be at least 6 characters."
+            return
+        }
+        isLoading = true
+        errorMsg = ""
+        Task {
+            let result = await signUpWithEmailPassword()
+            isLoading = false
+            if result.success {
+                vm.onLoginSuccess()
+                dismiss()
+            } else {
+                errorMsg = result.error ?? "Could not create account. Please try again."
             }
         }
     }
@@ -397,6 +491,81 @@ struct LoginView: View {
         } catch {
             return (false, "Connection error. Please try again.")
         }
+    }
+
+    // Firebase's accounts:signUp is the create-account counterpart to accounts:signInWithPassword
+    // above — same identitytoolkit REST API, same API key, creates a brand-new user directly.
+    func signUpWithEmailPassword() async -> (success: Bool, error: String?) {
+        guard let url = URL(string: "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=\(AppConfig.firebaseApiKey)") else {
+            return (false, "Config error")
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 15
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "email": email, "password": password, "returnSecureToken": true
+        ])
+        do {
+            let (data, _) = try await URLSession.shared.data(for: req)
+            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return (false, "Invalid response")
+            }
+            if let idToken      = obj["idToken"]      as? String,
+               let refreshToken = obj["refreshToken"] as? String,
+               let localId      = obj["localId"]      as? String {
+                let name = fullName.trimmingCharacters(in: .whitespacesAndNewlines)
+                // accounts:signUp doesn't accept displayName directly — it's set with a
+                // follow-up accounts:update call so it's saved on the account for next time,
+                // not just held locally for this session.
+                await setDisplayName(idToken: idToken, name: name)
+                UserSession.shared.idToken       = idToken
+                UserSession.shared.refreshToken  = refreshToken
+                UserSession.shared.userId        = localId
+                UserSession.shared.email         = email
+                UserSession.shared.name          = name.isEmpty
+                    ? (email.components(separatedBy: "@").first ?? "User") : name
+                UserSession.shared.isLoggedIn    = true
+                UserSession.shared.saveToDisk()
+                return (true, nil)
+            }
+            let errCode = (obj["error"] as? [String: Any])?["message"] as? String ?? ""
+            let errMsg: String
+            switch errCode {
+            case "EMAIL_EXISTS":
+                errMsg = "An account with this email already exists. Try signing in instead."
+            case "INVALID_EMAIL":
+                errMsg = "Please enter a valid email address."
+            case "WEAK_PASSWORD : Password should be at least 6 characters":
+                errMsg = "Password must be at least 6 characters."
+            case "OPERATION_NOT_ALLOWED":
+                errMsg = "Account creation is temporarily unavailable. Please try again later."
+            case "TOO_MANY_ATTEMPTS_TRY_LATER":
+                errMsg = "Too many attempts. Please try again later."
+            default:
+                errMsg = errCode.isEmpty ? "Could not create account. Please try again." :
+                    errCode.replacingOccurrences(of: "_", with: " ").capitalized
+            }
+            return (false, errMsg)
+        } catch let urlErr as URLError where urlErr.code == .timedOut {
+            return (false, "Connection timed out. Check your internet and try again.")
+        } catch {
+            return (false, "Connection error. Please try again.")
+        }
+    }
+
+    private func setDisplayName(idToken: String, name: String) async {
+        guard !name.isEmpty,
+              let url = URL(string: "https://identitytoolkit.googleapis.com/v1/accounts:update?key=\(AppConfig.firebaseApiKey)")
+        else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 15
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "idToken": idToken, "displayName": name, "returnSecureToken": false
+        ])
+        _ = try? await URLSession.shared.data(for: req)
     }
 
     func sendPasswordReset(email: String) async -> Bool {
