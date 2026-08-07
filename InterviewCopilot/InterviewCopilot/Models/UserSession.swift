@@ -270,7 +270,7 @@ class UserSession {
 
 // MARK: - App Config
 enum AppConfig {
-    static let backendUrl         = "https://coopilotxai.com"   // Oracle Cloud — the only backend
+    static let backendUrl         = "https://replysis.com"   // Oracle Cloud — the only backend (coopilotxai.com retired)
     static let firebaseApiKey     = "AIzaSyAGGmuFpR0qkCHLI3q2cPv_o3cQlbIU8lE"
     static let googleClientId     = "745433477203-lvqmnnip9pb241vkfp628qmue8313cre.apps.googleusercontent.com"
     // Baked into Info.plist at build time from the GOOGLE_CLIENT_SECRET GitHub Actions

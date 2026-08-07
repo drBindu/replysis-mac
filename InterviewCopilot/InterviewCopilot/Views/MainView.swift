@@ -404,7 +404,7 @@ struct MainView: View {
                     menuRow(icon: "bolt.fill", title: "Upgrade to Pro",
                             subtitle: "Unlimited answers", accent: Color(hex: "#a78bfa")) {
                         showProfileMenu = false
-                        NSWorkspace.shared.open(URL(string: "https://coopilotxai.com/pricing")!)
+                        NSWorkspace.shared.open(URL(string: "https://replysis.com/pricing")!)
                     }
                 }
             }
@@ -471,7 +471,7 @@ struct MainView: View {
                         if vm.session.isGuestSession {
                             showLogin = true
                         } else {
-                            NSWorkspace.shared.open(URL(string: "https://coopilotxai.com/pricing")!)
+                            NSWorkspace.shared.open(URL(string: "https://replysis.com/pricing")!)
                         }
                     }) {
                         Text(vm.session.isGuestSession ? "Sign In" : "Top up")
@@ -1163,7 +1163,7 @@ struct MainView: View {
 
     func creditsTapped() {
         if vm.session.credits == 0 && !vm.session.isUnlimited {
-            NSWorkspace.shared.open(URL(string: "https://coopilotxai.com/pricing")!)
+            NSWorkspace.shared.open(URL(string: "https://replysis.com/pricing")!)
         } else {
             Task { await vm.fetchCredits() }
         }

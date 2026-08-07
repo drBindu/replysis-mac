@@ -227,8 +227,8 @@ struct LoginView: View {
                             Text("Don't have an account?")
                                 .font(.system(size: 12))
                                 .foregroundColor(Color(hex: "#6b7280"))
-                            Link("Sign up at coopilotxai.com",
-                                 destination: URL(string: "https://coopilotxai.com")!)
+                            Link("Sign up at replysis.com",
+                                 destination: URL(string: "https://replysis.com")!)
                                 .font(.system(size: 12))
                                 .foregroundColor(Color(hex: "#38bdf8"))
                         }

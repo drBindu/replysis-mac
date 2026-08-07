@@ -771,7 +771,7 @@ class MainViewModel {
         }
         guard session.isLoggedIn else { aiAnswer = "⚠ Please sign in to use AI answers."; return }
         guard session.isUnlimited || session.credits > 0 else {
-            aiAnswer = "⚠ 0 credits remaining. Visit coopilotxai.com to top up."; return
+            aiAnswer = "⚠ 0 credits remaining. Visit replysis.com to top up."; return
         }
 
         isProcessing = true; showThinking = true; thinkingStep = 0
@@ -839,7 +839,7 @@ class MainViewModel {
                         self.aiAnswer = "⚠ Your 100 free credits are used up.\n\nSign in to buy more and keep going — your account is where credits are purchased."
                         NotificationCenter.default.post(name: .showLogin, object: nil)
                     } else {
-                        self.aiAnswer = "⚠ Not enough credits. Visit coopilotxai.com/pricing."
+                        self.aiAnswer = "⚠ Not enough credits. Visit replysis.com/pricing."
                     }
                 }
                 else if err == "SESSION_EXPIRED" { self.engine.stop(); self.session.clear(); self.setLoggedOutUI() }
