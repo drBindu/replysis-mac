@@ -42,7 +42,7 @@ struct LoginView: View {
                                 .font(.system(size: 30))
                                 .foregroundColor(Color(hex: "#38bdf8"))
                         }
-                        Text("CoopilotX AI")
+                        Text("Replysis")
                             .font(.system(size: 24, weight: .bold))
                             .foregroundColor(.white)
                         Text("Your AI-powered interview assistant")

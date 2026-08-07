@@ -342,18 +342,18 @@ class GoogleSignIn {
     // MARK: — HTML pages shown in browser after redirect
 
     nonisolated private static let successHTML = """
-    <html><head><title>Interview Copilot</title></head>
+    <html><head><title>Replysis</title></head>
     <body style='font-family:-apple-system,sans-serif;text-align:center;padding-top:80px;background:#0d1117;color:#e6edf3;'>
     <h2 style='color:#4ade80'>&#10003; Signed in!</h2>
-    <p>You can close this tab and return to Interview Copilot.</p>
+    <p>You can close this tab and return to Replysis.</p>
     </body></html>
     """
 
     nonisolated private static let failHTML = """
-    <html><head><title>Interview Copilot</title></head>
+    <html><head><title>Replysis</title></head>
     <body style='font-family:-apple-system,sans-serif;text-align:center;padding-top:80px;background:#0d1117;color:#e6edf3;'>
     <h2 style='color:#ef4444'>Sign-in cancelled</h2>
-    <p>Please close this tab and try again in Interview Copilot.</p>
+    <p>Please close this tab and try again in Replysis.</p>
     </body></html>
     """
 }

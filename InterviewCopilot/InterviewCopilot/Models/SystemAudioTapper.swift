@@ -112,7 +112,7 @@ nonisolated final class SystemAudioTapper {
             dlog("in-app tap: no default output device", tag: "TAP"); teardown(); return false
         }
         let desc: [String: Any] = [
-            kAudioAggregateDeviceNameKey as String: "Interview Copilot Audio",
+            kAudioAggregateDeviceNameKey as String: "Replysis Audio",
             kAudioAggregateDeviceUIDKey as String: "com.bindualekhya.InterviewCopilot.sysaudio.\(UUID().uuidString)",
             kAudioAggregateDeviceMainSubDeviceKey as String: outUID,
             kAudioAggregateDeviceIsPrivateKey as String: true,

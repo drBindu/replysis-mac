@@ -116,13 +116,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func guideToApplicationsFolder() {
         let alert = NSAlert()
-        alert.messageText = "Move Interview Copilot to your Applications folder"
+        alert.messageText = "Move Replysis to your Applications folder"
         alert.informativeText = """
-        Interview Copilot is opening from a temporary location, so macOS won't \
+        Replysis is opening from a temporary location, so macOS won't \
         remember your microphone and keyboard permissions.
 
         To fix it permanently — no password needed:
-        1. Drag Interview Copilot into the Applications folder.
+        1. Drag Replysis into the Applications folder.
         2. Open it from Applications (or Launchpad).
         """
         alert.alertStyle = .informational

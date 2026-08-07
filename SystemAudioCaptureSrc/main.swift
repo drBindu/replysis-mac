@@ -100,7 +100,7 @@ guard let outputUID = deviceUID(outputDevID) else {
 
 let aggUID = "com.bindualekhya.InterviewCopilot.systemaudio.\(UUID().uuidString)"
 let aggDesc: [String: Any] = [
-    kAudioAggregateDeviceNameKey as String:          "Interview Copilot Audio",
+    kAudioAggregateDeviceNameKey as String:          "Replysis Audio",
     kAudioAggregateDeviceUIDKey as String:           aggUID,
     kAudioAggregateDeviceMainSubDeviceKey as String: outputUID,
     kAudioAggregateDeviceIsPrivateKey as String:     true,

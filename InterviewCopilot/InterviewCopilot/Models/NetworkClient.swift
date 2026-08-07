@@ -298,7 +298,7 @@ class NetworkClient {
     func buildScreenPrompt(resumeCtx: String, transcript: String = "", jobContext: String = "") -> String {
         var p = """
 You are an expert interview coach helping a candidate in a live interview.
-The screenshot is a FULL SCREEN CAPTURE taken while the Interview Copilot app was hidden — so you are seeing whatever was behind it: Zoom/Meet shared screens, browsers with coding problems, job descriptions, terminal output, etc.
+The screenshot is a FULL SCREEN CAPTURE taken while the Replysis app was hidden — so you are seeing whatever was behind it: Zoom/Meet shared screens, browsers with coding problems, job descriptions, terminal output, etc.
 IMPORTANT: Look at the ENTIRE screenshot. Identify ALL visible content — browser windows, coding platforms (LeetCode, HackerRank, CoderPad), video call screens, error messages, design mockups, or any interview question text.
 Respond using the EXACT structure shown below for the matching content type.
 
@@ -407,7 +407,7 @@ IF SCREEN CONTENT DOES NOT MATCH ANY ABOVE (e.g. only desktop/wallpaper visible)
 
 ━━━ WHAT I SEE ━━━
 [Describe ALL visible windows, apps, and content — be specific about what applications are open]
-If the Interview Copilot app is visible, mention the current transcript and any question being discussed.
+If the Replysis app is visible, mention the current transcript and any question being discussed.
 
 ━━━ GUIDANCE ━━━
 • [Most relevant interview advice based on what you see]

@@ -134,10 +134,10 @@ struct MainView: View {
                     .foregroundColor(Color(hex: "#38bdf8"))
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text("Interview Copilot")
+                Text("Replysis")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(.white)
-                Text("by CoopilotX")
+                Text("replysis.com")
                     .font(.system(size: 9, weight: .medium))
                     .foregroundColor(Color(hex: "#3d4d5f"))
             }
