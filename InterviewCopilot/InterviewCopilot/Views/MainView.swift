@@ -20,6 +20,8 @@ struct MainView: View {
     @State private var resumeParseError = ""
     @State private var showResumeError = false
     @State private var dropTargeted = false   // resume drop-zone hover highlight
+    @State private var didAutoSlide = false    // one-shot: auto-collapse the setup panel when the interview starts
+    @State private var stealthMode = false     // when ON, the window is hidden from screen sharing & recording
 
     var body: some View {
         // ── Outer glass container — matches original #B3080C14 border with CornerRadius 14
@@ -47,6 +49,18 @@ struct MainView: View {
             // Interview started (first answer requested) → tuck the resume away
             // for a clean, focused view. The user can reopen it anytime.
             if vm.resumeLocked { withAnimation { resumeOpen = false } }
+            else { didAutoSlide = false }   // new session → re-arm the auto-slide
+        }
+        .onChange(of: vm.isListening) {
+            // When the interview starts (first Space → listening), slide the whole
+            // setup panel closed automatically for a clean, focused view. One-shot —
+            // the ◀ arrow still reopens it, and it re-arms on a new session.
+            if vm.isListening && !didAutoSlide {
+                didAutoSlide = true
+                if !resumeCollapsed {
+                    withAnimation(.easeInOut(duration: 0.28)) { resumeCollapsed = true }
+                }
+            }
         }
         .onChange(of: focusedField) {
             vm.isEditingText = focusedField != nil
@@ -216,6 +230,20 @@ struct MainView: View {
                        active: vm.isPinnedOnTop,
                        help: "Pin on top — keep the window floating above other apps") {
                 vm.togglePin()
+            }
+
+            // Stealth — hide the window from screen sharing & recording (Zoom/Meet/Teams,
+            // QuickTime, etc.). sharingType = .none excludes it from all screen capture, so
+            // the interviewer never sees it even while you screen-share. You still see it.
+            toolButton(icon: stealthMode ? "eye.slash.fill" : "eye.slash",
+                       active: stealthMode,
+                       help: stealthMode
+                             ? "Stealth ON — hidden from screen sharing & recording. Tap to show."
+                             : "Stealth — hide this window from screen sharing & recording") {
+                stealthMode.toggle()
+                let type: NSWindow.SharingType = stealthMode ? .none : .readOnly
+                vm.mainPanel?.sharingType = type
+                AnswerOverlayWindow.shared?.sharingType = type
             }
 
             // Session timer (live)
