@@ -1143,8 +1143,12 @@ class MainViewModel {
     /// After an answer lands, start listening again on our own — otherwise Auto Mode
     /// answers exactly one question and then silently stops being automatic.
     private func rearmAutoModeIfNeeded() {
-        guard autoModeEnabled, session.isLoggedIn, !isProcessing, isMuted else { return }
-        guard engine.isRunning else { return }
+        guard autoModeEnabled, session.isLoggedIn, !isProcessing else { return }
+        guard engine.isRunning else {
+            dlog("AUTO: engine not running — cannot arm", tag: "AUTO")
+            return
+        }
+        guard !isListening else { return }   // already listening; nothing to re-arm
         dlog("AUTO: re-arming for the next question", tag: "AUTO")
         isMuted = false; isListening = true
         justStartedListening = true; listenStartTicks = 0
@@ -1663,6 +1667,27 @@ class MainViewModel {
         dlog("Auto mode \(enabled ? "ON" : "OFF")", tag: "AUTO")
         if enabled {
             autoDetector.reset()
+            // Turning Auto on has to actually START it, including the things Space would
+            // have done on the user's behalf. It used to just call rearm, which silently
+            // returned if the user was signed out or the engine was not up — so the pill
+            // lit up, the mic stayed muted, and nothing said why.
+            guard session.isLoggedIn else {
+                dlog("AUTO: not signed in — prompting sign-in", tag: "AUTO")
+                NotificationCenter.default.post(name: .showLogin, object: nil)
+                return
+            }
+            if !engine.isRunning {
+                let key = session.speechmaticsKey
+                guard !key.isEmpty else {
+                    micStatus = "NO MIC"; micColor = Color(white: 0.42)
+                    aiAnswer = "⚠ Auto mode needs the speech service, which isn't available right now.\n\nRetrying automatically — or click the NO MIC badge."
+                    engine.startRetryTimer()
+                    return
+                }
+                dlog("AUTO: starting engine before arming", tag: "AUTO")
+                engine.start(smKey: key)
+            }
+            aiAnswerHint = "Auto mode on — just let the interviewer talk. The answer appears when they finish."
             rearmAutoModeIfNeeded()
         } else if isListening {
             // Switching off should stop the mic, not leave it silently open.

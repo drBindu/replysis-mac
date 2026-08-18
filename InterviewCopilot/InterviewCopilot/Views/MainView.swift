@@ -242,6 +242,28 @@ struct MainView: View {
             // many individual chips.
             autoModePill
 
+            // Watch Mode — for when the INTERVIEWER is sharing their screen. Turned on
+            // once when sharing starts; every question from then on is answered from what
+            // is visible. This had no control at all before, so the feature existed in the
+            // code and was unreachable from the UI.
+            Button(action: { vm.toggleWatchMode() }) {
+                HStack(spacing: 5) {
+                    Image(systemName: vm.isWatchMode ? "eye.circle.fill" : "eye.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Watch")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundColor(vm.isWatchMode ? Color(hex: "#fbbf24") : Color(hex: "#94A3B8"))
+                .padding(.horizontal, 11).padding(.vertical, 8)
+                .background(Capsule().fill(vm.isWatchMode ? Color(hex: "#241a06") : Color.white.opacity(0.04)))
+                .overlay(Capsule().stroke(
+                    vm.isWatchMode ? Color(hex: "#fbbf24").opacity(0.5) : Color.white.opacity(0.08), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .help(vm.isWatchMode
+                  ? "Watch ON — every question is answered from the shared screen. Click to stop."
+                  : "Watch — turn on when the interviewer shares their screen")
+
             toolSegmentGroup
 
             // Session timer (live)
