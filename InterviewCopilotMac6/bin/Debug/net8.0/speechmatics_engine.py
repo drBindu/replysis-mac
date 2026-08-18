@@ -41,9 +41,24 @@ def test_microphone():
             format=pyaudio.paInt16, channels=1, rate=16000,
             input=True, frames_per_buffer=4096
         )
+        # RESPONSIVENESS, measured separately from loudness. A silent device and a WEDGED
+        # device both read as amplitude zero, but they are not the same thing: a silent one
+        # is fine (nothing is playing), while committing to a wedged one takes audio down
+        # for the whole session. The difference is only visible in whether reads come back
+        # at all, so this times them. 10 reads of 4096 frames at 16kHz is ~2.5s of audio;
+        # anything past a generous 3x of that is a device that is not answering.
+        import time as _time
+        expected_s = (4096 * 10) / 16000.0
+        deadline = _time.monotonic() + (expected_s * 3.0) + 1.0
         has_audio = False
+        reads_completed = 0
         for _ in range(10):
+            if _time.monotonic() > deadline:
+                print(">>> MIC TEST: device is not responding (reads stalled) - "
+                      "treating as unusable rather than silent", flush=True)
+                break
             data = test_stream.read(4096, exception_on_overflow=False)
+            reads_completed += 1
             max_val = max(
                 abs(int.from_bytes(data[j:j+2], byteorder='little', signed=True))
                 for j in range(0, min(len(data), 200), 2)
@@ -53,6 +68,12 @@ def test_microphone():
         test_stream.stop_stream()
         test_stream.close()
         p_test.terminate()
+        responsive = reads_completed == 10
+        if not responsive:
+            print(f">>> MIC TEST: FAILED - device answered only {reads_completed}/10 reads",
+                  flush=True)
+            print("=" * 50, flush=True)
+            return False
         status = "Audio signal detected!" if has_audio else "Silent - hardware OK"
         print(f">>> MIC TEST: PASSED - {status}", flush=True)
         print("=" * 50, flush=True)
