@@ -539,7 +539,8 @@ class PromptBuilder {
         sb += "RULE 10 — SESSION MEMORY + DRILL-DOWN MEMORY (CRITICAL):\n"
         sb += "  You have perfect recall of everything said in this interview.\n"
         sb += "  When interviewer drills down: REUSE your earlier specifics.\n"
-        sb += "  START with a callback: 'yeah so like I mentioned...' / 'going back to that...'\n"
+        sb += "  If you HAVE said it before, open with a callback: 'yeah so like I mentioned...' / 'going back to that...'\n"
+        sb += "  NEVER use a callback for something you have not actually said in THIS conversation. Claiming 'as I mentioned' when you didn't reads as evasion to the one person who knows exactly what was said.\n"
         sb += "  If you can't remember an exact detail: 'I'd have to check the exact number but it was around X'\n\n"
 
         sb += "RULE 11 — NEVER ECHO YOUR RESUME WORD-FOR-WORD:\n"
@@ -608,7 +609,7 @@ class PromptBuilder {
             return "1-2 short sentences. NO bullets. Politely correct, restate your locked answer. Example: 'Actually I said Python earlier, that's still my answer.' Don't justify."
         }
         if isDrillDown {
-            return "1-2 short sentences. NO bullets. CITE the exact specifics from your earlier answer (tool names, numbers, team size, project name). Open with: 'yeah so like I mentioned...' or 'going back to that...'. Never invent new contradicting facts."
+            return "1-2 short sentences. NO bullets. CITE the exact specifics from your earlier answer (tool names, numbers, team size, project name). If it genuinely IS in your earlier answer, open with 'yeah so like I mentioned...' or 'going back to that...' - otherwise just answer plainly, never claim to have said something you did not. Never invent new contradicting facts."
         }
 
         let q = question.lowercased()

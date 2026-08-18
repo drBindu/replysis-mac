@@ -49,6 +49,7 @@ class NetworkClient {
 
     func streamScreenAnalysis(imageBase64: String, resumeCtx: String, provider: String,
                               transcript: String = "", jobContext: String = "",
+                              captureSource: String = "",
                               onToken: @escaping (String) -> Void,
                               onDone: @escaping () -> Void,
                               onError: @escaping (String) -> Void) {
@@ -58,7 +59,7 @@ class NetworkClient {
 
         let payload: [String: Any] = [
             "image": imageBase64,
-            "prompt": buildScreenPrompt(resumeCtx: resumeCtx, transcript: transcript, jobContext: jobContext),
+            "prompt": buildScreenPrompt(resumeCtx: resumeCtx, transcript: transcript, jobContext: jobContext, captureSource: captureSource),
             "provider": provider
         ]
         streamSSE(url: url, body: try? JSONSerialization.data(withJSONObject: payload),
@@ -295,10 +296,10 @@ class NetworkClient {
 
     // Rich, structured screen-analysis prompt — ported 1:1 from the working .NET
     // ScreenAnalyzer.BuildStaticPromptBody so coding answers match the original app.
-    func buildScreenPrompt(resumeCtx: String, transcript: String = "", jobContext: String = "") -> String {
+    func buildScreenPrompt(resumeCtx: String, transcript: String = "", jobContext: String = "", captureSource: String = "") -> String {
         var p = """
 You are an expert interview coach helping a candidate in a live interview.
-The screenshot is a FULL SCREEN CAPTURE taken while the Replysis app was hidden — so you are seeing whatever was behind it: Zoom/Meet shared screens, browsers with coding problems, job descriptions, terminal output, etc.
+The screenshot was taken with the Replysis app excluded from capture, so you are seeing only the user's own work — so you are seeing whatever was behind it: Zoom/Meet shared screens, browsers with coding problems, job descriptions, terminal output, etc.
 IMPORTANT: Look at the ENTIRE screenshot. Identify ALL visible content — browser windows, coding platforms (LeetCode, HackerRank, CoderPad), video call screens, error messages, design mockups, or any interview question text.
 Respond using the EXACT structure shown below for the matching content type.
 
@@ -414,6 +415,14 @@ If the Replysis app is visible, mention the current transcript and any question 
 • TIP: For best results, keep your coding platform or the interviewer's shared screen visible on screen when using Screen Analysis
 
 """
+        // Name the window the pixels came from. An answer about the WRONG window is
+        // otherwise indistinguishable from a bad answer about the right one, and the user
+        // has no way to tell which happened.
+        if !captureSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            p += "\n\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n"
+            p += "WHAT WAS CAPTURED: \(captureSource)\n"
+            p += "If this is clearly not what the question is about, say so in one line before answering.\n"
+        }
         if !transcript.isEmpty {
             p += "\n─────────────────────────────────────────────────────\n"
             p += "WHAT THE INTERVIEWER SAID (audio transcript) — use this to understand what they're asking about the screen:\n"

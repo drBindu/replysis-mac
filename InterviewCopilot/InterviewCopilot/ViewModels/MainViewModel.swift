@@ -912,12 +912,12 @@ class MainViewModel {
     }
 
     private func _doScreenCapture(label: String) async {
-        // Hide our windows so they don't appear in the screenshot.
-        let toHide = NSApplication.shared.windows.filter { $0.isVisible }
-        for w in toHide { w.orderOut(nil) }
-        try? await Task.sleep(nanoseconds: 80_000_000)   // 80ms — compositor update
+        // No hide/show dance: captureScreen() either targets the frontmost OTHER window or
+        // excludes this app from the display capture, so our window is never in the pixels
+        // to begin with. The old approach ordered every window out, slept 80ms for the
+        // compositor, then ordered them back — which read as the whole app blinking on
+        // every single capture, and cost 80ms of the user's wait for nothing.
         let imageData = await captureScreen()
-        for w in toHide { w.orderFrontRegardless() }
 
         guard let imageData = imageData, !imageData.isEmpty else {
             // macOS already showed its OWN native Screen Recording prompt (from the
@@ -946,6 +946,7 @@ class MainViewModel {
             provider: provider,
             transcript: currentTranscript,
             jobContext: jobContext,
+            captureSource: lastCaptureSource,
             onToken: { [weak self] token in
                 guard let self = self, self.answerEpoch == epoch else { return }
                 accumulated += token; tokenCount += 1
@@ -978,36 +979,87 @@ class MainViewModel {
         )
     }
 
+    /// What the last capture actually looked at, so the answer can name it. Vision answers
+    /// about the wrong window are otherwise indistinguishable from bad answers about the
+    /// right one.
+    private(set) var lastCaptureSource = ""
+
+    /// Longest side we upload. Vision models downscale until the SHORT side is 768px, so a
+    /// 4K screenshot is read at ~1365x768 no matter what we send — the extra pixels are
+    /// decoded, thrown away, and billed for. Capping here sends a fraction of the bytes for
+    /// a byte-identical result on the model side.
+    private let visionMaxEdge: Double = 1536
+
     private func captureScreen() async -> Data? {
-        // Use SCScreenshotManager — Apple's one-shot screenshot API (macOS 14.4+).
-        // When screen recording permission is not yet granted, macOS automatically shows
-        // its own permission prompt. No manual System Settings navigation needed.
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            guard let display = content.displays.first else { return nil }
 
+            // Prefer the FRONTMOST window over the whole display. A full-screen grab spends
+            // most of its 768px budget on desktop, dock and menu bar; the coding problem or
+            // shared screen being asked about gets whatever is left. One window puts the
+            // pixels where the question actually is. Falls back to the display when there is
+            // no sensible foreground window (e.g. only the desktop is showing).
+            let ownPID = ProcessInfo.processInfo.processIdentifier
+            let candidate = content.windows.first { w in
+                guard w.isOnScreen, w.frame.width > 200, w.frame.height > 200 else { return false }
+                guard let app = w.owningApplication else { return false }
+                // Never target ourselves — the user wants what is BEHIND this app.
+                guard app.processID != ownPID else { return false }
+                let layerIsNormal = w.windowLayer == 0          // excludes dock, menu bar, overlays
+                return layerIsNormal
+            }
+
+            let cgImage: CGImage
             let config = SCStreamConfiguration()
-            config.width  = display.width
-            config.height = display.height
+            config.showsCursor = false
 
-            let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
-            let cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+            if let win = candidate {
+                config.width  = Int(win.frame.width)
+                config.height = Int(win.frame.height)
+                let filter = SCContentFilter(desktopIndependentWindow: win)
+                cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+                let owner = win.owningApplication?.applicationName ?? "window"
+                let title = win.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                lastCaptureSource = title.isEmpty ? owner : "\(owner) — \(title)"
+            } else {
+                guard let display = content.displays.first else { return nil }
+                config.width  = display.width
+                config.height = display.height
+                // EXCLUDE our own app from the capture instead of hiding the window first.
+                // Hiding and waiting for the compositor makes the app visibly blink on every
+                // single capture; exclusion is invisible and has no wait at all.
+                let ourApp = content.applications.first { $0.processID == ownPID }
+                let filter = SCContentFilter(display: display,
+                                             excludingApplications: ourApp.map { [$0] } ?? [],
+                                             exceptingWindows: [])
+                cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+                lastCaptureSource = "full screen"
+            }
 
-            // Scale to max 800px wide, recompress at 60% — keeps payload ~150-300 KB.
+            // Downscale by the LONGEST edge (the old code only ever considered width, so a
+            // tall narrow window came through far larger than intended).
             let origW = Double(cgImage.width), origH = Double(cgImage.height)
-            let scale = min(1.0, 800.0 / origW)
-            let newW  = max(1, Int(origW * scale)), newH = max(1, Int(origH * scale))
+            guard origW > 0, origH > 0 else { return nil }
+            let scale = min(1.0, visionMaxEdge / max(origW, origH))
+            let newW  = max(1, Int((origW * scale).rounded()))
+            let newH  = max(1, Int((origH * scale).rounded()))
+
             guard let ctx = CGContext(
                 data: nil, width: newW, height: newH,
                 bitsPerComponent: 8, bytesPerRow: 0,
                 space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
             ) else { return nil }
+            ctx.interpolationQuality = .high
             ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: newW, height: newH))
             guard let scaled = ctx.makeImage() else { return nil }
+
+            // PNG, not JPEG. A screenshot is text on flat colour — the exact case JPEG is
+            // worst at. Its ringing around glyph edges is the difference between the model
+            // reading "l" and reading "1", which in code is a wrong answer.
             let rep  = NSBitmapImageRep(cgImage: scaled)
-            let data = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.6])
-            dlog("Screen capture: \(data?.count ?? 0) bytes JPEG \(newW)×\(newH)", tag: "SCREEN")
+            let data = rep.representation(using: .png, properties: [:])
+            dlog("Screen capture: \(data?.count ?? 0) bytes PNG \(newW)x\(newH) source=\(lastCaptureSource)", tag: "SCREEN")
             return data
         } catch {
             dlog("Screen capture failed: \(error)", tag: "SCREEN")
