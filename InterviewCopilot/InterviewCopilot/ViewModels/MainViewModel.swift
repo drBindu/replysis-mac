@@ -769,6 +769,16 @@ class MainViewModel {
 
     private func startAI(manualQuestion: String? = nil) {
         let q = manualQuestion ?? extractLatestQuestion(from: transcript)
+        // WATCH MODE: the interviewer is sharing their screen, so every question is about
+        // what is on it. Answer from the screen rather than from the words alone — but only
+        // now, when a question actually exists, rather than on a timer.
+        if isWatchMode, !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !isScreenAnalyzing {
+            isScreenAnalyzing = true; isProcessing = true
+            answerEpoch += 1
+            updateMicUI()
+            Task { await _doScreenCapture(label: "👁 SCREEN") }
+            return
+        }
         guard !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             // Honest feedback instead of silently doing nothing — the #1 "is it broken?"
             // moment is pressing Space twice and seeing zero reaction.
@@ -907,15 +917,13 @@ class MainViewModel {
         } else {
             isWatchMode = true
             dlog("Watch mode ON — capturing every 8s", tag: "SCREEN")
-            aiAnswer = "👁 WATCH MODE ON — capturing screen every 8 seconds automatically.\n\nThe AI will analyze everything the interviewer shares.\n\nPress Watch button again to stop."
-            // Immediate first capture
-            runScreenAnalysis()
-            watchModeTimer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: true) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    guard let self = self, self.isWatchMode && !self.isProcessing else { return }
-                    await self._doScreenCapture(label: "👁 AUTO-CAPTURE")
-                }
-            }
+            aiAnswer = "👁 WATCH MODE ON — for when the interviewer is sharing their screen.\n\nEvery question is now answered from what is on screen, with nothing to press.\n\nPress Watch again to go back to answering from what was said."
+            // NOTE: no timer. Capturing every N seconds is the obvious reading of "watch
+            // the screen" and it does not survive arithmetic: a capture every 8s for a
+            // 30-minute interview is 225 vision calls, almost all of them frames nobody
+            // asked about, each one billed. A capture costs ~80ms, so waiting until there
+            // IS a question costs nothing and answers exactly the same. The capture is
+            // driven by question detection instead — see startAI()'s watch-mode branch.
         }
     }
 
