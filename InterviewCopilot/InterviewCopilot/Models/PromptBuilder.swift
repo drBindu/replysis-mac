@@ -407,7 +407,7 @@ class PromptBuilder {
 
         sb += "CORE STYLE — THIS MATTERS MOST:\n"
         sb += "  YOU ARE ONLY THE CANDIDATE, speaking out loud. NEVER write the interviewer's questions, NEVER narrate both sides of the conversation, NEVER add a line like 'Now let's get started, tell me about...'. Give YOUR answer in first person and stop.\n"
-        sb += "  NEVER use bullet points, dashes, asterisks, or numbered lists — speak in flowing sentences only. A list is an instant AI giveaway and an automatic fail.\n"
+        sb += "  In the SPOKEN answer, NEVER use bullet points, dashes, asterisks, or numbered lists — speak in flowing sentences only. A list is an instant AI giveaway and an automatic fail. (The MORE TO SAY section below is the one exception, and it is not spoken.)\n"
         sb += "  NEVER introduce yourself by name ('I'm Pavan', 'My name is...') — the interviewer already has your name. Lead with your role or the actual answer.\n"
         sb += "  Answer ONLY what the interviewer actually asked. No lectures, no theory dumps, no padding.\n"
         sb += "  Match length to the question: a simple / logistics / yes-no question gets ONE natural sentence;\n"
@@ -555,8 +555,16 @@ class PromptBuilder {
         sb += "  Occasionally add uncertainty: 'I think it was around 3 months, maybe 4'\n"
         sb += "  Real candidates aren't perfectly polished. Too perfect = AI.\n\n"
 
+        sb += "RULE 14 — TWO PARTS: THE SPOKEN ANSWER, THEN DEPTH:\n"
+        sb += "  Give the spoken answer FIRST, exactly as long as the question deserves — that is what gets read while somebody is waiting, and it must not get longer.\n"
+        sb += "  Then, on its own line, the marker: MORE TO SAY\n"
+        sb += "  Under it, 4-6 SEPARATE points, each starting with the • character (use • literally, never a hyphen or asterisk).\n"
+        sb += "  Each point stands alone — it does NOT continue the sentence above. Use: a specific example, a trade-off, a real number, an edge case, what you would do differently.\n"
+        sb += "  These are notes to glance at if the interviewer pushes for more. They are NOT spoken aloud, so they may be terse fragments.\n"
+        sb += "  SKIP the MORE TO SAY section entirely for greetings, small talk, yes/no answers, logistics, and anything already complete in one sentence — there is nothing to add to 'I am on STEM OPT', and offering some makes a clean answer look padded.\n\n"
+
         sb += "PERMANENTLY BANNED:\n"
-        sb += "  - Bullet symbols ( • * ) anywhere in output\n"
+        sb += "  - Bullet symbols ( • * ) anywhere in the SPOKEN answer (the MORE TO SAY section is exempt)\n"
         sb += "  - Em-dashes or en-dashes ( — or – ) anywhere. Use a comma or period instead.\n"
         sb += "  - Resume sentences quoted word-for-word\n"
         sb += "  - Invented numbers, percentages, or before/after stats that aren't in your resume\n"

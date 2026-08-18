@@ -1672,11 +1672,28 @@ class MainViewModel {
         return latest.count < 10 ? trimmed : latest
     }
 
+    /// Marker that separates the spoken answer from the glanceable depth notes (RULE 14).
+    static let moreToSayMarker = "MORE TO SAY"
+
     private func cleanAIOutput(_ text: String) -> String {
+        // Split at the depth marker FIRST. The two halves need opposite treatment: the
+        // spoken half must have no list punctuation at all, while the depth half is a list
+        // and must keep its bullets. Running one pass over both destroyed the bullets.
+        let parts = text.components(separatedBy: Self.moreToSayMarker)
+        let spoken = cleanSpoken(parts[0])
+        guard parts.count > 1 else { return spoken }
+        let depth = cleanDepth(parts.dropFirst().joined(separator: Self.moreToSayMarker))
+        guard !depth.isEmpty else { return spoken }
+        return spoken + "\n\n" + Self.moreToSayMarker + "\n" + depth
+    }
+
+    /// The half that is read aloud: strip markdown, and normalise dashes to commas so the
+    /// candidate never has to voice an em-dash mid-sentence.
+    private func cleanSpoken(_ text: String) -> String {
         var s = text
-        s = s.replacingOccurrences(of: "```[a-zA-Z]*\\n?", with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: "```[a-zA-Z]*\n?", with: "", options: .regularExpression)
         s = s.replacingOccurrences(of: "```", with: "")
-        s = s.replacingOccurrences(of: "\\*{1,3}([^*\\n]+)\\*{1,3}", with: "$1", options: .regularExpression)
+        s = s.replacingOccurrences(of: "\\*{1,3}([^*\n]+)\\*{1,3}", with: "$1", options: .regularExpression)
         s = s.replacingOccurrences(of: " — ", with: ", ").replacingOccurrences(of: " – ", with: ", ")
              .replacingOccurrences(of: "—", with: ", ").replacingOccurrences(of: "–", with: ", ")
         for f in ["Certainly! ","Absolutely! ","Of course! ","Great question! ","Sure! ",
@@ -1685,6 +1702,26 @@ class MainViewModel {
         }
         while s.contains("\n\n\n") { s = s.replacingOccurrences(of: "\n\n\n", with: "\n\n") }
         return s.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The half that is only glanced at. Asked for "•" the model often emits "-" or "*"
+    /// anyway, which reads as a dash rather than a list — so convert leading markers to a
+    /// real bullet here regardless of what it produced. Dashes are NOT touched: nothing in
+    /// this section is spoken, and a hyphen mid-line is usually a range or a compound word.
+    private func cleanDepth(_ text: String) -> String {
+        var out: [String] = []
+        for raw in text.components(separatedBy: "\n") {
+            var line = raw.trimmingCharacters(in: .whitespaces)
+            line = line.replacingOccurrences(of: "\\*{1,3}([^*\n]+)\\*{1,3}", with: "$1", options: .regularExpression)
+            if line.isEmpty { continue }
+            for marker in ["- ", "* ", "• ", "•", "- ", "– "] where line.hasPrefix(marker) {
+                line = String(line.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
+                break
+            }
+            if line.isEmpty { continue }
+            out.append("• " + line)
+        }
+        return out.joined(separator: "\n")
     }
 }
 
