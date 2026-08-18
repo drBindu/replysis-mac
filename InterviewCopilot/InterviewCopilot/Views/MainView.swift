@@ -240,6 +240,8 @@ struct MainView: View {
             // separately-bordered floating buttons, so the header reads as a few clean
             // groups (Analyze / view toggles / status / account) rather than a row of
             // many individual chips.
+            autoModePill
+
             toolSegmentGroup
 
             // Session timer (live)
@@ -307,6 +309,31 @@ struct MainView: View {
             }
             .padding(.leading, 2)
         }
+    }
+
+    // ── Auto Mode pill ─────────────────────────────────────────────
+    // The single most important control in a live interview, so it gets a labelled pill
+    // rather than another anonymous icon: the user must be able to see AT A GLANCE whether
+    // the app is going to answer on its own, without opening a menu to check.
+    var autoModePill: some View {
+        Button(action: { vm.setAutoModeEnabled(!vm.autoModeEnabled) }) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(vm.autoModeEnabled ? Color(hex: "#34E08A") : Color(hex: "#4b5563"))
+                    .frame(width: 7, height: 7)
+                Text(vm.autoModeEnabled ? "AUTO" : "MANUAL")
+                    .font(.system(size: 11, weight: .bold)).tracking(0.5)
+                    .foregroundColor(vm.autoModeEnabled ? Color(hex: "#B8F5D3") : Color(hex: "#94A3B8"))
+            }
+            .padding(.horizontal, 11).padding(.vertical, 8)
+            .background(Capsule().fill(vm.autoModeEnabled ? Color(hex: "#102A1D") : Color.white.opacity(0.04)))
+            .overlay(Capsule().stroke(
+                vm.autoModeEnabled ? Color(hex: "#2C7B50") : Color.white.opacity(0.08), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help(vm.autoModeEnabled
+              ? "Auto: answers appear on their own when the interviewer stops talking. Click for manual."
+              : "Manual: press SPACE to listen and answer. Click for automatic.")
     }
 
     // ── Profile button + dropdown popover ──────────────────────────

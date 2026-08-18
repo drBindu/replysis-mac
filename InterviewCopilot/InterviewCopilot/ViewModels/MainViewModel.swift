@@ -69,6 +69,11 @@ class MainViewModel {
     var overlayOpacity: Double = 0.90
     var isScreenAnalyzing = false
     var isWatchMode = false         // continuous screen watch mode
+    /// Auto Mode: the app decides when the interviewer finished asking and answers with
+    /// nothing pressed. This is the difference between using the product in a real
+    /// interview and visibly operating it while someone watches.
+    var autoModeEnabled = false
+    private var autoDetector = AutoTurnDetector()
     var useGroq = true
 
     // MARK: - Permission onboarding
@@ -706,6 +711,7 @@ class MainViewModel {
             dlog("SPACE: unmuting → LISTENING", tag: "SPACE")
             isMuted = false; isListening = true
             justStartedListening = true; listenStartTicks = 0
+            autoDetector.reset()   // fresh turn — restart the quiet clock
             transcript = ""; aiAnswer = ""
             // The engine has a slow (~10s) cold start on the first listen after launch.
             // Tell the user it's warming up instead of showing a green mic that silently
@@ -869,6 +875,8 @@ class MainViewModel {
     func stopThinkingUI() {
         showThinking = false; isProcessing = false; isScreenAnalyzing = false
         updateMicUI(); thinkingText = "Thinking..."
+        // Listening again is what makes Auto Mode continuous rather than single-shot.
+        rearmAutoModeIfNeeded()
     }
 
     // MARK: - Screen Analysis
@@ -1096,6 +1104,50 @@ class MainViewModel {
             dlog("Transcript updated: '\(text.prefix(80))'", tag: "TX")
             transcript = text
         }
+        // AUTO MODE: the same polled text that drives the on-screen transcript also tells
+        // us when the interviewer stopped talking. No extra timer, no extra file read.
+        if autoModeEnabled && !isProcessing && !isScreenAnalyzing {
+            if autoDetector.shouldSubmit(transcript: text) {
+                autoDetector.markSubmitting(text)
+                dlog("AUTO: turn complete — answering without a keypress", tag: "AUTO")
+                submitAutomaticTurn()
+            }
+        }
+    }
+
+    /// End the listening turn and answer, exactly as a second Space press would, but
+    /// triggered by the interviewer falling silent instead of by the user's hand.
+    private func submitAutomaticTurn() {
+        guard isListening, !isProcessing else { return }
+        isListening = false
+        engine.writePauseFlag()
+        isMuted = true
+        updateMicUI()
+        Task { @MainActor [weak self] in
+            // Same drain window the manual path uses: Speechmatics runs behind live
+            // speech, so the tail of the sentence is still in flight when it goes quiet.
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard let self, self.isMuted, !self.isListening else { return }
+            self.startAI()
+        }
+    }
+
+    /// After an answer lands, start listening again on our own — otherwise Auto Mode
+    /// answers exactly one question and then silently stops being automatic.
+    private func rearmAutoModeIfNeeded() {
+        guard autoModeEnabled, session.isLoggedIn, !isProcessing, isMuted else { return }
+        guard engine.isRunning else { return }
+        dlog("AUTO: re-arming for the next question", tag: "AUTO")
+        isMuted = false; isListening = true
+        justStartedListening = true; listenStartTicks = 0
+        transcript = ""
+        autoDetector.reset()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.engine.clearLatestTxt()
+            self?.engine.writeResetFlag()
+            self?.engine.deletePauseFlag()
+        }
+        updateMicUI()
     }
 
     // MARK: - Thinking Animation
@@ -1141,6 +1193,9 @@ class MainViewModel {
         cloudTurns = []; cloudSessionId = nil
         isRecording = true
         sessionSeconds = 0; sessionTimerVisible = true
+        // If Auto Mode was left on, begin listening with the session rather than waiting
+        // for a keypress that Auto Mode exists to remove.
+        if autoModeEnabled { DispatchQueue.main.async { [weak self] in self?.rearmAutoModeIfNeeded() } }
         sessionTimerObj?.invalidate()
         sessionTimerObj = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -1513,6 +1568,7 @@ class MainViewModel {
             // of the box. Users who want to stay fully invisible in a real interview can
             // switch to system-audio-only in Settings.
             micCaptureEnabled = obj["micCaptureEnabled"] as? Bool ?? true
+            autoModeEnabled = obj["autoModeEnabled"] as? Bool ?? false
             // Default ON: hidden from screen sharing/recording out of the box. Settings
             // can turn it off for anyone who wants the window visible in a recording.
             stealthModeEnabled = obj["stealthModeEnabled"] as? Bool ?? true
@@ -1537,6 +1593,7 @@ class MainViewModel {
         let obj: [String: Any] = ["useGroq": useGroq, "mainOpacity": mainWindowOpacity,
                                   "overlayOpacity": overlayOpacity, "concise": conciseAnswers,
                                   "micCaptureEnabled": micCaptureEnabled,
+                                  "autoModeEnabled": autoModeEnabled,
                                   "stealthModeEnabled": stealthModeEnabled,
                                   "opacityDefaultV2Applied": true]
         try? JSONSerialization.data(withJSONObject: obj).write(to: path)
@@ -1584,6 +1641,27 @@ class MainViewModel {
         guard session.isLoggedIn, engine.isRunning else { return }
         engine.stop()
         engine.start(smKey: session.speechmaticsKey)
+    }
+
+    // MARK: - Auto Mode
+
+    /// Turn Auto Mode on or off. When switched on mid-session it starts listening straight
+    /// away, so the very next thing the interviewer says is already being heard — waiting
+    /// for the user to also press Space would defeat the entire point.
+    func setAutoModeEnabled(_ enabled: Bool) {
+        guard autoModeEnabled != enabled else { return }
+        autoModeEnabled = enabled
+        saveSettings()
+        dlog("Auto mode \(enabled ? "ON" : "OFF")", tag: "AUTO")
+        if enabled {
+            autoDetector.reset()
+            rearmAutoModeIfNeeded()
+        } else if isListening {
+            // Switching off should stop the mic, not leave it silently open.
+            isListening = false; isMuted = true
+            engine.writePauseFlag()
+            updateMicUI()
+        }
     }
 
     // MARK: - Stealth Mode (Settings toggle)
