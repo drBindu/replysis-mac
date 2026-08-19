@@ -608,8 +608,27 @@ class PromptBuilder {
 
     private func buildFormatReminder(qType: QuestionType, question: String, isDrillDown: Bool, concise: Bool = false) -> String {
         let reminder = baseFormatReminder(qType: qType, question: question, isDrillDown: isDrillDown)
-        guard concise else { return reminder }
-        return "BREVITY MODE (this is a SPOKEN answer — keep it under ~15 seconds, at most 2-3 short sentences, no lists, cut all preamble): " + reminder
+        if concise {
+            // Brevity mode is explicitly "just the spoken answer" — no depth section.
+            return "BREVITY MODE (this is a SPOKEN answer — keep it under ~15 seconds, at most 2-3 short sentences, no lists, cut all preamble): " + reminder
+        }
+        // THE DEPTH SECTION HAS TO BE STATED HERE, not only as a rule thousands of
+        // characters earlier. This reminder is the last thing the model reads before the
+        // question, and it ends with "NO bullet symbols" and "don't pad" — which read as a
+        // direct contradiction of the depth section and won, so MORE TO SAY never appeared.
+        guard needsDepthSection(qType) else { return reminder }
+        return reminder + "\n\nTHEN, after the spoken answer, add a blank line and this exact marker on its own line:\nMORE TO SAY\nUnder it, 4-6 SEPARATE points, each on its own line starting with the • character. Each stands alone (a specific example, a trade-off, a real number, an edge case, what you'd do differently). These are glance-notes if the interviewer pushes — NOT spoken, so terse fragments are fine. The 'no bullets' rule above applies ONLY to the spoken answer, never to this section."
+    }
+
+    /// Which questions deserve depth notes. Greetings, yes/no and logistics are complete in
+    /// a sentence — offering "more to say" there makes a clean answer look padded.
+    private func needsDepthSection(_ qType: QuestionType) -> Bool {
+        switch qType {
+        case .yesNo, .availability, .logistics, .salary, .contextStatement, .memoryRecall:
+            return false
+        default:
+            return true
+        }
     }
 
     private func baseFormatReminder(qType: QuestionType, question: String, isDrillDown: Bool) -> String {

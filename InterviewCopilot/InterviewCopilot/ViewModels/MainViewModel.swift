@@ -1240,6 +1240,9 @@ class MainViewModel {
             let merged = (lastAnsweredQuestion + " " + text)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             dlog("AUTO: continuation — re-answering the full question: '\(merged.prefix(70))'", tag: "AUTO")
+            // Say WHY the answer just changed. Without this the replacement looks like the
+            // app glitched and lost the answer, right when the user is reading it.
+            thinkingText = "You added more — re-answering the full question…"
             text = merged
             // Replace rather than stack: the partial answer is now wrong.
             answerEpoch += 1
