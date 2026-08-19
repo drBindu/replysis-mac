@@ -606,8 +606,16 @@ class PromptBuilder {
         return false
     }
 
-    private func buildFormatReminder(qType: QuestionType, question: String, isDrillDown: Bool, concise: Bool = false) -> String {
-        let reminder = baseFormatReminder(qType: qType, question: question, isDrillDown: isDrillDown)
+    private func buildFormatReminder(qType: QuestionType, question: String, isDrillDown: Bool, concise: Bool = false, hasResume: Bool = true) -> String {
+        var reminder = baseFormatReminder(qType: qType, question: question, isDrillDown: isDrillDown)
+        // WITHOUT A RESUME THERE ARE NO REAL NUMBERS TO CITE. The reminders below ask for a
+        // metric, and this text is the last thing the model reads, so it outranked the
+        // no-fabrication rule in the system prompt and the model duly invented one —
+        // "kept uptime above 99.9%", "cut response times by 40%". A candidate cannot defend
+        // a number they never had, and the interviewer only has to ask one follow-up.
+        if !hasResume {
+            reminder += " CRITICAL — YOU HAVE NO RESUME: never state a specific percentage, millisecond, dollar amount, team size, or company name as a real result you personally achieved. Describe the impact qualitatively instead ('noticeably faster', 'a lot more reliable') and focus on your APPROACH and trade-offs, which reads as more credible anyway. An invented statistic falls apart the moment the interviewer drills in."
+        }
         if concise {
             // Brevity mode is explicitly "just the spoken answer" — no depth section.
             return "BREVITY MODE (this is a SPOKEN answer — keep it under ~15 seconds, at most 2-3 short sentences, no lists, cut all preamble): " + reminder
@@ -657,7 +665,7 @@ class PromptBuilder {
         case .salary:
             return "2-3 sentences. NO bullets. Range + total comp openness. Example: 'I'm targeting around $120-140k base depending on total package. Open to discussing equity and bonus.'"
         case .intro:
-            return "3-4 SHORT scannable paragraphs separated by blank lines. NO bullet symbols. P1: Who you are now + current role. P2: One specific win WITH metric + measurement context + tools used. P3: Previous role briefly. P4: Why this company (something specific). Mix sentence length. Use 'yeah', 'so', 'honestly'."
+            return "3-4 SHORT scannable paragraphs separated by blank lines. NO bullet symbols. P1: Who you are now + current role. P2: One specific win — cite a metric ONLY if your resume actually contains one, otherwise describe the result qualitatively and name the tools used. P3: Previous role briefly. P4: Why this company (something specific). Mix sentence length. Use 'yeah', 'so', 'honestly'."
         case .technical:
             return "3-4 SHORT paragraphs separated by blank lines. NO bullet symbols. P1: One-sentence definition in plain words. P2: REAL example from YOUR work. P3: Something tricky and how you handled it. P4 (optional): Result or lesson."
         case .behavioral:
@@ -704,7 +712,11 @@ class PromptBuilder {
         }
 
         let lockBlock = buildLockedConstraintBlock(for: currentQuestion)
-        let formatReminder = buildFormatReminder(qType: qType, question: currentQuestion, isDrillDown: drillDown, concise: concise)
+        let hasResumeFacts = !resumeFacts.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && resumeFacts != "[NO RESUME]"
+        let formatReminder = buildFormatReminder(qType: qType, question: currentQuestion,
+                                                 isDrillDown: drillDown, concise: concise,
+                                                 hasResume: hasResumeFacts)
         let contextNote = buildContextNote()
 
         var historyHint = ""
