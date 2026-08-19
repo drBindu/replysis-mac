@@ -112,9 +112,22 @@ struct AutoTurnDetector {
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return false }
 
-        let words = q.lowercased()
+        let allWords = q.lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted.subtracting(CharacterSet(charactersIn: "'")))
             .filter { !$0.isEmpty }
+        guard !allWords.isEmpty else { return false }
+
+        // Drop leading filler before deciding what kind of sentence this is. People open
+        // with "so", "okay", "and", "um" constantly — "So, can you tell me..." is a
+        // question, but testing only the literal first word saw "so", matched nothing, and
+        // fell through to the multi-sentence rule below, which threw the question away.
+        let leadingFiller: Set<String> = ["so", "okay", "ok", "and", "um", "uh", "well",
+                                          "now", "alright", "right", "yeah", "hmm", "like",
+                                          "just", "then", "also", "actually"]
+        var words = allWords
+        while let f = words.first, leadingFiller.contains(f), words.count > 1 {
+            words.removeFirst()
+        }
         guard let first = words.first else { return false }
 
         // Pure acknowledgement — never worth answering.
@@ -140,21 +153,30 @@ struct AutoTurnDetector {
         let questionStarters: Set<String> = ["what", "why", "how", "when", "where", "who",
             "which", "can", "could", "would", "will", "do", "does", "did", "are", "is",
             "was", "were", "have", "has", "should", "tell"]
+        let commands: Set<String> = ["explain", "describe", "walk", "share", "discuss",
+            "design", "implement", "compare", "define", "introduce", "summarize", "write",
+            "create", "build", "code", "program", "solve", "develop", "generate", "show"]
+
         if questionStarters.contains(first) {
             // "tell me" alone is the start of "tell me about..." — still incoming.
             if first == "tell" && words.count <= 2 { return false }
             return words.count >= 2
         }
 
-        let commands: Set<String> = ["explain", "describe", "walk", "share", "discuss",
-            "design", "implement", "compare", "define", "introduce", "summarize", "write",
-            "create", "build", "code", "program", "solve", "develop", "generate", "show"]
         if commands.contains(first) { return words.count >= 2 }
 
         if hasQuestionMark { return words.count >= 2 }
 
-        // Several finished sentences with no question marker is usually the interviewer
-        // talking about themselves or the company, not asking anything.
+        // A question starter or command ANYWHERE in the opening still counts. Recognisers
+        // punctuate mid-sentence ("So . Can you tell me what is difference between . C two")
+        // so the interrogative often is not at index 0 even after filler is stripped.
+        let opening = Set(words.prefix(6))
+        let interrogative = questionStarters.union(commands).union(["difference", "between"])
+        if !opening.isDisjoint(with: interrogative) { return words.count >= 4 }
+
+        // Only NOW treat several finished sentences as background talk. This rule exists to
+        // skip the interviewer introducing themselves, but recognisers sprinkle periods, so
+        // running it before the check above rejected genuine questions for being punctuated.
         if q.filter({ $0 == "." }).count >= 2 { return false }
 
         // Anything else needs to at least look like a finished, substantial statement.
