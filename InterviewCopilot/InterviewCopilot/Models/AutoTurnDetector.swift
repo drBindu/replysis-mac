@@ -137,15 +137,32 @@ struct AutoTurnDetector {
                                         "mhm", "uh huh", "got it", "sure", "correct"]
         if backchannel.contains(normalized) { return false }
 
-        // A speaker correcting or restarting themselves is mid-thought, never finished.
-        // Recognisers add a "?" on rising intonation, so "no, no I am asking?" would
-        // otherwise pass the question-mark test and fire on a fragment while the real
-        // question was still coming.
+        // A self-correction is only a REJECTION when it is all the speaker has said. The
+        // transcript accumulates across a turn, so "no, no, I'm asking . you're looking
+        // for C2C or W2 . are you there?" begins with a correction and then contains the
+        // real question — rejecting on the prefix threw the whole question away and the
+        // user sat waiting while nothing happened. Strip the correction, judge what is
+        // left, and only reject when nothing substantial remains.
         let restarts = ["no no", "no i am asking", "no i'm asking", "sorry", "wait",
                         "let me rephrase", "i mean", "actually no", "hold on", "one sec",
                         "what i meant", "let me ask", "i want to ask", "i wanted to ask"]
-        for r in restarts where normalized == r || normalized.hasPrefix(r + " ") {
-            return false
+        var remainder = normalized
+        var strippedSomething = true
+        while strippedSomething {
+            strippedSomething = false
+            for r in restarts {
+                if remainder == r { return false }              // nothing but a correction
+                if remainder.hasPrefix(r + " ") {
+                    remainder = String(remainder.dropFirst(r.count + 1))
+                    strippedSomething = true
+                }
+            }
+        }
+        // Re-derive the words from what actually remains after the correction.
+        if remainder != normalized {
+            let rest = remainder.components(separatedBy: " ").filter { !$0.isEmpty }
+            guard rest.count >= 3 else { return false }         // only a fragment left
+            words = rest
         }
 
         let hasQuestionMark = q.contains("?")
