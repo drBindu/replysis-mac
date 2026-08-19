@@ -1332,6 +1332,28 @@ class MainViewModel {
                 .components(separatedBy: CharacterSet.alphanumerics.inverted)
                 .filter { $0.count > 2 && !stop.contains($0) })
         }
+        // PHRASE MATCH FIRST. Reading a long answer aloud produces several utterances,
+        // one per natural pause, and a single sentence from the middle is often too short
+        // for a word-ratio test to catch — so the app answered a sentence of its own
+        // answer. A run of consecutive words lifted straight from the answer is far
+        // stronger evidence than any ratio: people do not accidentally reproduce five of
+        // your words in the same order.
+        let norm: (String) -> String = { t in
+            t.lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+        }
+        let spokenNorm = norm(spoken)
+        let answerNorm = norm(answer)
+        let spokenSeq = spokenNorm.components(separatedBy: " ").filter { !$0.isEmpty }
+        if spokenSeq.count >= 5, answerNorm.count > 40 {
+            for start in 0...(spokenSeq.count - 5) {
+                let phrase = spokenSeq[start..<(start + 5)].joined(separator: " ")
+                if answerNorm.contains(phrase) { return true }
+            }
+        }
+
         let spokenWords = strip(spoken)
         // Too short to judge — a brief utterance could legitimately repeat a few words.
         guard spokenWords.count >= 6 else { return false }
