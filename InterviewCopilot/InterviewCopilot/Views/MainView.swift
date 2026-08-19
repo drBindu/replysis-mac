@@ -246,6 +246,7 @@ struct MainView: View {
                     Text(vm.sessionTimerText)
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(hex: "#cbd5e1"))
+                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                 }
                 .padding(.horizontal, 10).padding(.vertical, 7)
                 .background(Capsule().fill(Color.white.opacity(0.04)))
@@ -263,6 +264,7 @@ struct MainView: View {
                     Text(vm.creditsText)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(vm.creditsColor)
+                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                         .padding(.horizontal, 12).padding(.vertical, 7)
                         .background(Capsule().fill(Color.white.opacity(0.05)))
                         .overlay(Capsule().stroke(vm.creditsColor.opacity(0.35), lineWidth: 1))

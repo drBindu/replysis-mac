@@ -719,7 +719,12 @@ class MainViewModel {
             // The engine has a slow (~10s) cold start on the first listen after launch.
             // Tell the user it's warming up instead of showing a green mic that silently
             // drops the first words — this was the "Space does nothing at first" bug.
-            if !engine.isReady {
+            if engine.statusText == "NO ENGINE" || engine.statusText == "ENGINE ERR" {
+                // Never promise a warm-up that cannot happen. The binary is missing or
+                // failed to spawn, so nothing will ever transcribe — say so, instead of
+                // leaving "warming up" on screen forever while the user waits.
+                aiAnswerHint = "⚠ The speech engine isn't available in this build, so audio can't be transcribed.\n\nTyping a question and F9 screen analysis still work."
+            } else if !engine.isReady {
                 aiAnswerHint = "Warming up… audio will transcribe in a moment (first time after launch only)."
             }
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -982,11 +987,27 @@ class MainViewModel {
         let imageData = await captureScreen()
 
         guard let imageData = imageData, !imageData.isEmpty else {
-            // macOS already showed its OWN native Screen Recording prompt (from the
-            // SCShareableContent call). Do NOT show a second custom alert on top of it —
-            // that's the "two popups for one permission" the user hit. Just log and bail;
-            // the native prompt is enough to guide the grant.
-            dlog("Screen capture returned nil — native permission prompt already shown", tag: "SCREEN")
+            // Failing SILENTLY here is not acceptable: the user asked a question, watched
+            // nothing happen, and had no way to know why. macOS shows its own permission
+            // prompt, but that can be dismissed or already-declined, in which case every
+            // future capture fails with no visible reason at all. Say what happened and
+            // what fixes it, and turn Watch Mode off so it does not keep failing per
+            // question for the rest of the interview.
+            dlog("Screen capture returned nil — telling the user instead of failing silently", tag: "SCREEN")
+            let wasWatching = isWatchMode
+            if wasWatching {
+                isWatchMode = false
+                watchModeTimer?.invalidate(); watchModeTimer = nil
+            }
+            aiAnswer = """
+            ⚠ Screen Recording permission is needed to read your screen.
+
+            macOS blocked the capture, so there is nothing to answer from.\(wasWatching ? " Watch Screen has been switched off." : "")
+
+            To fix it: System Settings → Privacy & Security → Screen & System Audio Recording → enable Replysis, then quit and reopen the app.
+
+            Speech still works — ask by voice, or press SPACE.
+            """
             stopThinkingUI(); return
         }
 
@@ -1138,6 +1159,7 @@ class MainViewModel {
     }
 
     private var transcriptLogTick = 0
+    private var autoBlockLogTick = 0
     private func updateTranscript() {
         guard session.isLoggedIn, isListening else { return }
         if justStartedListening {
@@ -1164,6 +1186,19 @@ class MainViewModel {
         // Without this an auto mode keeps submitting turns into a dropped session: the user
         // speaks into nothing, gets no answer and no error, and it recovers silently later
         // so it can never be reproduced.
+        if autoModeEnabled {
+            // Log WHY a turn is being skipped. "Sometimes it doesn't answer" is impossible
+            // to diagnose when every rejection is silent, and these are the four states
+            // that block a submission.
+            if autoBlockLogTick % 20 == 0 {
+                if isProcessing || isScreenAnalyzing {
+                    dlog("AUTO: blocked — busy (processing=\(isProcessing) capturing=\(isScreenAnalyzing))", tag: "AUTO")
+                } else if !engine.isReady {
+                    dlog("AUTO: blocked — transcription not live (engine.isReady=false)", tag: "AUTO")
+                }
+            }
+            autoBlockLogTick += 1
+        }
         if autoModeEnabled && !isProcessing && !isScreenAnalyzing && engine.isReady {
             if autoDetector.shouldSubmit(transcript: text) {
                 autoDetector.markSubmitting(text)

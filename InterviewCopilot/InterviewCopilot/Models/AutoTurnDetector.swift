@@ -40,6 +40,7 @@ struct AutoTurnDetector {
     private(set) var lastSubmitted = ""
     private(set) var lastSubmittedAt = Date.distantPast
     private(set) var isSubmitting = false
+    private var lastRejected = ""
 
     mutating func reset() {
         lastTranscript = ""
@@ -59,8 +60,15 @@ struct AutoTurnDetector {
     mutating func shouldSubmit(transcript: String, now: Date = Date()) -> Bool {
         let question = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Growing text means they are still talking — restart the quiet clock.
-        if question.count > lastTranscript.count {
+        // ANY change means they are still talking — restart the quiet clock.
+        //
+        // This used to test `question.count > lastTranscript.count`, i.e. growth only. But
+        // a recogniser revises: "i work on a p i s" becomes "I work on APIs", which is
+        // CHANGED and SHORTER. With a growth-only test that revision was invisible, so the
+        // quiet clock kept running from an older timestamp and the turn could fire while
+        // the sentence was still being corrected — and lastTranscript stayed stuck on the
+        // longer stale text. Comparing content catches every revision, in both directions.
+        if question != lastTranscript {
             lastTranscript = question
             transcriptChangedAt = now
         }
@@ -69,7 +77,16 @@ struct AutoTurnDetector {
         guard now.timeIntervalSince(listeningStartedAt) >= Self.minimumSpeechDuration else { return false }
 
         let normalized = Self.normalize(question)
-        guard Self.isLikelyCompleteQuestion(normalized) else { return false }
+        guard Self.isLikelyCompleteQuestion(normalized) else {
+            // Only log a given rejected text once, or this fires ~7x/second.
+            if normalized != lastRejected {
+                lastRejected = normalized
+                Task { @MainActor in
+                    dlog("AUTO: waiting — not a complete question yet: '\(normalized.prefix(60))'", tag: "AUTO")
+                }
+            }
+            return false
+        }
 
         // The same question again within the window is the tail of the one just answered.
         if normalized.caseInsensitiveCompare(lastSubmitted) == .orderedSame,
