@@ -1215,10 +1215,43 @@ class MainViewModel {
     /// waiting for the transcript to stop changing, no guessing whether a pause was a
     /// breath or an ending. The only judgement left is whether what was said is worth
     /// answering, which is a question about MEANING and genuinely does belong in text.
+    /// The question we last answered, and when — so a slow speaker who pauses mid-sentence
+    /// gets their FULL question answered rather than the first half of it.
+    private var lastAnsweredQuestion = ""
+    private var lastAnsweredAt = Date.distantPast
+    /// How long after an answer a further utterance still counts as the same question.
+    private let continuationWindow: TimeInterval = 20
+
     private func handleUtteranceEnd() {
         guard autoModeEnabled, isListening, !isScreenAnalyzing, engine.isReady else { return }
-        let text = engine.readLatestTxt().trimmingCharacters(in: .whitespacesAndNewlines)
+        var text = engine.readLatestTxt().trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+
+        // CONTINUATION: silence alone cannot tell "finished" from "thinking mid-sentence".
+        // A slow speaker, or one on a laggy connection, says "what's the difference between
+        // W2 and C2C" ... pause ... "and full time" — and a pure silence trigger answers
+        // the first half. Rather than waiting longer for everyone (which makes the app feel
+        // slow for normal speakers), treat speech that arrives soon after an answer as the
+        // SAME question continuing: merge it with what was already asked and answer the
+        // whole thing, replacing the partial answer.
+        let sinceAnswer = Date().timeIntervalSince(lastAnsweredAt)
+        if !lastAnsweredQuestion.isEmpty, sinceAnswer < continuationWindow,
+           Self.looksLikeContinuation(previous: lastAnsweredQuestion, next: text) {
+            let merged = (lastAnsweredQuestion + " " + text)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            dlog("AUTO: continuation — re-answering the full question: '\(merged.prefix(70))'", tag: "AUTO")
+            text = merged
+            // Replace rather than stack: the partial answer is now wrong.
+            answerEpoch += 1
+            isProcessing = false
+            showThinking = false
+            transcript = merged
+            lastAnsweredQuestion = merged
+            lastAnsweredAt = Date()
+            autoDetector.reset()
+            submitAutomaticTurn(question: merged)
+            return
+        }
 
         // Still skip backchannel and self-corrections — "okay", "yes sir", "sorry" are
         // complete utterances acoustically, and answering them would burn a credit and
@@ -1239,13 +1272,36 @@ class MainViewModel {
             showThinking = false
         }
         dlog("AUTO: speaker finished (audio) — answering", tag: "AUTO")
+        lastAnsweredQuestion = text
+        lastAnsweredAt = Date()
         submitAutomaticTurn()
+    }
+
+    /// Is `next` a continuation of `previous` rather than a brand-new question?
+    ///
+    /// Two signals, either is enough:
+    ///   • it opens with a joining word — "and full time", "or W2", "also what about..."
+    ///   • it is a short fragment that is not itself a question — the tail of a sentence
+    ///     someone paused in the middle of
+    static func looksLikeContinuation(previous: String, next: String) -> Bool {
+        let n = next.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty else { return false }
+        let joiners = ["and ", "or ", "also ", "plus ", "but ", "as well", "along with",
+                       "versus ", "vs ", "compared to", "what about", "how about", "then "]
+        for j in joiners where n.hasPrefix(j) { return true }
+
+        let words = n.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        // A short tail that is not a question of its own is almost always the rest of the
+        // sentence the speaker paused inside.
+        if words.count <= 5 && !AutoTurnDetector.isLikelyCompleteQuestion(next) { return true }
+        return false
     }
 
     /// End the listening turn and answer, exactly as a second Space press would, but
     /// triggered by the interviewer falling silent instead of by the user's hand.
-    private func submitAutomaticTurn() {
+    private func submitAutomaticTurn(question: String? = nil) {
         guard isListening else { return }
+        let forced = question
         // DO NOT pause the engine here. Pausing made the app deaf for the whole time it
         // was answering, so anything said during that window was lost — and the person
         // asking does not stop talking just because we started thinking. Worse, when the
@@ -1259,6 +1315,11 @@ class MainViewModel {
             // arriving at the moment we decided the turn was over.
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard let self, self.autoModeEnabled else { return }
+            if let forced, !forced.isEmpty {
+                self.transcript = forced
+                self.startAI(manualQuestion: forced)
+                return
+            }
             let q = self.engine.readLatestTxt().trimmingCharacters(in: .whitespacesAndNewlines)
             if !q.isEmpty { self.transcript = q }
             self.startAI()
