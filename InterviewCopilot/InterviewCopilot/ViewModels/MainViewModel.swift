@@ -1267,6 +1267,22 @@ class MainViewModel {
             return
         }
 
+        // THE USER SPEAKING THE ANSWER IS NOT A NEW QUESTION.
+        //
+        // In Practice Auto the microphone is open by design, and the moment an answer
+        // appears the user reads it out loud — that is the entire point of the mode. The
+        // mic hears that and, without this, treats the candidate's own answer as the next
+        // question and answers its own answer. In a real interview the same thing happens
+        // when the candidate delivers the reply to the interviewer.
+        //
+        // Detected by overlap rather than timing: a cooldown would either be too short for
+        // a long answer or deafen the app to a genuine follow-up. If what was just heard is
+        // largely made of words from the answer on screen, it is the answer being spoken.
+        if Self.echoesOurAnswer(spoken: text, answer: aiAnswer) {
+            dlog("AUTO: that is our own answer being read aloud — not a question", tag: "AUTO")
+            return
+        }
+
         // Still skip backchannel and self-corrections — "okay", "yes sir", "sorry" are
         // complete utterances acoustically, and answering them would burn a credit and
         // put a pointless answer on screen mid-interview.
@@ -1289,6 +1305,29 @@ class MainViewModel {
         lastAnsweredQuestion = text
         lastAnsweredAt = Date()
         submitAutomaticTurn()
+    }
+
+    /// Is the speech we just heard the user reading our own answer back?
+    ///
+    /// Compares content words against the answer currently on screen. A genuine follow-up
+    /// question shares a few topic words with the answer; reading the answer aloud shares
+    /// most of them, so the threshold sits well above normal topical overlap.
+    static func echoesOurAnswer(spoken: String, answer: String) -> Bool {
+        let strip: (String) -> Set<String> = { text in
+            let stop: Set<String> = ["the","a","an","and","or","but","to","of","in","on","at",
+                                     "for","with","is","are","was","were","i","you","it","that",
+                                     "this","my","your","we","they","so","as","be","have","has"]
+            return Set(text.lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { $0.count > 2 && !stop.contains($0) })
+        }
+        let spokenWords = strip(spoken)
+        // Too short to judge — a brief utterance could legitimately repeat a few words.
+        guard spokenWords.count >= 6 else { return false }
+        let answerWords = strip(answer)
+        guard answerWords.count >= 10 else { return false }
+        let shared = spokenWords.intersection(answerWords).count
+        return Double(shared) / Double(spokenWords.count) >= 0.6
     }
 
     /// Is `next` a continuation of `previous` rather than a brand-new question?
