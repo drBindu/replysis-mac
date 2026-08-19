@@ -296,6 +296,10 @@ class SpeechmaticsEngine {
             // for the monitor timer — eliminates the dead-transcription window after a crash.
             Task { @MainActor [weak self] in
                 self?.isRunning = false
+                // The process is gone, so nothing is transcribing regardless of what the
+                // last STATUS line said. Without this the flag stayed true through every
+                // branch of the restart handler, including the ones that give up entirely.
+                self?.isReady = false
                 self?.checkEngine()
             }
         }
@@ -323,6 +327,15 @@ class SpeechmaticsEngine {
             // pulling audio — the moment speaking will really be transcribed.
             if line.contains("STATUS: ONLINE") || line.contains("ENGINE: READY") {
                 Task { @MainActor [weak self] in self?.isReady = true }
+            }
+            // A dropped session is NOT the same event as a crashed process, and handling
+            // only one leaves the app believing transcription still works. This is the
+            // drop; watchForExit() below is the crash.
+            if line.contains("STATUS: OFFLINE") || line.contains("EndOfTranscript") {
+                Task { @MainActor [weak self] in
+                    self?.isReady = false
+                    dlog("SM: session dropped — transcription is no longer live", tag: "SM")
+                }
             }
         }
         outHandle?.readabilityHandler = { onData($0, "stdout") }

@@ -951,7 +951,12 @@ async def main():
                 ws.add_event_handler("AddTranscript",        handle_final)
                 ws.add_event_handler("AddPartialTranscript", handle_partial)
                 ws.add_event_handler("RecognitionStarted",
-                                     lambda m: print(">>> STATUS: ONLINE", flush=True))
+                                 lambda m: print(">>> STATUS: ONLINE", flush=True))
+                # A drop must be announced too. Reporting only ONLINE means the app
+                # believes transcription is alive forever after the first connect,
+                # and keeps submitting turns into a dead session.
+                ws.add_event_handler("EndOfTranscript",
+                                 lambda m: print(">>> STATUS: OFFLINE", flush=True))
                 ws.add_event_handler("Error",
                                      lambda e: print(f">>> WS ERROR: {e}", flush=True))
 

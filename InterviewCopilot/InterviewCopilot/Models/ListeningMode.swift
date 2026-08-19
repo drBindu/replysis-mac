@@ -21,10 +21,16 @@ enum ListeningMode: String, CaseIterable, Identifiable {
     /// Does the app decide when the question ended, rather than the user pressing Space?
     var isAutomatic: Bool { self != .manual }
 
-    /// Should the microphone be captured in this mode? Interview Auto deliberately says no:
-    /// only the meeting's audio is transcribed, so nothing the candidate says is picked up
-    /// and no mic indicator appears while the interviewer is talking.
-    var usesMicrophone: Bool { self == .practiceAuto }
+    /// Should the microphone be captured in this mode?
+    ///
+    ///   Manual          mic + system  — the user drives it, and may be speaking themselves
+    ///   Interview Auto  system only   — the ONLY mode that closes the mic, on purpose: the
+    ///                                   candidate's own voice must never be transcribed and
+    ///                                   answered as though the interviewer had asked it
+    ///   Practice Auto   mic + system  — rehearsing alone, so the user's voice is the only input
+    ///
+    /// If two modes ever agree on BOTH this and isAutomatic, they are the same mode.
+    var usesMicrophone: Bool { self != .interviewAuto }
 
     var title: String {
         switch self {

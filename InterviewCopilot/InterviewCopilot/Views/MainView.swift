@@ -141,9 +141,11 @@ struct MainView: View {
                 Text("Replysis AI")
                     .font(.system(size: 15, weight: .bold))
                     .foregroundColor(.white)
+                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                 Text("INTERVIEW INTELLIGENCE")
                     .font(.system(size: 8, weight: .semibold)).tracking(1.1)
                     .foregroundColor(Color(hex: "#5b6b7f"))
+                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
             }
         }
     }
@@ -195,9 +197,19 @@ struct MainView: View {
     }
 
     var micHintText: String {
-        if vm.isListening { return "Press SPACE again to get answer" }
         if vm.micStatus == "NO MIC" { return "Tap to retry" }
-        return "Press SPACE to listen"
+        switch vm.listeningMode {
+        case .manual:
+            return vm.isListening ? "Press SPACE again to get answer" : "Press SPACE to listen"
+        case .interviewAuto:
+            // Say WHOSE voice is being heard. Mid-interview the user must be able to tell
+            // at a glance whether their own mic is open, without opening a menu.
+            return vm.isListening ? "Listening to the meeting — answers on its own"
+                                  : "Interview Auto — meeting audio only"
+        case .practiceAuto:
+            return vm.isListening ? "Listening to you — answers on its own"
+                                  : "Practice Auto — ask out loud"
+        }
     }
     var micHintColor: Color {
         if vm.isListening { return Color(hex: "#4ade80") }

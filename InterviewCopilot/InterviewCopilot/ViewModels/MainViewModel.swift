@@ -736,15 +736,58 @@ class MainViewModel {
             engine.writePauseFlag()
             isMuted = true
             updateMicUI()
-            // BUG-9 FIX: brief drain window — lets the Speechmatics SDK flush any audio
-            // buffered before the pause flag landed, so the final transcript snapshot
-            // the polling timer captures is complete before we hand it to AI.
             Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 150_000_000)  // 150ms
-                guard let self, self.isMuted, !self.isListening else { return }
-                self.startAI()
+                await self?.flushTranscriptThenAnswer()
             }
         }
+    }
+
+    /// Wait for the TAIL of the sentence, then answer.
+    ///
+    /// Speech recognition runs behind live speech, so at the moment the user stops the
+    /// last words they said are still arriving. Sending immediately sends a truncated
+    /// question. A FIXED delay is the wrong fix in both directions: too short and it cuts
+    /// the question, too long and the user waits for nothing — and that wait is felt
+    /// directly, because it happens before the request is even sent, while the model
+    /// itself answers in about 0.15s.
+    ///
+    /// So this watches the transcript instead of guessing:
+    ///   • poll every 20ms
+    ///   • when it has stopped GROWING for 100ms, the utterance has landed — send it
+    ///   • if nothing was ever transcribed, give up after 400ms and say so, rather than
+    ///     waiting out a long cap for a sentence that was never spoken
+    private func flushTranscriptThenAnswer() async {
+        let pollNs: UInt64 = 20_000_000          // 20ms
+        let stableTicksNeeded = 5                // 5 x 20ms = 100ms of no growth
+        let emptyTicksNeeded  = 20               // 20 x 20ms = 400ms of nothing at all
+        let maxTicks = 64                        // hard ceiling, same ~1.28s worst case
+
+        var question = engine.readLatestTxt().trimmingCharacters(in: .whitespacesAndNewlines)
+        var stable = 0
+        var empty = 0
+
+        for _ in 0..<maxTicks {
+            try? await Task.sleep(nanoseconds: pollNs)
+            // The user pressed Space again during the flush — a fresh listening turn has
+            // taken over and this one must not also fire.
+            guard isMuted, !isListening else {
+                dlog("FLUSH: interrupted — a new turn took over", tag: "SPACE")
+                return
+            }
+            let t = engine.readLatestTxt().trimmingCharacters(in: .whitespacesAndNewlines)
+            if t.count > question.count {
+                question = t; stable = 0; empty = 0
+            } else if !question.isEmpty {
+                stable += 1
+                if stable >= stableTicksNeeded { break }
+            } else {
+                empty += 1
+                if empty >= emptyTicksNeeded { break }
+            }
+        }
+
+        if !question.isEmpty { transcript = question }
+        startAI()
     }
 
     // MARK: - AI
@@ -1117,7 +1160,11 @@ class MainViewModel {
         }
         // AUTO MODE: the same polled text that drives the on-screen transcript also tells
         // us when the interviewer stopped talking. No extra timer, no extra file read.
-        if autoModeEnabled && !isProcessing && !isScreenAnalyzing {
+        // engine.isReady is the ONLY honest signal that transcription is genuinely live.
+        // Without this an auto mode keeps submitting turns into a dropped session: the user
+        // speaks into nothing, gets no answer and no error, and it recovers silently later
+        // so it can never be reproduced.
+        if autoModeEnabled && !isProcessing && !isScreenAnalyzing && engine.isReady {
             if autoDetector.shouldSubmit(transcript: text) {
                 autoDetector.markSubmitting(text)
                 dlog("AUTO: turn complete — answering without a keypress", tag: "AUTO")
@@ -1149,6 +1196,12 @@ class MainViewModel {
         guard autoModeEnabled, session.isLoggedIn, !isProcessing else { return }
         guard engine.isRunning else {
             dlog("AUTO: engine not running — cannot arm", tag: "AUTO")
+            return
+        }
+        // Also never re-arm mid-answer or mid-capture. Windows had a latch bug exactly
+        // here that stopped auto mode permanently for the rest of the interview.
+        guard !isScreenAnalyzing, !showThinking else {
+            dlog("AUTO: busy (answering/capturing) — not arming yet", tag: "AUTO")
             return
         }
         guard !isListening else { return }   // already listening; nothing to re-arm
