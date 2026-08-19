@@ -1279,7 +1279,18 @@ class MainViewModel {
         // a long answer or deafen the app to a genuine follow-up. If what was just heard is
         // largely made of words from the answer on screen, it is the answer being spoken.
         if Self.echoesOurAnswer(spoken: text, answer: aiAnswer) {
-            dlog("AUTO: that is our own answer being read aloud — not a question", tag: "AUTO")
+            dlog("AUTO: our own answer being read aloud — discarding it", tag: "AUTO")
+            // DISCARD it rather than just ignoring it. The transcript accumulates, so an
+            // echo left in place gets glued to the next real question — "…learn more about
+            // the role. Okay. So tell me about yourself." — and the combined text still
+            // looks mostly like the answer, so the genuine question is thrown out with it.
+            // Clearing here means the next thing said stands on its own.
+            transcript = ""
+            autoDetector.reset()
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                self?.engine.clearLatestTxt()
+                self?.engine.writeResetFlag()
+            }
             return
         }
 
