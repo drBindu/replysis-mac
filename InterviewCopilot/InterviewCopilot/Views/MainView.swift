@@ -104,12 +104,15 @@ struct MainView: View {
         // never guaranteed to hold anyway) for a layout that's simply never broken.
         HStack(spacing: 0) {
             brandView
-                .layoutPriority(1)
-            Spacer(minLength: 16)
+                .layoutPriority(2)
+            Spacer(minLength: 12)
             micControl
-            Spacer(minLength: 16)
+                .layoutPriority(1)
+            Spacer(minLength: 12)
             rightCluster
-                .layoutPriority(1)   // PREMIUM FIX: never let the mic pill's growth (its hint
+                .layoutPriority(3)   // the controls are fixed-size now, so give them the
+                // strongest claim: if anything must give up width it should be the mic
+                // pill's hint text, never a button label breaking across three lines.   // PREMIUM FIX: never let the mic pill's growth (its hint
                 // text is much longer while LISTENING — "Press SPACE again to get answer" vs
                 // "Press SPACE to listen") squeeze rightCluster below its natural size. Without
                 // this, an HStack with only minimum gaps shares the shortfall across ALL
@@ -208,34 +211,11 @@ struct MainView: View {
 
     // ── Right cluster: interview actions + profile + window ────────
     var rightCluster: some View {
-        HStack(spacing: 8) {
-            // Primary interview action — Screen Analyze
-            Button(action: { vm.runScreenAnalysis() }) {
-                HStack(spacing: 6) {
-                    if vm.isScreenAnalyzing {
-                        ProgressView().scaleEffect(0.5).frame(width: 13, height: 13)
-                    } else {
-                        Image(systemName: "viewfinder").font(.system(size: 12, weight: .semibold))
-                    }
-                    Text(vm.isScreenAnalyzing ? "Analyzing…" : "Analyze")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("F9")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(Color(hex: "#7dd3fc"))
-                        .padding(.horizontal, 4).padding(.vertical, 1)
-                        .background(Color(hex: "#0c2a40"))
-                        .cornerRadius(4)
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(
-                    Capsule().fill(LinearGradient(
-                        colors: [Color(hex: "#0e4c7c"), Color(hex: "#0a3a5e")],
-                        startPoint: .top, endPoint: .bottom)))
-                .overlay(Capsule().stroke(Color(hex: "#1e90d8").opacity(0.4), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .help("Analyze your screen with AI (F9)")
+        HStack(spacing: 10) {
+            // No Analyze button: it duplicated what F8/F9 already do, and the footer
+            // names both. Watch Screen is the control worth toolbar space, because it is
+            // the one set once before the call and then never touched — reaching for a
+            // menu mid-interview is exactly what this product exists to avoid.
 
             // Eye Mode · Pin · Stealth — one premium segmented glass pill instead of three
             // separately-bordered floating buttons, so the header reads as a few clean
@@ -326,6 +306,7 @@ struct MainView: View {
                     .frame(width: 7, height: 7)
                 Text(vm.listeningMode.pillLabel)
                     .font(.system(size: 11, weight: .bold)).tracking(0.6)
+                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                     .foregroundColor(vm.listeningMode.isAutomatic ? Color(hex: "#B8F5D3") : Color(hex: "#cbd5e1"))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))
@@ -425,10 +406,17 @@ struct MainView: View {
         HStack(spacing: 0) {
             Button(action: { vm.toggleWatchMode() }) {
                 HStack(spacing: 7) {
-                    Image(systemName: "display")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("WATCH SCREEN")
+                    if vm.isScreenAnalyzing {
+                        // The Analyze button used to carry this spinner. Without it here,
+                        // a running capture would have no visible indicator at all.
+                        ProgressView().scaleEffect(0.45).frame(width: 12, height: 12)
+                    } else {
+                        Image(systemName: "display")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    Text(vm.isScreenAnalyzing ? "READING SCREEN" : "WATCH SCREEN")
                         .font(.system(size: 11, weight: .bold)).tracking(0.5)
+                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                 }
                 .foregroundColor(vm.isWatchMode ? Color(hex: "#fbbf24") : Color(hex: "#cbd5e1"))
                 .padding(.horizontal, 13).padding(.vertical, 9)
@@ -443,10 +431,11 @@ struct MainView: View {
 
             Button(action: { vm.toggleCamera() }) {
                 HStack(spacing: 7) {
-                    Image(systemName: "rectangle.compress.vertical")
+                    Image(systemName: vm.showCameraOverlay ? "eye.fill" : "eye")
                         .font(.system(size: 12, weight: .semibold))
                     Text("COMPACT")
                         .font(.system(size: 11, weight: .bold)).tracking(0.5)
+                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                 }
                 .foregroundColor(vm.showCameraOverlay ? Color(hex: "#38bdf8") : Color(hex: "#cbd5e1"))
                 .padding(.horizontal, 13).padding(.vertical, 9)
@@ -1209,22 +1198,19 @@ struct MainView: View {
     // moved to Settings (default ON) — it's a set-once preference, not a mid-interview
     // toggle, so it no longer needs header real estate.
     var toolSegmentGroup: some View {
-        HStack(spacing: 0) {
-            segmentButton(icon: "eye.fill", active: vm.showCameraOverlay,
-                          activeColor: Color(hex: "#38bdf8"),
-                          help: "Toggle Eye Mode — compact answer overlay") {
-                vm.toggleCamera()
-            }
-            segmentDivider
-            segmentButton(icon: vm.isPinnedOnTop ? "pin.fill" : "pin",
-                          active: vm.isPinnedOnTop,
-                          activeColor: Color(hex: "#38bdf8"),
-                          help: "Pin on top — keep the window floating above other apps") {
-                vm.togglePin()
-            }
+        // Only Pin lives here now. The eye icon called vm.toggleCamera() — the exact same
+        // action as the COMPACT button — so the toolbar carried two different-looking
+        // controls that did one thing. Pin has no Windows equivalent but is genuinely
+        // needed on macOS, where a normal window falls behind the meeting app.
+        segmentButton(icon: vm.isPinnedOnTop ? "pin.fill" : "pin",
+                      active: vm.isPinnedOnTop,
+                      activeColor: Color(hex: "#38bdf8"),
+                      help: "Pin on top — keep the window above other apps") {
+            vm.togglePin()
         }
         .background(Capsule().fill(Color.white.opacity(0.035)))
         .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
+        .clipShape(Capsule())
     }
 
     private var segmentDivider: some View {
