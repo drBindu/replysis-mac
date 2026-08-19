@@ -20,12 +20,16 @@ import Foundation
 
 struct AutoTurnDetector {
 
-    /// Quiet required after a sentence that already ended in ? . or ! — punctuation is
-    /// itself strong evidence the thought finished, so little extra waiting is justified.
+    /// Quiet required after a QUESTION MARK. Only "?" earns the fast path: it is the one
+    /// mark that means the recogniser heard a complete interrogative.
     static let punctuatedSilence: TimeInterval = 0.38
-    /// Quiet required after a trailing-off pause with no closing punctuation, where the
-    /// speaker may simply be mid-thought.
-    static let naturalSilence: TimeInterval = 0.82
+    /// Quiet required otherwise — including after "." and "!".
+    ///
+    /// A full stop deliberately does NOT get the fast path here. This recogniser emits
+    /// periods MID-SENTENCE constantly ("C2C c two. C or w two or full time . Tell me ."),
+    /// so treating every "." as a finished thought fired an answer partway through the
+    /// question, every time, and the user watched it answer a fragment.
+    static let naturalSilence: TimeInterval = 1.0
     /// Ignore bursts shorter than this — a click or a cough is not a question.
     static let minimumSpeechDuration: TimeInterval = 0.5
     static let minimumCharacters = 4
@@ -94,9 +98,21 @@ struct AutoTurnDetector {
             return false
         }
 
-        let last = normalized.last
-        let punctuated = (last == "?" || last == "." || last == "!")
-        let required = punctuated ? Self.punctuatedSilence : Self.naturalSilence
+        // "…c two c or" / "…and" / "…between" — the speaker is plainly mid-sentence, no
+        // matter how long the pause. Never answer a dangling clause.
+        let danglers: Set<String> = ["or", "and", "but", "the", "a", "an", "to", "for",
+                                     "with", "of", "in", "on", "at", "is", "are", "was",
+                                     "between", "about", "like", "than", "that", "if",
+                                     "what", "how", "when", "so"]
+        let tailWords = normalized.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+        if let lastWord = tailWords.last, danglers.contains(lastWord), !normalized.hasSuffix("?") {
+            return false
+        }
+
+        // Only a question mark earns the fast path — see the threshold comments.
+        let required = normalized.hasSuffix("?") ? Self.punctuatedSilence : Self.naturalSilence
         return now.timeIntervalSince(transcriptChangedAt) >= required
     }
 
