@@ -72,7 +72,10 @@ class MainViewModel {
     /// Auto Mode: the app decides when the interviewer finished asking and answers with
     /// nothing pressed. This is the difference between using the product in a real
     /// interview and visibly operating it while someone watches.
-    var autoModeEnabled = false
+    var listeningMode: ListeningMode = .manual
+    /// Convenience for the many existing gates that only care whether the app is deciding
+    /// turn-ends on its own.
+    var autoModeEnabled: Bool { listeningMode.isAutomatic }
     private var autoDetector = AutoTurnDetector()
     var useGroq = true
 
@@ -1580,7 +1583,8 @@ class MainViewModel {
             // of the box. Users who want to stay fully invisible in a real interview can
             // switch to system-audio-only in Settings.
             micCaptureEnabled = obj["micCaptureEnabled"] as? Bool ?? true
-            autoModeEnabled = obj["autoModeEnabled"] as? Bool ?? false
+            listeningMode = ListeningMode(rawValue: obj["listeningMode"] as? String ?? "")
+                ?? ((obj["autoModeEnabled"] as? Bool ?? false) ? .interviewAuto : .manual)
             // Default ON: hidden from screen sharing/recording out of the box. Settings
             // can turn it off for anyone who wants the window visible in a recording.
             stealthModeEnabled = obj["stealthModeEnabled"] as? Bool ?? true
@@ -1605,7 +1609,7 @@ class MainViewModel {
         let obj: [String: Any] = ["useGroq": useGroq, "mainOpacity": mainWindowOpacity,
                                   "overlayOpacity": overlayOpacity, "concise": conciseAnswers,
                                   "micCaptureEnabled": micCaptureEnabled,
-                                  "autoModeEnabled": autoModeEnabled,
+                                  "listeningMode": listeningMode.rawValue,
                                   "stealthModeEnabled": stealthModeEnabled,
                                   "opacityDefaultV2Applied": true]
         try? JSONSerialization.data(withJSONObject: obj).write(to: path)
@@ -1660,41 +1664,56 @@ class MainViewModel {
     /// Turn Auto Mode on or off. When switched on mid-session it starts listening straight
     /// away, so the very next thing the interviewer says is already being heard — waiting
     /// for the user to also press Space would defeat the entire point.
-    func setAutoModeEnabled(_ enabled: Bool) {
-        guard autoModeEnabled != enabled else { return }
-        autoModeEnabled = enabled
+    /// Switch how questions start. Applies immediately: Interview Auto and Practice Auto
+    /// begin listening straight away, because waiting for the user to ALSO press Space
+    /// would defeat the entire point of an automatic mode.
+    func setListeningMode(_ mode: ListeningMode) {
+        guard listeningMode != mode else { return }
+        let previous = listeningMode
+        listeningMode = mode
         saveSettings()
-        dlog("Auto mode \(enabled ? "ON" : "OFF")", tag: "AUTO")
-        if enabled {
-            autoDetector.reset()
-            // Turning Auto on has to actually START it, including the things Space would
-            // have done on the user's behalf. It used to just call rearm, which silently
-            // returned if the user was signed out or the engine was not up — so the pill
-            // lit up, the mic stayed muted, and nothing said why.
-            guard session.isLoggedIn else {
-                dlog("AUTO: not signed in — prompting sign-in", tag: "AUTO")
-                NotificationCenter.default.post(name: .showLogin, object: nil)
+        dlog("Listening mode: \(previous.rawValue) -> \(mode.rawValue)", tag: "AUTO")
+
+        // The mic is the real difference between the two automatic modes, and the engine
+        // decides mic capture at start time — so a mode change that flips it needs the
+        // engine restarted, not just a flag set.
+        if previous.usesMicrophone != mode.usesMicrophone {
+            setMicCaptureEnabled(mode.usesMicrophone)
+        }
+
+        guard mode.isAutomatic else {
+            // Back to manual: stop listening rather than leaving the mic silently open.
+            if isListening {
+                isListening = false; isMuted = true
+                engine.writePauseFlag()
+                updateMicUI()
+            }
+            return
+        }
+
+        autoDetector.reset()
+        // Starting an automatic mode has to actually START it, including what Space would
+        // have done on the user's behalf. Failing silently here is what made the pill light
+        // up while the mic stayed exactly as it was.
+        guard session.isLoggedIn else {
+            dlog("AUTO: not signed in — prompting sign-in", tag: "AUTO")
+            NotificationCenter.default.post(name: .showLogin, object: nil)
+            return
+        }
+        if !engine.isRunning {
+            let key = session.speechmaticsKey
+            guard !key.isEmpty else {
+                micStatus = "NO MIC"; micColor = Color(white: 0.42)
+                aiAnswer = "⚠ Automatic listening needs the speech service, which isn't available right now.\n\nRetrying automatically — or click the NO MIC badge."
+                engine.startRetryTimer()
                 return
             }
-            if !engine.isRunning {
-                let key = session.speechmaticsKey
-                guard !key.isEmpty else {
-                    micStatus = "NO MIC"; micColor = Color(white: 0.42)
-                    aiAnswer = "⚠ Auto mode needs the speech service, which isn't available right now.\n\nRetrying automatically — or click the NO MIC badge."
-                    engine.startRetryTimer()
-                    return
-                }
-                dlog("AUTO: starting engine before arming", tag: "AUTO")
-                engine.start(smKey: key)
-            }
-            aiAnswerHint = "Auto mode on — just let the interviewer talk. The answer appears when they finish."
-            rearmAutoModeIfNeeded()
-        } else if isListening {
-            // Switching off should stop the mic, not leave it silently open.
-            isListening = false; isMuted = true
-            engine.writePauseFlag()
-            updateMicUI()
+            engine.start(smKey: key)
         }
+        aiAnswerHint = mode == .interviewAuto
+            ? "Interview Auto — let the interviewer talk. The answer appears when they finish."
+            : "Practice Auto — just ask out loud. The answer appears when you finish."
+        rearmAutoModeIfNeeded()
     }
 
     // MARK: - Stealth Mode (Settings toggle)

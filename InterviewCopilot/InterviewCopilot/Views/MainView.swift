@@ -12,6 +12,7 @@ struct MainView: View {
     @State private var showDebugLog    = false
     @State private var showProfileMenu = false
     @State private var showCreditsPopover = false
+    @State private var showListeningModes = false
     @State private var resumeSaveTimer: Timer?
     @State private var resumeOpen = true   // false = collapsed to a compact "loaded" card
     @State private var showResumeLibrary = false
@@ -134,12 +135,12 @@ struct MainView: View {
                     .foregroundColor(Color(hex: "#38bdf8"))
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text("Replysis")
-                    .font(.system(size: 14, weight: .bold))
+                Text("Replysis AI")
+                    .font(.system(size: 15, weight: .bold))
                     .foregroundColor(.white)
-                Text("replysis.com")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(Color(hex: "#3d4d5f"))
+                Text("INTERVIEW INTELLIGENCE")
+                    .font(.system(size: 8, weight: .semibold)).tracking(1.1)
+                    .foregroundColor(Color(hex: "#5b6b7f"))
             }
         }
     }
@@ -240,29 +241,9 @@ struct MainView: View {
             // separately-bordered floating buttons, so the header reads as a few clean
             // groups (Analyze / view toggles / status / account) rather than a row of
             // many individual chips.
-            autoModePill
+            listeningModePill
 
-            // Watch Mode — for when the INTERVIEWER is sharing their screen. Turned on
-            // once when sharing starts; every question from then on is answered from what
-            // is visible. This had no control at all before, so the feature existed in the
-            // code and was unreachable from the UI.
-            Button(action: { vm.toggleWatchMode() }) {
-                HStack(spacing: 5) {
-                    Image(systemName: vm.isWatchMode ? "eye.circle.fill" : "eye.circle")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Watch")
-                        .font(.system(size: 12, weight: .semibold))
-                }
-                .foregroundColor(vm.isWatchMode ? Color(hex: "#fbbf24") : Color(hex: "#94A3B8"))
-                .padding(.horizontal, 11).padding(.vertical, 8)
-                .background(Capsule().fill(vm.isWatchMode ? Color(hex: "#241a06") : Color.white.opacity(0.04)))
-                .overlay(Capsule().stroke(
-                    vm.isWatchMode ? Color(hex: "#fbbf24").opacity(0.5) : Color.white.opacity(0.08), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .help(vm.isWatchMode
-                  ? "Watch ON — every question is answered from the shared screen. Click to stop."
-                  : "Watch — turn on when the interviewer shares their screen")
+            watchAndCompactGroup
 
             toolSegmentGroup
 
@@ -333,29 +314,150 @@ struct MainView: View {
         }
     }
 
-    // ── Auto Mode pill ─────────────────────────────────────────────
-    // The single most important control in a live interview, so it gets a labelled pill
-    // rather than another anonymous icon: the user must be able to see AT A GLANCE whether
-    // the app is going to answer on its own, without opening a menu to check.
-    var autoModePill: some View {
-        Button(action: { vm.setAutoModeEnabled(!vm.autoModeEnabled) }) {
-            HStack(spacing: 6) {
+    // ── Listening-mode pill + popover ──────────────────────────────
+    // The single most important control in a live interview, so it is labelled rather than
+    // an anonymous icon: whether the app will answer on its own, and whether the candidate's
+    // own microphone is open, must both be readable at a glance without opening anything.
+    var listeningModePill: some View {
+        Button(action: { showListeningModes.toggle() }) {
+            HStack(spacing: 7) {
                 Circle()
-                    .fill(vm.autoModeEnabled ? Color(hex: "#34E08A") : Color(hex: "#4b5563"))
+                    .fill(vm.listeningMode.isAutomatic ? Color(hex: "#34E08A") : Color(hex: "#6b7280"))
                     .frame(width: 7, height: 7)
-                Text(vm.autoModeEnabled ? "AUTO" : "MANUAL")
-                    .font(.system(size: 11, weight: .bold)).tracking(0.5)
-                    .foregroundColor(vm.autoModeEnabled ? Color(hex: "#B8F5D3") : Color(hex: "#94A3B8"))
+                Text(vm.listeningMode.pillLabel)
+                    .font(.system(size: 11, weight: .bold)).tracking(0.6)
+                    .foregroundColor(vm.listeningMode.isAutomatic ? Color(hex: "#B8F5D3") : Color(hex: "#cbd5e1"))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(Color(hex: "#64748b"))
             }
-            .padding(.horizontal, 11).padding(.vertical, 8)
-            .background(Capsule().fill(vm.autoModeEnabled ? Color(hex: "#102A1D") : Color.white.opacity(0.04)))
+            .padding(.horizontal, 13).padding(.vertical, 9)
+            .background(Capsule().fill(vm.listeningMode.isAutomatic ? Color(hex: "#102A1D") : Color(hex: "#161b22")))
             .overlay(Capsule().stroke(
-                vm.autoModeEnabled ? Color(hex: "#2C7B50") : Color.white.opacity(0.08), lineWidth: 1))
+                vm.listeningMode.isAutomatic ? Color(hex: "#2C7B50") : Color.white.opacity(0.12), lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .help(vm.autoModeEnabled
-              ? "Auto: answers appear on their own when the interviewer stops talking. Click for manual."
-              : "Manual: press SPACE to listen and answer. Click for automatic.")
+        .help("How each question starts")
+        .popover(isPresented: $showListeningModes, arrowEdge: .bottom) {
+            listeningModeMenu
+        }
+    }
+
+    var listeningModeMenu: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("LISTENING MODE")
+                        .font(.system(size: 10, weight: .bold)).tracking(1.1)
+                        .foregroundColor(Color(hex: "#64748b"))
+                    Text("Choose how each question starts")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white)
+                }
+                Spacer(minLength: 12)
+                Image(systemName: "person.crop.square")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color(hex: "#64748b"))
+                    .frame(width: 30, height: 30)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.05)))
+            }
+            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
+
+            Rectangle().fill(Color.white.opacity(0.07)).frame(height: 1)
+                .padding(.horizontal, 16)
+
+            VStack(spacing: 6) {
+                ForEach(ListeningMode.allCases) { mode in
+                    listeningModeRow(mode)
+                }
+            }
+            .padding(12)
+        }
+        .frame(width: 420)
+        .background(Color(hex: "#0b1220"))
+    }
+
+    func listeningModeRow(_ mode: ListeningMode) -> some View {
+        let selected = vm.listeningMode == mode
+        let accent: Color = mode == .interviewAuto ? Color(hex: "#34E08A") : Color(hex: "#38bdf8")
+        return Button(action: {
+            vm.setListeningMode(mode)
+            showListeningModes = false
+        }) {
+            HStack(spacing: 13) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(accent.opacity(selected ? 0.20 : 0.12))
+                        .frame(width: 40, height: 40)
+                    Image(systemName: mode.icon)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(accent)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(mode.title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
+                    Text(mode.subtitle)
+                        .font(.system(size: 11))
+                        .foregroundColor(Color(hex: "#8b9bb0"))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(Color(hex: "#38bdf8"))
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 11)
+                .fill(selected ? Color(hex: "#12283f") : Color.clear))
+            .overlay(RoundedRectangle(cornerRadius: 11)
+                .stroke(selected ? Color(hex: "#2b6ea8") : Color.clear, lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // ── WATCH SCREEN | COMPACT — one grouped pill, as on Windows ──
+    var watchAndCompactGroup: some View {
+        HStack(spacing: 0) {
+            Button(action: { vm.toggleWatchMode() }) {
+                HStack(spacing: 7) {
+                    Image(systemName: "display")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("WATCH SCREEN")
+                        .font(.system(size: 11, weight: .bold)).tracking(0.5)
+                }
+                .foregroundColor(vm.isWatchMode ? Color(hex: "#fbbf24") : Color(hex: "#cbd5e1"))
+                .padding(.horizontal, 13).padding(.vertical, 9)
+                .background(vm.isWatchMode ? Color(hex: "#241a06") : Color.clear)
+            }
+            .buttonStyle(.plain)
+            .help(vm.isWatchMode
+                  ? "Watch Screen ON — every question is answered from the shared screen."
+                  : "Turn on when the interviewer shares their screen")
+
+            Rectangle().fill(Color.white.opacity(0.10)).frame(width: 1, height: 20)
+
+            Button(action: { vm.toggleCamera() }) {
+                HStack(spacing: 7) {
+                    Image(systemName: "rectangle.compress.vertical")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("COMPACT")
+                        .font(.system(size: 11, weight: .bold)).tracking(0.5)
+                }
+                .foregroundColor(vm.showCameraOverlay ? Color(hex: "#38bdf8") : Color(hex: "#cbd5e1"))
+                .padding(.horizontal, 13).padding(.vertical, 9)
+                .background(vm.showCameraOverlay ? Color(hex: "#0c2540") : Color.clear)
+            }
+            .buttonStyle(.plain)
+            .help("Compact overlay — a small bar instead of the full window")
+        }
+        .background(Capsule().fill(Color.white.opacity(0.04)))
+        .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 1))
+        .clipShape(Capsule())
     }
 
     // ── Profile button + dropdown popover ──────────────────────────
@@ -1023,9 +1125,9 @@ struct MainView: View {
                     Spacer()
 
                     HStack(spacing: 6) {
-                        hotKeyBadge("SPACE · listen → answer", color: "#38BDF8", bg: "#0D1B2E")
-                        hotKeyBadge("F8 / F9 · analyze screen", color: "#4ade80", bg: "#0D2E0D")
-                        hotKeyBadge("F12 · debug", color: "#a78bfa", bg: "#1a0f2e")
+                        hotKeyBadge("F8  this screen", color: "#4ade80", bg: "#0D2E0D")
+                        hotKeyBadge("F9  main screen", color: "#4ade80", bg: "#0D2E0D")
+                        hotKeyBadge("SPACE  listen / answer", color: "#38BDF8", bg: "#0D1B2E")
                     }
                 }
                 .padding(.bottom, 8)
