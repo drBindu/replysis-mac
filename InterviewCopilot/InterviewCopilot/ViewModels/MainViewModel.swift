@@ -1257,7 +1257,22 @@ class MainViewModel {
             dlog("AUTO: busy (answering/capturing) — not arming yet", tag: "AUTO")
             return
         }
-        guard !isListening else { return }   // already listening; nothing to re-arm
+        // THE LATCH: the detector holds isSubmitting until it is reset, and since the mic
+        // now stays OPEN while answering, isListening is still true when we get here. The
+        // old early-return skipped reset() entirely, so isSubmitting stayed true forever
+        // and not one further question could ever fire — the exact failure this guard was
+        // meant to prevent. Clearing the detector is required on BOTH paths; only the
+        // engine plumbing below is conditional on actually being muted.
+        if isListening {
+            autoDetector.reset()
+            transcript = ""
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                self?.engine.clearLatestTxt()
+                self?.engine.writeResetFlag()
+            }
+            dlog("AUTO: ready for the next question (mic stayed open)", tag: "AUTO")
+            return
+        }
         dlog("AUTO: re-arming for the next question", tag: "AUTO")
         isMuted = false; isListening = true
         justStartedListening = true; listenStartTicks = 0
