@@ -237,8 +237,14 @@ struct MainView: View {
 
             watchAndCompactGroup
 
+            // Pin joins the view-toggle group visually instead of floating alone.
             toolSegmentGroup
 
+            headerSeparator
+
+            // Status cluster: session time and credits read as one unit, because they are
+            // both "how the session is going" rather than controls.
+            HStack(spacing: 8) {
             // Session timer (live)
             if vm.sessionTimerVisible {
                 HStack(spacing: 5) {
@@ -279,8 +285,9 @@ struct MainView: View {
                 }
             }
 
-            Rectangle().fill(Color.white.opacity(0.08)).frame(width: 1, height: 22)
-                .padding(.horizontal, 2)
+            }
+
+            headerSeparator
 
             // Profile / account  → opens rich dropdown
             if vm.showProfile {
@@ -306,6 +313,14 @@ struct MainView: View {
             }
             .padding(.leading, 2)
         }
+    }
+
+    /// One hairline used between header groups, so the spacing reads as deliberate
+    /// grouping rather than an accidental gap.
+    var headerSeparator: some View {
+        Rectangle().fill(Color.white.opacity(0.10))
+            .frame(width: 1, height: 24)
+            .padding(.horizontal, 2)
     }
 
     // ── Listening-mode pill + popover ──────────────────────────────

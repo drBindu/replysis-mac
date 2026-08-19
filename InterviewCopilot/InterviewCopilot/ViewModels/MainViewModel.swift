@@ -21,6 +21,17 @@ class MainViewModel {
     var aiAnswer = ""
     var transcript = ""
     var aiAnswerHint = "Ready. Press SPACE to start listening, then SPACE again to get your answer."
+
+    /// The idle prompt must match the ACTIVE mode. It was hardcoded to the manual
+    /// instructions, so Practice Auto told the user to press SPACE — advice that is simply
+    /// wrong there, and undermines trust in a mode whose entire promise is pressing nothing.
+    var idleHintForCurrentMode: String {
+        switch listeningMode {
+        case .manual:        return "Ready. Press SPACE to start listening, then SPACE again to get your answer."
+        case .interviewAuto: return "Interview Auto — let the interviewer talk. The answer appears when they finish."
+        case .practiceAuto:  return "Practice Auto — just ask out loud. The answer appears when you finish."
+        }
+    }
     var showThinking = false
     var thinkingText = "Thinking..."
     var resumeText = ""
@@ -1956,7 +1967,7 @@ class MainViewModel {
         resumeLocked = false
         answerEpoch += 1   // invalidate any in-flight stream so it can't re-populate
         transcript = ""; aiAnswer = ""; answerIsBehavioral = false
-        aiAnswerHint = "Ready. Press SPACE to start listening, then SPACE again to get your answer."
+        aiAnswerHint = idleHintForCurrentMode
         PromptBuilder.shared.clearHistory()
         engine.clearLatestTxt()
         stopThinkingUI()
