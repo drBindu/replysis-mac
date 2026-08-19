@@ -1161,7 +1161,9 @@ class MainViewModel {
     private var transcriptLogTick = 0
     private var autoBlockLogTick = 0
     private func updateTranscript() {
-        guard session.isLoggedIn, isListening else { return }
+        // Keep reading the transcript even while an answer is streaming: in an automatic
+        // mode the app stays open, and a question that continues must still be seen.
+        guard session.isLoggedIn, isListening || (autoModeEnabled && isProcessing) else { return }
         if justStartedListening {
             listenStartTicks += 1; transcript = ""
             if listenStartTicks >= suppressTickCount {
@@ -1199,8 +1201,18 @@ class MainViewModel {
             }
             autoBlockLogTick += 1
         }
-        if autoModeEnabled && !isProcessing && !isScreenAnalyzing && engine.isReady {
+        if autoModeEnabled && !isScreenAnalyzing && engine.isReady {
             if autoDetector.shouldSubmit(transcript: text) {
+                if isProcessing {
+                    // The question kept going after we started answering. The answer in
+                    // flight was built from a fragment, so it is now wrong — throw it away
+                    // and answer what was ACTUALLY asked. Bumping the epoch makes the old
+                    // stream's callbacks no-ops.
+                    dlog("AUTO: more of the question arrived — replacing the in-flight answer", tag: "AUTO")
+                    answerEpoch += 1
+                    isProcessing = false
+                    showThinking = false
+                }
                 autoDetector.markSubmitting(text)
                 dlog("AUTO: turn complete — answering without a keypress", tag: "AUTO")
                 submitAutomaticTurn()
@@ -1211,16 +1223,22 @@ class MainViewModel {
     /// End the listening turn and answer, exactly as a second Space press would, but
     /// triggered by the interviewer falling silent instead of by the user's hand.
     private func submitAutomaticTurn() {
-        guard isListening, !isProcessing else { return }
-        isListening = false
-        engine.writePauseFlag()
-        isMuted = true
-        updateMicUI()
+        guard isListening else { return }
+        // DO NOT pause the engine here. Pausing made the app deaf for the whole time it
+        // was answering, so anything said during that window was lost — and the person
+        // asking does not stop talking just because we started thinking. Worse, when the
+        // turn fired early on a fragment, the REST of the real question landed in that
+        // deaf window and could never be recovered.
+        //
+        // Staying open is also what makes firing early safe: if more of the question
+        // arrives, it forms a new turn and supersedes this answer (see updateTranscript).
         Task { @MainActor [weak self] in
-            // Same drain window the manual path uses: Speechmatics runs behind live
-            // speech, so the tail of the sentence is still in flight when it goes quiet.
+            // Brief drain: recognition runs behind live speech, so the tail is still
+            // arriving at the moment we decided the turn was over.
             try? await Task.sleep(nanoseconds: 150_000_000)
-            guard let self, self.isMuted, !self.isListening else { return }
+            guard let self, self.autoModeEnabled else { return }
+            let q = self.engine.readLatestTxt().trimmingCharacters(in: .whitespacesAndNewlines)
+            if !q.isEmpty { self.transcript = q }
             self.startAI()
         }
     }

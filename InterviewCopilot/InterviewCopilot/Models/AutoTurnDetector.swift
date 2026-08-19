@@ -124,6 +124,17 @@ struct AutoTurnDetector {
                                         "mhm", "uh huh", "got it", "sure", "correct"]
         if backchannel.contains(normalized) { return false }
 
+        // A speaker correcting or restarting themselves is mid-thought, never finished.
+        // Recognisers add a "?" on rising intonation, so "no, no I am asking?" would
+        // otherwise pass the question-mark test and fire on a fragment while the real
+        // question was still coming.
+        let restarts = ["no no", "no i am asking", "no i'm asking", "sorry", "wait",
+                        "let me rephrase", "i mean", "actually no", "hold on", "one sec",
+                        "what i meant", "let me ask", "i want to ask", "i wanted to ask"]
+        for r in restarts where normalized == r || normalized.hasPrefix(r + " ") {
+            return false
+        }
+
         let hasQuestionMark = q.contains("?")
 
         let questionStarters: Set<String> = ["what", "why", "how", "when", "where", "who",

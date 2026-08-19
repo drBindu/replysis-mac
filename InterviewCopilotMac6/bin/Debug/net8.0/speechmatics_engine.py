@@ -975,8 +975,25 @@ async def main():
                     },
                     enable_entities=True,
                     disfluencies=False,
-                    additional_vocab=[],  # BUG-18 FIX: removed stale pharma vocab that
-                                         # interfered with non-pharma interviews
+                    # Interview-domain terms only. The previous list carried another
+                    # industry's vocabulary and corrupted ordinary speech, so this stays
+                    # strictly to words THIS app hears and that recognisers reliably get
+                    # wrong: "C2C" came through as "Two C", "W2" as "w two".
+                    additional_vocab=[
+                        {"content": "C2C",  "sounds_like": ["C to C", "see to see", "two C"]},
+                        {"content": "W2",   "sounds_like": ["W two", "double u two"]},
+                        {"content": "1099", "sounds_like": ["ten ninety nine"]},
+                        {"content": "corp to corp"},
+                        {"content": "full-time", "sounds_like": ["full time"]},
+                        {"content": "H-1B", "sounds_like": ["H one B", "H1B"]},
+                        {"content": "STEM OPT", "sounds_like": ["stem opt"]},
+                        {"content": "green card"},
+                        {"content": "Kubernetes", "sounds_like": ["kubernetes", "k8s"]},
+                        {"content": "PostgreSQL", "sounds_like": ["postgres", "postgre SQL"]},
+                        {"content": "CI/CD", "sounds_like": ["C I C D"]},
+                        {"content": "API", "sounds_like": ["A P I"]},
+                        {"content": "SQL", "sounds_like": ["sequel", "S Q L"]},
+                    ],
                 )
 
                 audio_conf = AudioSettings(
