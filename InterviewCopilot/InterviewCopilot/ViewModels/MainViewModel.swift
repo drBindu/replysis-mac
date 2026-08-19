@@ -1963,6 +1963,21 @@ class MainViewModel {
         listeningMode = mode
         saveSettings()
         dlog("Listening mode: \(previous.rawValue) -> \(mode.rawValue)", tag: "AUTO")
+        // Clear what the PREVIOUS mode produced. Leaving the old answer on screen made a
+        // mode that had correctly stayed silent look like it had answered wrongly — the
+        // user reads a stale reply and blames the new mode for it. Also drops any
+        // half-heard transcript, which belongs to the old capture source.
+        answerEpoch += 1
+        isProcessing = false
+        showThinking = false
+        aiAnswer = ""
+        transcript = ""
+        autoDetector.reset()
+        aiAnswerHint = idleHintForCurrentMode
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.engine.clearLatestTxt()
+            self?.engine.writeResetFlag()
+        }
 
         // The mic is the real difference between the two automatic modes, and the engine
         // decides mic capture at start time — so a mode change that flips it needs the
