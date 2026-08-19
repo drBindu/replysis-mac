@@ -959,7 +959,24 @@ async def main():
                                  lambda m: print(">>> STATUS: OFFLINE", flush=True))
                 ws.add_event_handler("Error",
                                      lambda e: print(f">>> WS ERROR: {e}", flush=True))
+                # The signal the app fires on. Printed as a plain marker so the Swift side
+                # needs nothing but a line match.
+                def handle_end_of_utterance(msg):
+                    if os.path.exists(PAUSE_FLAG):
+                        return
+                    print(">>> UTTERANCE END", flush=True)
+                ws.add_event_handler("EndOfUtterance", handle_end_of_utterance)
 
+                # END-OF-UTTERANCE, measured from the AUDIO rather than guessed from text.
+                # The app previously inferred "have they stopped talking?" from the
+                # transcript - counting full stops, matching filler words, timing how long
+                # the text had not changed. That is a lossy shadow of the thing we actually
+                # care about, and it misfired constantly: this recogniser punctuates
+                # mid-sentence, revises words after the fact, and accumulates across a turn.
+                #
+                # The recogniser has the waveform, so it can answer the question directly.
+                # end_of_utterance_silence_trigger makes it emit an explicit EndOfUtterance
+                # message after that many seconds of real silence.
                 conf = TranscriptionConfig(
                     language="en",
                     operating_point="enhanced",
@@ -975,6 +992,11 @@ async def main():
                     },
                     enable_entities=True,
                     disfluencies=False,
+                    # 0.8s of ACTUAL silence. Tuned like the old text thresholds but on a
+                    # far better signal: this is silence in the audio, not "the transcript
+                    # stopped changing", so a mid-sentence pause for breath does not look
+                    # the same as a finished question.
+                    conversation_config={"end_of_utterance_silence_trigger": 0.8},
                     # Interview-domain terms only. The previous list carried another
                     # industry's vocabulary and corrupted ordinary speech, so this stays
                     # strictly to words THIS app hears and that recognisers reliably get

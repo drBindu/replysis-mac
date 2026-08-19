@@ -195,6 +195,9 @@ class MainViewModel {
         // Surface a clear message if the speech service rejects the key, instead of
         // silently showing an empty transcript forever.
         engine.onKeyError = { [weak self] in self?.handleSpeechKeyError() }
+        // THE turn signal. The recogniser has the waveform and tells us when the speaker
+        // actually stopped; we no longer infer it from how the text is punctuated.
+        engine.onUtteranceEnd = { [weak self] in self?.handleUtteranceEnd() }
         // Start MUTED so the engine opens the mic idle (start=False) and the macOS orange
         // mic indicator stays OFF until the user actually presses Space to listen. The
         // unmute path deletes this flag; the mute path re-writes it.
@@ -1201,23 +1204,42 @@ class MainViewModel {
             }
             autoBlockLogTick += 1
         }
-        if autoModeEnabled && !isScreenAnalyzing && engine.isReady {
-            if autoDetector.shouldSubmit(transcript: text) {
-                if isProcessing {
-                    // The question kept going after we started answering. The answer in
-                    // flight was built from a fragment, so it is now wrong — throw it away
-                    // and answer what was ACTUALLY asked. Bumping the epoch makes the old
-                    // stream's callbacks no-ops.
-                    dlog("AUTO: more of the question arrived — replacing the in-flight answer", tag: "AUTO")
-                    answerEpoch += 1
-                    isProcessing = false
-                    showThinking = false
-                }
-                autoDetector.markSubmitting(text)
-                dlog("AUTO: turn complete — answering without a keypress", tag: "AUTO")
-                submitAutomaticTurn()
-            }
+        // NOTE: turns are driven by handleUtteranceEnd(), from the recogniser's own
+        // acoustic silence detection. No text-timing fallback runs here: two independent
+        // triggers would race and double-answer, and the text one is the guess we removed.
+    }
+
+    /// The recogniser reported real acoustic silence — the speaker has finished.
+    ///
+    /// This replaces the text-timing heuristics entirely: no counting full stops, no
+    /// waiting for the transcript to stop changing, no guessing whether a pause was a
+    /// breath or an ending. The only judgement left is whether what was said is worth
+    /// answering, which is a question about MEANING and genuinely does belong in text.
+    private func handleUtteranceEnd() {
+        guard autoModeEnabled, isListening, !isScreenAnalyzing, engine.isReady else { return }
+        let text = engine.readLatestTxt().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        // Still skip backchannel and self-corrections — "okay", "yes sir", "sorry" are
+        // complete utterances acoustically, and answering them would burn a credit and
+        // put a pointless answer on screen mid-interview.
+        guard AutoTurnDetector.isLikelyCompleteQuestion(AutoTurnDetector.normalize(text)) else {
+            dlog("AUTO: utterance ended but it is not a question — ignoring: '\(text.prefix(50))'", tag: "AUTO")
+            return
         }
+        // Do not answer the same question twice inside the dedup window.
+        guard autoDetector.acceptUtterance(text) else {
+            dlog("AUTO: duplicate of the question just answered — ignoring", tag: "AUTO")
+            return
+        }
+        if isProcessing {
+            dlog("AUTO: more of the question arrived — replacing the in-flight answer", tag: "AUTO")
+            answerEpoch += 1
+            isProcessing = false
+            showThinking = false
+        }
+        dlog("AUTO: speaker finished (audio) — answering", tag: "AUTO")
+        submitAutomaticTurn()
     }
 
     /// End the listening turn and answer, exactly as a second Space press would, but

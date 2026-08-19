@@ -16,6 +16,10 @@ class SpeechmaticsEngine {
     /// UI can show "Starting…" instead of a green mic that silently drops the first words.
     var isReady = false
 
+    /// Fired when the recogniser reports, from the AUDIO, that the speaker has stopped.
+    /// This is the real end-of-turn signal; everything text-based is a guess at it.
+    var onUtteranceEnd: (() -> Void)?
+
     /// Fired when Speechmatics rejects the key (not_authorised / invalid key). Lets the
     /// UI show an honest "speech unavailable" message instead of silently doing nothing.
     var onKeyError: (() -> Void)?
@@ -331,6 +335,9 @@ class SpeechmaticsEngine {
             // A dropped session is NOT the same event as a crashed process, and handling
             // only one leaves the app believing transcription still works. This is the
             // drop; watchForExit() below is the crash.
+            if line.contains("UTTERANCE END") {
+                Task { @MainActor [weak self] in self?.onUtteranceEnd?() }
+            }
             if line.contains("STATUS: OFFLINE") || line.contains("EndOfTranscript") {
                 Task { @MainActor [weak self] in
                     self?.isReady = false

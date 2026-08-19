@@ -53,6 +53,20 @@ struct AutoTurnDetector {
         isSubmitting = false
     }
 
+    /// Accept an utterance unless it repeats the one just answered. Timing is no longer
+    /// decided here — the recogniser reports that from the audio — so this is only the
+    /// duplicate guard plus a record of what was last sent.
+    mutating func acceptUtterance(_ question: String, now: Date = Date()) -> Bool {
+        let normalized = Self.normalize(question)
+        if normalized.caseInsensitiveCompare(lastSubmitted) == .orderedSame,
+           now.timeIntervalSince(lastSubmittedAt) < Self.duplicateWindow {
+            return false
+        }
+        lastSubmitted = normalized
+        lastSubmittedAt = now
+        return true
+    }
+
     mutating func markSubmitting(_ question: String) {
         isSubmitting = true
         lastSubmitted = Self.normalize(question)
