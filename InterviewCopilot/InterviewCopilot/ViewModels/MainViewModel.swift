@@ -1614,10 +1614,30 @@ class MainViewModel {
                        "versus ", "vs ", "compared to", "what about", "how about", "then "]
         for j in joiners where n.hasPrefix(j) { return true }
 
+        // FILLERS ARE NOT CONTINUATIONS, and this exclusion has to come first.
+        //
+        // "Okay" after an answer asks nothing, so every test below says continuation, and
+        // the merge re-runs the question that was just answered — a second identical answer
+        // and a second credit for a word that meant "I heard you".
         let words = n.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
-        // A short tail that is not a question of its own is almost always the rest of the
-        // sentence the speaker paused inside.
-        if words.count <= 5 && !AutoTurnDetector.isLikelyCompleteQuestion(next) { return true }
+        let fillers: Set<String> = ["okay", "ok", "yeah", "yes", "yep", "right", "sure",
+                                    "mhm", "hmm", "uh", "um", "got", "it", "thanks",
+                                    "thank", "you", "alright", "cool", "fine", "good"]
+        if words.allSatisfy({ fillers.contains($0) }) { return false }
+
+        // THE TEST IS "ASKS NOTHING", not "is too short to be a sentence".
+        //
+        // "C2C or W2 or full time." is well formed, is six words, and is obviously the rest
+        // of "what are you looking for" — a word count rejected it for being long enough to
+        // look like a sentence, which is not the question being asked. What matters is
+        // whether it asks anything by itself; if it does not, it is the tail of something
+        // that did.
+        //
+        // requireInterrogative is what makes "asks nothing" mean what it says. The looser
+        // reading accepts any finished statement of five or more words as a question, and
+        // "C2C or W2 or full time." is exactly that — so the tail of the question got
+        // treated as a new one and was answered on its own.
+        if !AutoTurnDetector.isLikelyCompleteQuestion(next, requireInterrogative: true) { return true }
         return false
     }
 
