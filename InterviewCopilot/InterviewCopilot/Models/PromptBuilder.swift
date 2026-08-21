@@ -75,6 +75,29 @@ class PromptBuilder {
 
     // MARK: - Public API
 
+    /// Replace fenced code with a marker, keeping the prose around it.
+    ///
+    /// Every prompt replays the recent turns, so one coding answer rides along in every
+    /// question after it — a behavioural question reaching the model with sixty lines of
+    /// C++ attached, charged for on every request from then on, against a budget of eight
+    /// thousand tokens a minute. Only the NEWEST turn keeps its code, because "can you
+    /// optimise that?" needs the thing being optimised.
+    ///
+    /// The fence count is deliberately not required to be even: streaming produces
+    /// unclosed fences constantly, and a half-arrived block is exactly the one most likely
+    /// to still be in the newest turn when the next question is asked.
+    static func collapseCodeBlocks(_ text: String) -> String {
+        guard text.contains("```") else { return text }
+        let parts = text.components(separatedBy: "```")
+        var out = ""
+        for (i, part) in parts.enumerated() {
+            // The fence toggles: even parts are prose, odd parts are code. A trailing odd
+            // part is an unclosed block, and collapses the same way.
+            out += (i % 2 == 0) ? part : "[code given]"
+        }
+        return out
+    }
+
     func addToHistory(question: String, answer: String) {
         history.append((q: question, a: answer))
         if history.count > 80 { history.removeFirst() }
@@ -706,9 +729,13 @@ class PromptBuilder {
         // but replaying ALL of it every time would bloat the prompt and make answers
         // slower (and pricier) the longer the interview runs, eventually risking a
         // context-overflow error mid-interview. 12 turns is ample working memory.
-        for (q, a) in history.suffix(12) {
-            messages.append(["role": "user", "content": q])
-            messages.append(["role": "assistant", "content": a])
+        let recent = Array(history.suffix(12))
+        for (i, turn) in recent.enumerated() {
+            // The newest turn keeps its code; everything older is collapsed. Twelve turns of
+            // working memory is only affordable if they are not each carrying a code block.
+            let answer = (i == recent.count - 1) ? turn.a : Self.collapseCodeBlocks(turn.a)
+            messages.append(["role": "user", "content": turn.q])
+            messages.append(["role": "assistant", "content": answer])
         }
 
         let lockBlock = buildLockedConstraintBlock(for: currentQuestion)

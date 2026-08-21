@@ -922,7 +922,8 @@ class MainViewModel {
             onDone: { [weak self] in
                 guard let self = self, self.answerEpoch == epoch else { return }
                 let final = self.cleanAIOutput(accumulated)
-                self.finishAI(question: q, answer: final, prefix: "Q: \(q)\n\n\(lowBanner)")
+                self.finishAI(question: q, answer: final, prefix: "Q: \(q)\n\n\(lowBanner)",
+                              historyAnswer: accumulated)
                 Task { [weak self] in await self?.fetchCredits() }
             },
             onError: { [weak self] err in
@@ -954,9 +955,14 @@ class MainViewModel {
         )
     }
 
-    private func finishAI(question: String, answer: String, prefix: String = "") {
+    /// - Parameter historyAnswer: what to remember, when that differs from what to show.
+    ///   Display strips code fences; history must KEEP them, because the fences are how a
+    ///   later turn finds the code block to collapse. Without them the code is still there,
+    ///   indistinguishable from prose, and rides along in every later prompt forever.
+    private func finishAI(question: String, answer: String, prefix: String = "",
+                          historyAnswer: String? = nil) {
         aiAnswer = "\(prefix)\(answer)"
-        PromptBuilder.shared.addToHistory(question: question, answer: answer)
+        PromptBuilder.shared.addToHistory(question: question, answer: historyAnswer ?? answer)
         appendToSessionLog(q: question, a: answer)
         stopThinkingUI()
     }
