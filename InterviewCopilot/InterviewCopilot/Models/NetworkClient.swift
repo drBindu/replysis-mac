@@ -183,6 +183,55 @@ class NetworkClient {
         } catch { return nil }
     }
 
+    // MARK: - Listening time
+    //
+    // Credits count questions; Speechmatics charges by the hour of audio. Those two were
+    // never connected, so the expensive half of the bill was invisible — a microphone left
+    // open all afternoon cost real money and showed up nowhere. The server keeps the running
+    // total and refuses a new speech token once the month's allowance is gone; this side just
+    // reports what it heard.
+    //
+    // Both calls swallow every error on purpose. A failed report loses a minute; failing an
+    // interview over accounting loses the thing the user actually paid for. The gate that
+    // protects the money is server-side already.
+
+    /// Report `minutes` of listening. Returns minutes remaining this month, or nil if the
+    /// report did not land. `-1` means the plan is unlimited.
+    @discardableResult
+    func reportListeningMinutes(_ minutes: Int) async -> Int? {
+        guard minutes > 0,
+              let url = URL(string: "\(AppConfig.backendUrl)/api/v1/usage/listening") else { return nil }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(UserSession.shared.idToken)", forHTTPHeaderField: "Authorization")
+        req.setValue(DeviceIdentity.current, forHTTPHeaderField: "X-Device-Id")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["minutes": minutes])
+
+        do {
+            let (data, response) = try await shortSession.data(for: req)
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                return nil
+            }
+            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+            return obj["remainingMinutes"] as? Int
+        } catch { return nil }
+    }
+
+    /// Current listening allowance, without reporting anything. Used at sign-in so the badge
+    /// is honest before the first minute of the session has been spent.
+    func fetchListeningTime() async -> Int? {
+        guard let url = URL(string: "\(AppConfig.backendUrl)/api/v1/usage/listening") else { return nil }
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(UserSession.shared.idToken)", forHTTPHeaderField: "Authorization")
+        req.setValue(DeviceIdentity.current, forHTTPHeaderField: "X-Device-Id")
+        do {
+            let (data, _) = try await shortSession.data(for: req)
+            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+            return obj["remainingMinutes"] as? Int
+        } catch { return nil }
+    }
+
     // MARK: - Session Cloud Backup
 
     struct CloudTurn {

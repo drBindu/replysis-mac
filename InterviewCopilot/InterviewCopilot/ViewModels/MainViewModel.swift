@@ -739,6 +739,7 @@ class MainViewModel {
 
         if isMuted {
             dlog("SPACE: unmuting → LISTENING", tag: "SPACE")
+            stoppedForIdle = false   // the user is back; the room is not empty any more
             isMuted = false; isListening = true
             justStartedListening = true; listenStartTicks = 0
             resetAutoTurnState()   // fresh turn — nothing from the last one carries over
@@ -1214,7 +1215,12 @@ class MainViewModel {
             }
             return
         }
-        let text = remainingSpeech(engine.readLatestTxt())
+        let raw = engine.readLatestTxt()
+        if raw != lastRawTranscript {
+            lastRawTranscript = raw
+            lastSpeechHeardAt = Date()   // somebody is speaking — the room is not empty
+        }
+        let text = remainingSpeech(raw)
         transcriptLogTick += 1
         // Log every ~3 seconds (every 20 ticks at 150ms)
         if transcriptLogTick % 20 == 0 {
@@ -1572,6 +1578,12 @@ class MainViewModel {
     /// answers exactly one question and then silently stops being automatic.
     private func rearmAutoModeIfNeeded() {
         guard autoModeEnabled, session.isLoggedIn, !isProcessing else { return }
+        // The mic gave up on a silent room. Re-arming here would reopen it seconds later
+        // and spend the time the stop just saved — and the message on screen says Space.
+        guard !stoppedForIdle else {
+            dlog("AUTO: stopped for idle — waiting for Space rather than re-arming", tag: "METER")
+            return
+        }
         guard engine.isRunning else {
             dlog("AUTO: engine not running — cannot arm", tag: "AUTO")
             return
@@ -1618,6 +1630,157 @@ class MainViewModel {
         updateMicUI()
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // LISTENING TIME
+    //
+    // Credits count questions. Speechmatics charges by the hour of audio, and
+    // nothing was counting that, so the expensive half of the bill was invisible:
+    // a microphone left open all afternoon cost real money and showed up nowhere.
+    //
+    // Two halves. This side measures the time and reports it AS IT GOES, because
+    // an app that is force-quit, a lid that closes and a connection that drops all
+    // look identical afterwards and would otherwise be free. The server keeps the
+    // running total and refuses a new speech token once the month is spent — which
+    // is why the Mac app was already capped by this allowance while contributing
+    // nothing to it. That was the largest single gap against Windows.
+    //
+    // And the mic switches itself off after a long silence. Most of the waste will
+    // never be anybody being greedy, it will be somebody who opened the app and
+    // went to lunch, and an empty room bills the same as an interview.
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// Three minutes, because in a real interview somebody speaks every few seconds and
+    /// even a long thinking pause is well under a minute. Meant to catch an empty room,
+    /// never a person deciding what to say.
+    private let idleListeningTimeout: TimeInterval = 180
+    private let listeningReportInterval: TimeInterval = 60
+
+    private var listeningMeterTimer: Timer?
+    private var listeningSince: Date?
+    private var lastSpeechHeardAt = Date()
+    private var unreportedListeningSeconds: Double = 0
+    private var lastRawTranscript = ""
+    /// -1 = unlimited, or not yet known. Never a count.
+    var audioMinutesRemaining = -1
+    /// Set when the mic gave up on a silent room, so an automatic mode does not simply
+    /// re-arm itself and undo the saving. Cleared the moment the user presses Space.
+    private var stoppedForIdle = false
+
+    /// Keep the meter in step with `isListening`. Called from updateMicUI, which every
+    /// listening transition already flows through, so no individual call site can forget.
+    private func syncListeningMeter() {
+        let running = listeningMeterTimer != nil
+        if isListening && !running { startListeningMeter() }
+        else if !isListening && running { stopListeningMeter() }
+    }
+
+    private func startListeningMeter() {
+        // A reconnect RESUMES the meter rather than restarting it — otherwise a dropped
+        // connection would reset the idle clock for free.
+        listeningSince = Date()
+        lastSpeechHeardAt = Date()
+        listeningMeterTimer?.invalidate()
+        listeningMeterTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.listeningMeterTick() }
+        }
+        dlog("METER: listening started", tag: "METER")
+    }
+
+    private func stopListeningMeter() {
+        listeningMeterTimer?.invalidate(); listeningMeterTimer = nil
+        if let since = listeningSince {
+            unreportedListeningSeconds += Date().timeIntervalSince(since)
+            listeningSince = nil
+        }
+        // Anything past half a minute still counts. Rounding every short turn down to
+        // nothing would make an interview of brief exchanges free, which is the opposite
+        // of what the meter is for.
+        if unreportedListeningSeconds >= 30 {
+            let minutes = max(1, Int((unreportedListeningSeconds / 60.0).rounded()))
+            unreportedListeningSeconds = 0
+            reportListeningMinutes(minutes)
+        }
+    }
+
+    private func listeningMeterTick() {
+        guard isListening else { stopListeningMeter(); return }
+        let now = Date()
+
+        if now.timeIntervalSince(lastSpeechHeardAt) >= idleListeningTimeout {
+            dlog("METER: no speech for \(Int(idleListeningTimeout / 60)) minutes — stopping the microphone", tag: "METER")
+            stopForIdle()
+            return
+        }
+
+        if let since = listeningSince {
+            unreportedListeningSeconds += now.timeIntervalSince(since)
+            listeningSince = now
+        }
+        if unreportedListeningSeconds >= listeningReportInterval {
+            let minutes = Int(unreportedListeningSeconds / 60)
+            unreportedListeningSeconds -= Double(minutes) * 60.0
+            reportListeningMinutes(minutes)
+        }
+    }
+
+    /// Ends a listening session nobody is using, and says so plainly.
+    ///
+    /// Stopping silently would be worse than the waste it prevents: somebody coming back
+    /// to the app would speak into a microphone they believed was on.
+    private func stopForIdle() {
+        stopListeningMeter()
+        stoppedForIdle = true
+        isListening = false; isMuted = true
+        engine.writePauseFlag()
+        resetAutoTurnState()
+        aiAnswer = "The microphone switched off after \(Int(idleListeningTimeout / 60)) minutes of silence, so your listening time is not spent on an empty room.\n\nPress Space to start again."
+        updateMicUI()
+    }
+
+    /// Never fail an interview over accounting: a failed report loses a minute, never the
+    /// call. The gate that protects the money is server-side already.
+    private func reportListeningMinutes(_ minutes: Int) {
+        guard minutes > 0, session.isLoggedIn else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let remaining = await NetworkClient.shared.reportListeningMinutes(minutes) {
+                self.audioMinutesRemaining = remaining
+                dlog("METER: reported \(minutes) min; \(remaining) left this month", tag: "METER")
+                self.updateCreditsUI(credits: self.session.credits, plan: self.session.plan,
+                                     isUnlimited: self.session.isUnlimited)
+                self.warnIfListeningTimeLow()
+            } else {
+                dlog("METER: report of \(minutes) min did not land — carrying on", tag: "METER")
+            }
+        }
+    }
+
+    /// Warns BEFORE the allowance runs out. Transcription stopping without warning in the
+    /// middle of an interview is the worst possible way to learn a limit exists.
+    private func warnIfListeningTimeLow() {
+        guard audioMinutesRemaining >= 0, audioMinutesRemaining <= 15 else { return }
+        aiAnswerHint = audioMinutesRemaining <= 0
+            ? "⚠ Your listening time for this month is used up. Transcription will not start until it resets."
+            : "⚠ \(audioMinutesRemaining) minutes of listening time left this month."
+    }
+
+    /// Current allowance without reporting anything, so the badge is honest before the
+    /// first minute of a session has been spent.
+    func fetchListeningTime() async {
+        guard session.isLoggedIn else { return }
+        if let remaining = await NetworkClient.shared.fetchListeningTime() {
+            audioMinutesRemaining = remaining
+            dlog("METER: \(remaining) listening minutes left this month", tag: "METER")
+            updateCreditsUI(credits: session.credits, plan: session.plan, isUnlimited: session.isUnlimited)
+        }
+    }
+
+    static func formatListeningTime(_ minutes: Int) -> String {
+        if minutes < 60 { return "\(minutes)m" }
+        let h = minutes / 60, m = minutes % 60
+        return m == 0 ? "\(h)h" : "\(h)h \(m)m"
+    }
+
     // MARK: - Thinking Animation
     private func startThinkingTimer() {
         guard thinkingTimer == nil else { return }
@@ -1634,6 +1797,7 @@ class MainViewModel {
     // MARK: - MIC UI
     func updateMicUI() {
         refreshHotkeyGate()   // login/logout & listening transitions flow through here
+        syncListeningMeter()  // ...and so does the listening meter, for the same reason
         if isProcessing      { micStatus = "THINKING";  micColor = .orange }
         else if isListening  {
             // An automatic mode with no live transcription answers NOTHING, silently — the
@@ -1768,6 +1932,7 @@ class MainViewModel {
             session.isUnlimited = result.isUnlimited
             dlog("Credits: \(result.credits), plan=\(result.plan), unlimited=\(result.isUnlimited)", tag: "CREDITS")
             updateCreditsUI(credits: result.credits, plan: result.plan, isUnlimited: result.isUnlimited)
+            await fetchListeningTime()
         } else {
             dlog("Credits fetch failed — no result returned", tag: "CREDITS")
         }
@@ -1793,6 +1958,14 @@ class MainViewModel {
                         ? Color(red: 245/255, green: 158/255, blue: 11/255)
                         : Color(red: 239/255, green: 68/255, blue: 68/255)
             }
+        }
+        if audioMinutesRemaining >= 0 {
+            creditsText += "   ⏱ \(Self.formatListeningTime(audioMinutesRemaining))"
+            // The colour follows whichever limit is actually about to stop them.
+            if audioMinutesRemaining <= 15 {
+                creditsColor = Color(red: 248/255, green: 113/255, blue: 113/255)
+            }
+            if audioMinutesRemaining == 0 { creditsPlanText = "No listening time left" }
         }
     }
 
