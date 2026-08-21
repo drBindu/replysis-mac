@@ -98,6 +98,58 @@ class PromptBuilder {
         return out
     }
 
+    // ── Is this question about the screen, or about the person? ───────────────
+
+    /// Phrases that mean the screenshot IS the question. Answering these from the
+    /// transcript alone cannot work, however good the model is.
+    private static let screenReferencePhrases = [
+        "on the screen", "on my screen", "on your screen", "on screen",
+        "look at this", "look at the screen", "have a look", "take a look",
+        "what do you see", "can you see", "do you see", "you can see",
+        "sharing my screen", "share my screen", "shared my screen",
+        "in front of you", "shown here", "displayed here", "up on the",
+        "solve this", "fix this", "debug this", "explain this",
+        "this code", "this error", "this problem", "this question",
+        "this diagram", "this snippet", "this function", "this output",
+        "what is this", "what's this", "read this", "walk me through this",
+    ]
+
+    /// Questions about the PERSON, which no screenshot can help with.
+    ///
+    /// Watching a screen was forcing every question down the vision path, so "which
+    /// language do you prefer?" came back as an answer about a code editor: a non-answer,
+    /// in the wrong shape, having paid to read a picture nobody asked about — and it
+    /// quietly tells the interviewer that something is looking at the screen. Behavioural
+    /// questions do not stop being asked because a screen is being shared; they are most
+    /// of an interview.
+    private static let personalQuestionPhrases = [
+        "tell me about yourself", "about yourself", "walk me through your",
+        "your experience", "your background", "your resume", "your cv",
+        "your strength", "your weakness", "your biggest", "your greatest",
+        "why do you want", "why are you leaving", "why did you leave",
+        "where do you see yourself", "your career", "your goal",
+        "do you prefer", "which language do you", "favourite", "favorite",
+        "how are you", "salary", "expectation", "notice period",
+        "c2c", "w2", "full time", "relocat", "visa", "sponsor",
+        "any questions for", "tell me a time", "tell me about a time",
+        "have you worked with", "how many years", "comfortable with",
+    ]
+
+    static func refersToScreen(_ question: String) -> Bool {
+        let q = question.lowercased()
+        return screenReferencePhrases.contains { q.contains($0) }
+    }
+
+    /// Deliberately NARROW: anything it is unsure about stays on the screen path, because
+    /// while a screen is being shared most questions really are about it.
+    static func isPersonalQuestion(_ question: String) -> Bool {
+        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if refersToScreen(trimmed) { return false }   // "this code" always wins
+        let q = trimmed.lowercased()
+        return personalQuestionPhrases.contains { q.contains($0) }
+    }
+
     func addToHistory(question: String, answer: String) {
         history.append((q: question, a: answer))
         if history.count > 80 { history.removeFirst() }

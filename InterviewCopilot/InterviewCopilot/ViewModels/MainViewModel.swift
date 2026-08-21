@@ -859,7 +859,14 @@ class MainViewModel {
         // WATCH MODE: the interviewer is sharing their screen, so every question is about
         // what is on it. Answer from the screen rather than from the words alone — but only
         // now, when a question actually exists, rather than on a timer.
-        if isWatchMode, !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !isScreenAnalyzing {
+        // Watching a screen does not make every question about the screen. A behavioural
+        // question sent down this path comes back as an answer about a code editor — the
+        // wrong shape, a picture nobody asked about paid for, and a quiet signal to the
+        // interviewer that something is reading their screen. isPersonalQuestion is narrow
+        // on purpose: anything uncertain stays on the screen path, and "solve this" or
+        // "this code" always wins, so "do you prefer this code or that one" still counts.
+        let aboutTheScreen = isWatchMode && !PromptBuilder.isPersonalQuestion(q)
+        if aboutTheScreen, !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !isScreenAnalyzing {
             isScreenAnalyzing = true; isProcessing = true
             answerEpoch += 1
             updateMicUI()
