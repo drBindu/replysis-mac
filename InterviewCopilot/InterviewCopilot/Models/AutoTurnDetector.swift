@@ -116,14 +116,76 @@ struct AutoTurnDetector {
         s.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Words that cannot end a finished sentence. "…c two c or", "…difference between",
-    /// "…experience with" — the speaker is plainly mid-thought no matter how long they
-    /// paused, and answering a dangling clause answers half a question.
-    private static let danglers: Set<String> = [
-        "or", "and", "but", "the", "a", "an", "to", "for", "with", "of", "in", "on", "at",
-        "is", "are", "was", "between", "about", "like", "than", "that", "if", "what",
-        "how", "when", "so"
+    // ── How the transcript ends ───────────────────────────────────────────────
+    //
+    // One wait for every question cannot be right: too short and it answers while the
+    // interviewer is still asking, too long and the candidate sits in silence after a
+    // question that plainly ended. Both were reported on Windows, days apart, from the
+    // same setting. So the endings are told apart rather than averaged.
+    //
+    // This REPLACES a guard that rejected any trailing joining word outright. That was the
+    // same instinct pointed too far: it could never answer "What are you looking for?",
+    // where the right behaviour is to answer it a little later, not never.
+
+    enum TurnEnding {
+        /// Ended on a word no sentence can end on. Never submit — their next word will.
+        case unfinished
+        /// Punctuated and landing on a real word. Answer quickly.
+        case finished
+        /// Could go either way. Give them room.
+        case unclear
+    }
+
+    /// Words no English sentence can end on, whatever the punctuation. The recogniser
+    /// punctuates the moment it hears "for", and the options arrive after — "What are you
+    /// looking for?" is grammatical and was still followed by "C2C or W2 or full time".
+    ///
+    /// Conjunctions, prepositions and determiners only. Pronouns are deliberately absent:
+    /// "How would you scale this?" and "Have you done that?" are finished questions, and
+    /// slowing the ordinary case to guard against a rare one is what went wrong first time.
+    private static let neverEndsSentence: Set<String> = [
+        "or", "and", "but", "nor", "plus", "versus", "vs",
+        "to", "of", "for", "with", "without", "from", "into", "onto",
+        "in", "on", "at", "by", "about", "over", "under", "between",
+        "the", "a", "an", "my", "our", "your", "their", "its",
+        "than", "because", "while", "if", "such", "like", "per",
     ]
+
+    /// Words that, with no punctuation after them, mean the sentence is still running.
+    /// Wider than the list above, because without a full stop even "do you" or "have they"
+    /// is plainly mid-air.
+    private static let danglingTailWords: Set<String> = [
+        "is", "are", "was", "were", "be", "been", "being", "am",
+        "do", "does", "did", "have", "has", "had",
+        "can", "could", "would", "should", "will", "shall", "may", "might", "must",
+        "you", "we", "they", "he", "she", "it", "i", "that", "this",
+        "any", "some", "more", "most", "very", "really", "so",
+        "when", "then", "what", "which", "who", "how",
+    ]
+
+    static func classifyTurnEnding(_ question: String) -> TurnEnding {
+        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = trimmed.last else { return .unclear }
+        let punctuated = (last == "?" || last == "." || last == "!")
+
+        let words = trimmed.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted.subtracting(CharacterSet(charactersIn: "'")))
+            .filter { !$0.isEmpty }
+        guard let tail = words.last else { return .unclear }
+
+        // Nothing can follow these and still be a finished sentence, so the speaker is
+        // mid-air no matter what the recogniser punctuated.
+        if neverEndsSentence.contains(tail) { return punctuated ? .unclear : .unfinished }
+
+        // No full stop yet, and hanging on an auxiliary or a pronoun: still going. Waiting
+        // costs nothing, because their next word submits it.
+        if !punctuated && danglingTailWords.contains(tail) { return .unfinished }
+
+        // Punctuated and landing on a real word. The ordinary case, and it should feel
+        // immediate.
+        if punctuated { return .finished }
+        return .unclear
+    }
 
     /// Is this a real question worth spending a credit and an answer on, rather than
     /// backchannel ("okay", "yes sir") or half a sentence still being spoken?
@@ -142,15 +204,6 @@ struct AutoTurnDetector {
             .components(separatedBy: CharacterSet.alphanumerics.inverted.subtracting(CharacterSet(charactersIn: "'")))
             .filter { !$0.isEmpty }
         guard !allWords.isEmpty else { return false }
-
-        // A trailing joining word means the sentence is not over. Silence proves the speaker
-        // PAUSED, never that they finished, so this is the one signal that separates the
-        // two — and it was previously unreachable, sitting in the text-timing path that
-        // nothing called. A question mark overrides it: the recogniser only emits one when
-        // it heard a complete interrogative.
-        if let lastWord = allWords.last, danglers.contains(lastWord), !q.hasSuffix("?") {
-            return false
-        }
 
         // Drop leading filler before deciding what kind of sentence this is. People open
         // with "so", "okay", "and", "um" constantly — "So, can you tell me..." is a

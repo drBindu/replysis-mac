@@ -791,7 +791,13 @@ class MainViewModel {
     ///     waiting out a long cap for a sentence that was never spoken
     private func flushTranscriptThenAnswer() async {
         let pollNs: UInt64 = 20_000_000          // 20ms
-        let stableTicksNeeded = 5                // 5 x 20ms = 100ms of no growth
+        // People press Space the moment they stop talking, and often a beat before, so the
+        // mode most people use was the only one that cut them off mid-sentence: "do you know
+        // coding or coding language? You" went to the model exactly like that. Being told to
+        // press more carefully is not a fix. A finished sentence never reaches this branch,
+        // so the ordinary case pays nothing.
+        let stableTicksFinished = 5              // 5 x 20ms = 100ms of no growth
+        let stableTicksUnfinished = 40           // 40 x 20ms = 800ms, still inside maxTicks
         let emptyTicksNeeded  = 20               // 20 x 20ms = 400ms of nothing at all
         let maxTicks = 64                        // hard ceiling, same ~1.28s worst case
 
@@ -812,7 +818,9 @@ class MainViewModel {
                 question = t; stable = 0; empty = 0
             } else if !question.isEmpty {
                 stable += 1
-                if stable >= stableTicksNeeded { break }
+                let needed = AutoTurnDetector.classifyTurnEnding(question) == .finished
+                    ? stableTicksFinished : stableTicksUnfinished
+                if stable >= needed { break }
             } else {
                 empty += 1
                 if empty >= emptyTicksNeeded { break }
@@ -1223,9 +1231,26 @@ class MainViewModel {
         }
         let raw = engine.readLatestTxt()
         if raw != lastRawTranscript {
+            // The gap since the last words is this speaker's own pace. Anything over two
+            // seconds is a turn boundary rather than a pause inside one, so it is not
+            // allowed to stretch the wait.
+            let gap = Date().timeIntervalSince(lastSpeechHeardAt)
+            if gap <= 2.0 && gap > longestMidTurnGap { longestMidTurnGap = gap }
             lastRawTranscript = raw
             lastSpeechHeardAt = Date()   // somebody is speaking — the room is not empty
             heardAnythingThisSession = true
+            // More arrived, so the ending was not the end. The new speech forms its own
+            // turn and will be classified on its own utterance-end.
+            if unclearDeadline != nil {
+                dlog("AUTO: more speech arrived — the unclear ending was a pause", tag: "AUTO")
+                unclearDeadline = nil; unclearPendingText = ""
+            }
+        }
+        // Nothing more came, so the unclear ending really was the end.
+        if let deadline = unclearDeadline, Date() >= deadline {
+            let pending = unclearPendingText
+            unclearDeadline = nil; unclearPendingText = ""
+            if !pending.isEmpty { commitAutomaticTurn(pending) }
         }
         let text = remainingSpeech(raw)
         transcriptLogTick += 1
@@ -1281,6 +1306,16 @@ class MainViewModel {
     /// and one credit per fragment, and a "question" that grew into a paragraph of noise
     /// before the service finally rejected it. Anchoring to the START of the chain gives it
     /// an end.
+    /// An ending that could go either way, waiting to see if more arrives.
+    private var unclearPendingText = ""
+    private var unclearDeadline: Date?
+    /// The longest gap this speaker leaves MID-question, so the wait can follow their pace
+    /// rather than a number tuned on somebody else. Capped while collecting: a gap longer
+    /// than two seconds is a turn boundary, not a pause inside one.
+    private var longestMidTurnGap: TimeInterval = 0
+    private let unclearSilence: TimeInterval = 0.82
+    private let maxUnclearSilence: TimeInterval = 1.25
+
     private var continuationChainStartedAt = Date.distantPast
     private var continuationCount = 0
     /// A question that has genuinely been split by a pause takes one or two more pieces to
@@ -1328,6 +1363,8 @@ class MainViewModel {
         consumedPrefix = ""
         continuationChainStartedAt = .distantPast
         continuationCount = 0
+        unclearDeadline = nil; unclearPendingText = ""
+        longestMidTurnGap = 0
     }
 
     private func handleUtteranceEnd() {
@@ -1441,21 +1478,27 @@ class MainViewModel {
             }
             return
         }
-        // Do not answer the same question twice inside the dedup window.
-        guard autoDetector.acceptUtterance(text) else {
-            dlog("AUTO: duplicate of the question just answered — ignoring", tag: "AUTO")
+        // HOW the sentence ends decides whether to answer now, wait, or not at all. This
+        // runs BEFORE the duplicate guard on purpose: an unfinished turn must stay askable,
+        // and marking it as submitted here would silence the real question when it arrives.
+        switch AutoTurnDetector.classifyTurnEnding(text) {
+        case .unfinished:
+            // Silence proves they paused, never that they finished. Waiting costs nothing
+            // because their next word submits the turn.
+            dlog("AUTO: sentence still in the air — waiting: '\(text.suffix(40))'", tag: "AUTO")
             return
+        case .unclear:
+            // Follow this speaker's own pace when it is slower than the default, so a
+            // deliberate talker is not cut off by a number tuned on somebody quicker.
+            let paceFloor = longestMidTurnGap * 1.3
+            let wait = min(max(unclearSilence, paceFloor), maxUnclearSilence)
+            unclearPendingText = text
+            unclearDeadline = Date().addingTimeInterval(wait)
+            dlog("AUTO: ending unclear — giving it \(Int(wait * 1000))ms: '\(text.suffix(40))'", tag: "AUTO")
+            return
+        case .finished:
+            commitAutomaticTurn(text)
         }
-        if isProcessing {
-            dlog("AUTO: more of the question arrived — replacing the in-flight answer", tag: "AUTO")
-            answerEpoch += 1
-            isProcessing = false
-            showThinking = false
-        }
-        dlog("AUTO: speaker finished (audio) — answering", tag: "AUTO")
-        lastAnsweredQuestion = text
-        lastAnsweredAt = Date()
-        submitAutomaticTurn()
     }
 
     /// The answer TEXT, without the "Q: <question>" header the answer pane is built with.
@@ -1466,6 +1509,26 @@ class MainViewModel {
     static func answerBody(_ pane: String) -> String {
         guard pane.hasPrefix("Q: "), let split = pane.range(of: "\n\n") else { return pane }
         return String(pane[split.upperBound...])
+    }
+
+    /// Everything between deciding a turn is over and actually answering it. Shared by the
+    /// immediate path and the one that waited out an unclear ending.
+    private func commitAutomaticTurn(_ text: String) {
+        unclearDeadline = nil; unclearPendingText = ""
+        guard autoDetector.acceptUtterance(text) else {
+            dlog("AUTO: duplicate of the question just answered — ignoring", tag: "AUTO")
+            return
+        }
+        if isProcessing {
+            dlog("AUTO: more of the question arrived — replacing the in-flight answer", tag: "AUTO")
+            answerEpoch += 1
+            isProcessing = false
+            showThinking = false
+        }
+        dlog("AUTO: speaker finished — answering", tag: "AUTO")
+        lastAnsweredQuestion = text
+        lastAnsweredAt = Date()
+        submitAutomaticTurn()
     }
 
     /// Is the speech we just heard the user reading our own answer back?
