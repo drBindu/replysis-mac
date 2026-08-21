@@ -397,6 +397,10 @@ class SpeechmaticsEngine {
         guard !authErrorHandled else { return }   // report once per engine start
         authErrorHandled = true
         dlog("SM KEY ERROR — Speechmatics rejected the speech key. Pausing fast retries; will re-fetch every 60s.", tag: "SM")
+        // The token on disk is the one that was just refused. Leaving it there means every
+        // retry presents the same dead credential for its full hour, and the retry loop
+        // looks broken for a reason nothing on screen can explain.
+        UserSession.shared.discardCachedSpeechKey()
         statusText = "KEY ERROR"
         engineCancelled = true
         monitorTimer?.invalidate(); monitorTimer = nil

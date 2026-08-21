@@ -166,6 +166,7 @@ class UserSession {
         userId = ""; credits = 0; plan = "free"; isUnlimited = false
         speechmaticsKey = ""
         Keychain.delete(account: "session")
+        Keychain.delete(account: Self.speechKeyAccount)   // never outlive the session it belongs to
         try? FileManager.default.removeItem(at: sessionFile)
     }
 
@@ -236,11 +237,73 @@ class UserSession {
     }
 
     // MARK: - Speechmatics Key
+    //
+    // The token is good for about an hour and was kept in memory only, so every launch
+    // spent a fresh one against a twelve-per-hour allowance. A dozen restarts locked the
+    // account out — and the allowance is per ACCOUNT, not per app, so it took the Windows
+    // app down at the same time. Persist it and reuse it until it genuinely expires.
 
-    func fetchSpeechmaticsKeyAsync() async -> Bool {
+    private static let speechKeyAccount = "speechmaticsKey"
+    /// Renew this long before the real expiry, so a token cannot die mid-question.
+    private static let speechKeyRenewMargin: TimeInterval = 300
+
+    private struct CachedSpeechKey: Codable {
+        let key: String
+        let expiresAt: Date
+        /// Which account minted it. Handing one user's token to another is both a leak and
+        /// a miserable thing to debug, and switching accounts is exactly when it would happen.
+        let owner: String
+    }
+
+    private var speechKeyOwner: String {
+        isGuestSession ? "guest:\(DeviceIdentity.current)" : (userId.isEmpty ? email : userId)
+    }
+
+    private func loadCachedSpeechKey() -> String? {
+        guard let data = Keychain.load(account: Self.speechKeyAccount),
+              let cached = try? JSONDecoder().decode(CachedSpeechKey.self, from: data) else { return nil }
+        guard cached.owner == speechKeyOwner else {
+            dlog("SM key cache: minted for a different account — discarding", tag: "AUTH")
+            discardCachedSpeechKey(); return nil
+        }
+        guard cached.expiresAt.timeIntervalSinceNow > Self.speechKeyRenewMargin else {
+            dlog("SM key cache: expired, or close enough — fetching a fresh one", tag: "AUTH")
+            discardCachedSpeechKey(); return nil
+        }
+        return cached.key
+    }
+
+    private func cacheSpeechKey(_ key: String, ttl: TimeInterval) {
+        let cached = CachedSpeechKey(key: key,
+                                     expiresAt: Date().addingTimeInterval(ttl),
+                                     owner: speechKeyOwner)
+        guard let data = try? JSONEncoder().encode(cached) else { return }
+        Keychain.save(data, account: Self.speechKeyAccount)
+        dlog("SM key cached — reusable for \(Int(ttl / 60)) minutes", tag: "AUTH")
+    }
+
+    /// Throw the cached token away.
+    ///
+    /// MUST be called the moment a token is rejected. Otherwise one minted by a dead or
+    /// blocked account survives on disk for its full hour, the app keeps presenting it, and
+    /// nothing on screen explains why transcription stopped.
+    func discardCachedSpeechKey() {
+        speechmaticsKey = ""
+        Keychain.delete(account: Self.speechKeyAccount)
+    }
+
+    /// - Parameter forceRefresh: skip the cache and mint a new token. Only for a deliberate
+    ///   user retry, never for the automatic paths — that is what spends the allowance.
+    func fetchSpeechmaticsKeyAsync(forceRefresh: Bool = false) async -> Bool {
         guard !idToken.isEmpty || isGuestSession else {
             dlog("SM key fetch: no idToken and not a guest session — not logged in", tag: "AUTH")
             return false
+        }
+        if forceRefresh { discardCachedSpeechKey() }
+        if let cached = loadCachedSpeechKey() {
+            speechmaticsKey = cached
+            dlog("SM key: reusing the cached token — no new one spent", tag: "AUTH")
+            return true
         }
         let urlStr = "\(AppConfig.backendUrl)/api/v1/stt/key"
         dlog("SM key fetch: GET \(urlStr)", tag: "AUTH")
@@ -256,6 +319,9 @@ class UserSession {
             if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let key = obj["key"] as? String, !key.isEmpty {
                 self.speechmaticsKey = key
+                // The server says how long it is good for; Windows clamps the same way.
+                let ttl = TimeInterval(min(max(obj["expiresIn"] as? Int ?? 3600, 60), 86_400))
+                self.cacheSpeechKey(key, ttl: ttl)
                 dlog("SM key fetch: SUCCESS — key length=\(key.count)", tag: "AUTH")
                 return true
             }

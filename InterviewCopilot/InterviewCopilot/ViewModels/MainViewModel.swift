@@ -2481,7 +2481,9 @@ class MainViewModel {
         }
         micStatus = "…"; micColor = Color(white: 0.42)
         Task {
-            let ok = await session.fetchSpeechmaticsKeyAsync()
+            // The user is retrying BECAUSE something was refused, so bypass the cache. This
+            // is the one path that should spend a fresh token from the hourly allowance.
+            let ok = await session.fetchSpeechmaticsKeyAsync(forceRefresh: true)
             if ok {
                 engine.start(smKey: session.speechmaticsKey)
                 micStatus = "READY"
