@@ -86,13 +86,17 @@ class PromptBuilder {
     /// The fence count is deliberately not required to be even: streaming produces
     /// unclosed fences constantly, and a half-arrived block is exactly the one most likely
     /// to still be in the newest turn when the next question is asked.
-    /// The section header a screen answer puts its code under.
+    /// The section titles whose contents are CODE.
     ///
-    /// Screen answers are told NOT to use fences — they use these rule headers instead — so
-    /// collapsing fences alone missed the biggest code blocks the app produces. A screen
-    /// answer is where a full solution actually appears; the spoken path only emits fenced
-    /// code when the model does it unprompted.
-    private static let solutionHeader = "━━━ SOLUTION ━━━"
+    /// One list, used both to render a section as a code panel and to collapse it out of
+    /// history. They were briefly separate and immediately drifted: the collapse knew only
+    /// about SOLUTION, so a SQL answer under QUERY rendered as code on screen and still
+    /// rode along in every later prompt as code. Two lists of the same thing is how that
+    /// happens, so there is one.
+    ///
+    /// Screen answers are told NOT to use fences — rule 5 sends code straight under these
+    /// headers — so collapsing fences alone misses the biggest blocks the app produces.
+    static let codeSectionTitles: Set<String> = ["SOLUTION", "QUERY", "FIX", "CODE"]
 
     static func collapseCodeBlocks(_ text: String) -> String {
         var out = text
@@ -106,14 +110,26 @@ class PromptBuilder {
             }
             out = rebuilt
         }
-        // Collapse a SOLUTION section: everything from its header up to the next header,
-        // or to the end when it is the last section.
-        while let start = out.range(of: solutionHeader) {
-            let after = out[start.upperBound...]
-            let end = after.range(of: "━━━").map { after.distance(from: after.startIndex, to: $0.lowerBound) }
-            let tailStart = end.map { after.index(after.startIndex, offsetBy: $0) } ?? after.endIndex
-            out = String(out[..<start.lowerBound]) + "[code given]\n\n" + String(after[tailStart...])
+        // Collapse each code section: everything from its header up to the next header, or
+        // to the end when it is the last section. The surrounding PROBLEM / APPROACH /
+        // COMPLEXITY prose is what makes the turn worth remembering at all, so it stays.
+        var lines = out.components(separatedBy: "\n")
+        var kept: [String] = []
+        var droppingCode = false
+        for line in lines {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("━━━") && t.hasSuffix("━━━") && t.count > 6 {
+                let title = t.replacingOccurrences(of: "━", with: "")
+                    .trimmingCharacters(in: .whitespaces).uppercased()
+                droppingCode = codeSectionTitles.contains(title)
+                if droppingCode { kept.append("[code given]") ; continue }
+                kept.append(line)
+                continue
+            }
+            if !droppingCode { kept.append(line) }
         }
+        lines = kept
+        out = lines.joined(separator: "\n")
         return out
     }
 

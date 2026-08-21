@@ -1427,7 +1427,10 @@ enum AnswerBlock {
 }
 
 func parseAnswerBlocks(_ raw: String) -> [AnswerBlock] {
-    let codeTitles: Set<String> = ["SOLUTION", "QUERY", "FIX", "CODE"]
+    // The SAME list the history collapse uses. Kept in one place because when they were
+    // two, they drifted immediately — a QUERY section rendered as code here and was still
+    // carried as code into every later prompt.
+    let codeTitles = PromptBuilder.codeSectionTitles
     var blocks: [AnswerBlock] = []
     var buffer: [String] = []
     var inCode = false
