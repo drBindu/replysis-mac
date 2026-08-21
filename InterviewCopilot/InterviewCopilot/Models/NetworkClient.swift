@@ -102,6 +102,17 @@ class NetworkClient {
                             if attempt == 0, await UserSession.shared.tryRefreshAsync() { continue }
                             onMain { onError("SESSION_EXPIRED") }; return
                         }
+                        // A RATE LIMIT IS NOT A TRANSIENT ERROR, and must fail at once.
+                        //
+                        // Retrying cannot help: this minute's allowance is spent, and the
+                        // retry only doubles the time before the user learns anything —
+                        // which makes a limit look like a fault. The free Groq tier is
+                        // 8,000 tokens a minute and one full-screen view costs about 1,809
+                        // of them, so four screen questions in a minute reaches it.
+                        if http.statusCode == 429 {
+                            let wait = Self.retryAfterSeconds(http)
+                            onMain { onError("RATE_LIMIT:\(wait)") }; return
+                        }
                         if !(200...299).contains(http.statusCode) {
                             if attempt == 0 { continue }   // transient 5xx → one silent retry
                             onMain { onError("Server error (\(http.statusCode))") }; return
@@ -132,6 +143,23 @@ class NetworkClient {
                 }
             }
         }
+    }
+
+    /// How long to wait, from Retry-After, as whole seconds. Zero when the server did not
+    /// say — the caller must then not invent a number.
+    static func retryAfterSeconds(_ http: HTTPURLResponse) -> Int {
+        guard let raw = http.value(forHTTPHeaderField: "Retry-After")?
+            .trimmingCharacters(in: .whitespaces), !raw.isEmpty else { return 0 }
+        if let secs = Int(raw) { return max(0, secs) }
+        // The header may also be an HTTP date.
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.timeZone = TimeZone(identifier: "GMT")
+        fmt.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        if let date = fmt.date(from: raw) {
+            return max(0, Int(date.timeIntervalSinceNow.rounded()))
+        }
+        return 0
     }
 
     /// Best-effort warm-up: open the TLS connection and wake the backend so the FIRST

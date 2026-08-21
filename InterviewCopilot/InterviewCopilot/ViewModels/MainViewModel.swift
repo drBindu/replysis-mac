@@ -947,6 +947,9 @@ class MainViewModel {
                     }
                 }
                 else if err == "SESSION_EXPIRED" { self.engine.stop(); self.session.clear(); self.setLoggedOutUI() }
+                else if err.hasPrefix("RATE_LIMIT") {
+                    self.aiAnswer = Self.rateLimitMessage(err)
+                }
                 else                         { self.aiAnswer = "⚠ Something went wrong. Please try again." }
                 // DATA-LOSS FIX: previously the error paths saved nothing, so if the AI
                 // failed (out of credits, connection issue) the interviewer's question was
@@ -967,6 +970,28 @@ class MainViewModel {
     ///   Display strips code fences; history must KEEP them, because the fences are how a
     ///   later turn finds the code block to collapse. Without them the code is still there,
     ///   indistinguishable from prose, and rides along in every later prompt forever.
+    /// Say a rate limit IS a rate limit.
+    ///
+    /// "The AI service is temporarily unavailable" is true and useless: nothing is broken,
+    /// this minute's allowance is spent, and it comes back on its own. Saying so is the
+    /// difference between a user waiting twenty seconds and a user filing a bug.
+    ///
+    /// A wait under fifteen seconds is never printed. An early version on Windows managed
+    /// "try again in about 1 seconds", which is worse than saying nothing — it reads as
+    /// broken twice over, and by the time it is read the number is wrong anyway.
+    static func rateLimitMessage(_ err: String) -> String {
+        let seconds = Int(err.split(separator: ":").last.map(String.init) ?? "") ?? 0
+        let when = seconds >= 15 ? "in about \(seconds) seconds" : "in a moment"
+        return """
+        ⏳ This minute's allowance for the AI service is spent
+
+        Nothing is broken and nothing was lost — the limit resets on its own. Ask again \(when).
+
+        The free tier allows 8,000 tokens a minute, and a full-screen analysis costs about \
+        1,800 of them, so a few screen questions in quick succession will reach it.
+        """
+    }
+
     private func finishAI(question: String, answer: String, prefix: String = "",
                           historyAnswer: String? = nil) {
         aiAnswer = "\(prefix)\(answer)"
