@@ -355,7 +355,8 @@ class SpeechmaticsEngine {
                 Task { @MainActor in dlog("SM \(source): \(trimmed)", tag: "SM") }
             }
             if Self.isAuthFailure(line) {
-                Task { @MainActor [weak self] in self?.handleAuthError() }
+                let exhausted = Self.isBalanceExhausted(line)
+                Task { @MainActor [weak self] in self?.handleAuthError(balanceExhausted: exhausted) }
             }
             // The engine prints "STATUS: ONLINE" once the websocket is connected and it's
             // pulling audio — the moment speaking will really be transcribed.
@@ -381,8 +382,22 @@ class SpeechmaticsEngine {
 
     /// A GENUINE auth/key failure. Phrases are specific so transient noise can't
     /// false-positive and wrongly kill transcription mid-interview.
+    /// Specifically: the account is out of money, rather than the key being wrong. Same
+    /// handling, different thing to tell the user — one is ours to fix, the other is theirs.
+    nonisolated static func isBalanceExhausted(_ line: String) -> Bool {
+        let low = line.lowercased()
+        return low.contains("contract blocked") || low.contains("credit balance exhausted")
+    }
+
     nonisolated static func isAuthFailure(_ line: String) -> Bool {
         let low = line.lowercased()
+        // A blocked contract is an AUTH failure, not a transient one. Speechmatics answers
+        // {'type': 'not_allowed', 'reason': 'Contract blocked: Credit Balance Exhausted'}
+        // when the balance runs out. On Windows that matched nothing here, so the engine
+        // retried on a doubling backoff forever while the UI said "connecting" — a state it
+        // could never leave, because no amount of retrying adds credit to the account.
+        if low.contains("contract blocked") || low.contains("credit balance exhausted")
+            || low.contains("not_allowed") || low.contains("not allowed") { return true }
         return low.contains("invalid api key")   || low.contains("invalid_api_key")
             || low.contains("authentication failed")
             || low.contains("unauthorized")       || low.contains("unauthorised")
@@ -393,9 +408,12 @@ class SpeechmaticsEngine {
 
     /// Speechmatics rejected the key. Stop the futile fast-retry loop, tell the UI, and
     /// switch to a slow 60s re-fetch so we auto-recover the moment the server key is fixed.
-    private func handleAuthError() {
+    private(set) var balanceExhausted = false
+
+    private func handleAuthError(balanceExhausted: Bool = false) {
         guard !authErrorHandled else { return }   // report once per engine start
         authErrorHandled = true
+        self.balanceExhausted = balanceExhausted
         dlog("SM KEY ERROR — Speechmatics rejected the speech key. Pausing fast retries; will re-fetch every 60s.", tag: "SM")
         // The token on disk is the one that was just refused. Leaving it there means every
         // retry presents the same dead credential for its full hour, and the retry loop
@@ -406,7 +424,12 @@ class SpeechmaticsEngine {
         monitorTimer?.invalidate(); monitorTimer = nil
         killAndDispose()
         onKeyError?()
-        startRetryTimer()
+        // Slower than the ordinary 60s retry ON PURPOSE. Every attempt after an auth failure
+        // mints a fresh token, and the allowance is twelve an hour — a one-minute loop would
+        // exhaust it inside ten minutes and lock the account out of both apps while trying to
+        // recover from a problem retrying cannot fix. Ten minutes still recovers on its own,
+        // promptly enough, once billing is restored.
+        startRetryTimer(interval: 600)
     }
 
     private func startMonitorTimer() {
@@ -539,9 +562,9 @@ class SpeechmaticsEngine {
 
     // MARK: - Retry
 
-    func startRetryTimer() {
+    func startRetryTimer(interval: TimeInterval = 60.0) {
         retryTimer?.invalidate()
-        retryTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
+        retryTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 // BUG-7/21 FIX: if the engine is already running (restarted by other path)

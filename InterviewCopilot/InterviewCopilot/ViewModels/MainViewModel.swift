@@ -2500,6 +2500,26 @@ class MainViewModel {
     private func handleSpeechKeyError() {
         isListening = false; isMuted = true
         micStatus = "NO MIC"; micColor = Color(white: 0.42)
+        // Two different failures arrive down this path and they are not the user's to
+        // confuse. A rejected key is ours to fix and they can only wait; an exhausted
+        // balance is an account that needs topping up, and saying "server-side key issue"
+        // there sends them to wait for something nobody is coming to fix.
+        if engine.balanceExhausted {
+            aiAnswer = """
+            ⚠ Live transcription is paused
+
+            The speech account has run out of credit, so Speechmatics is refusing new \
+            connections. Retrying cannot fix this — the balance has to be topped up.
+
+            Everything else still works:
+
+            • Type your question in the Ask bar below to get an instant answer
+            • Press F9 to analyze whatever is on your screen
+
+            Transcription resumes by itself, within about ten minutes, once billing is restored.
+            """
+            return
+        }
         aiAnswer = """
         ⚠ Live transcription is paused
 
