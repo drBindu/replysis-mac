@@ -246,6 +246,25 @@ struct MainView: View {
 
             headerSeparator
 
+            // Passing states about the microphone live here, next to the other passing
+            // states — never in the answer panel, which is somebody's answer and not ours
+            // to overwrite with news about hardware.
+            if !vm.listeningNotice.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "mic.slash.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(Color(hex: "#f59e0b"))
+                    Text(vm.listeningNotice)
+                        .font(.system(size: 10, weight: .bold)).tracking(0.4)
+                        .foregroundColor(Color(hex: "#fcd34d"))
+                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                }
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .background(Capsule().fill(Color(hex: "#2A1F0D")))
+                .overlay(Capsule().stroke(Color(hex: "#7c5e1e"), lineWidth: 1))
+                .help("Press Space to start listening again")
+            }
+
             // Status cluster: session time and credits read as one unit, because they are
             // both "how the session is going" rather than controls.
             HStack(spacing: 8) {

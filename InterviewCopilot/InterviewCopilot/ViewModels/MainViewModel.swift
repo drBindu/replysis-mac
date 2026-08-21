@@ -1219,6 +1219,7 @@ class MainViewModel {
         if raw != lastRawTranscript {
             lastRawTranscript = raw
             lastSpeechHeardAt = Date()   // somebody is speaking — the room is not empty
+            heardAnythingThisSession = true
         }
         let text = remainingSpeech(raw)
         transcriptLogTick += 1
@@ -1653,7 +1654,31 @@ class MainViewModel {
     /// even a long thinking pause is well under a minute. Meant to catch an empty room,
     /// never a person deciding what to say.
     private let idleListeningTimeout: TimeInterval = 180
+    /// How long to wait when nothing has been said AT ALL.
+    ///
+    /// Three minutes is right for a pause inside a conversation, where somebody is thinking
+    /// and will speak again. It is far too patient for a session where not one word ever
+    /// arrived: that is a key pressed by mistake, not a pause, and waiting three minutes to
+    /// notice turns a stray press into a notice that appears over and over. Once anything
+    /// has been said, the three minutes applies for the rest of that session.
+    private let silentSessionTimeout: TimeInterval = 45
     private let listeningReportInterval: TimeInterval = 60
+
+    /// Has anything been heard at all in the current listening session?
+    private var heardAnythingThisSession = false
+
+    /// A passing state worth knowing about, shown in the header beside the other passing
+    /// states — never in the answer panel. See stopForIdle.
+    var listeningNotice = ""
+    private var listeningNoticeTimer: Timer?
+
+    private func showListeningNotice(_ text: String) {
+        listeningNotice = text
+        listeningNoticeTimer?.invalidate()
+        listeningNoticeTimer = Timer.scheduledTimer(withTimeInterval: 20.0, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.listeningNotice = "" }
+        }
+    }
 
     private var listeningMeterTimer: Timer?
     private var listeningSince: Date?
@@ -1679,6 +1704,8 @@ class MainViewModel {
         // connection would reset the idle clock for free.
         listeningSince = Date()
         lastSpeechHeardAt = Date()
+        heardAnythingThisSession = false
+        listeningNoticeTimer?.invalidate(); listeningNotice = ""   // a new session, not the old one's news
         listeningMeterTimer?.invalidate()
         listeningMeterTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.listeningMeterTick() }
@@ -1706,8 +1733,14 @@ class MainViewModel {
         guard isListening else { stopListeningMeter(); return }
         let now = Date()
 
-        if now.timeIntervalSince(lastSpeechHeardAt) >= idleListeningTimeout {
-            dlog("METER: no speech for \(Int(idleListeningTimeout / 60)) minutes — stopping the microphone", tag: "METER")
+        // A pause and a stray keypress are not the same situation, and only one of them
+        // deserves three minutes of patience.
+        let patience = heardAnythingThisSession ? idleListeningTimeout : silentSessionTimeout
+        if now.timeIntervalSince(lastSpeechHeardAt) >= patience {
+            dlog(heardAnythingThisSession
+                 ? "METER: no speech for \(Int(idleListeningTimeout / 60)) minutes — stopping the microphone"
+                 : "METER: nothing heard in \(Int(silentSessionTimeout))s — stopping the microphone",
+                 tag: "METER")
             stopForIdle()
             return
         }
@@ -1733,7 +1766,15 @@ class MainViewModel {
         isListening = false; isMuted = true
         engine.writePauseFlag()
         resetAutoTurnState()
-        aiAnswer = "The microphone switched off after \(Int(idleListeningTimeout / 60)) minutes of silence, so your listening time is not spent on an empty room.\n\nPress Space to start again."
+        // Said in the HEADER, not in the answer.
+        //
+        // Writing it into the answer panel replaced an answer somebody was still reading
+        // with a message about the microphone — and it fired exactly then, because in an
+        // automatic mode the mic stays open through the whole answer by design. The mic
+        // going quiet is worth knowing and is not worth losing the answer over.
+        showListeningNotice(heardAnythingThisSession
+            ? "MIC OFF AFTER \(Int(idleListeningTimeout / 60)) MIN QUIET — SPACE TO RESUME"
+            : "MIC OFF — NOTHING HEARD")
         updateMicUI()
     }
 
