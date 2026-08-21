@@ -203,9 +203,21 @@ class MainViewModel {
         // ON, so a fresh install is invisible to screen sharing/recording from the first
         // frame, not just after the user finds a toggle somewhere.
         applyStealthMode()
+        // loadSettings() ran in init(), so the saved mode is already active — but the hint
+        // is a stored default written for Manual. Relaunching in Practice Auto therefore
+        // opened telling the user to press SPACE, which is wrong there and is exactly the
+        // advice that mode exists to remove.
+        aiAnswerHint = idleHintForCurrentMode
         // Surface a clear message if the speech service rejects the key, instead of
         // silently showing an empty transcript forever.
         engine.onKeyError = { [weak self] in self?.handleSpeechKeyError() }
+        // No audio source is permitted — say so loudly rather than capturing something the
+        // active mode promised not to.
+        engine.onCaptureUnavailable = { [weak self] in self?.handleCaptureUnavailable() }
+        // loadSettings() restored the mode in init(), so the mic veto must be in force before
+        // the engine's first start — otherwise a relaunch straight into Interview Auto could
+        // open the mic on the very first spawn.
+        engine.micCaptureAllowed = listeningMode.usesMicrophone
         // THE turn signal. The recogniser has the waveform and tells us when the speaker
         // actually stopped; we no longer infer it from how the text is punctuated.
         engine.onUtteranceEnd = { [weak self] in self?.handleUtteranceEnd() }
@@ -330,9 +342,7 @@ class MainViewModel {
         // credits + key fetch first), so it buys several extra seconds of head start for
         // free. Consistent with the user's chosen trade-off: the mic indicator may appear
         // this early too, in exchange for the best possible shot at feeling instant.
-        if micCaptureEnabled && micStatus == .authorized {
-            MicPrimer.shared.start()
-        }
+        primeMicIfPermitted()
 
         // ENTERPRISE PERMISSION PATTERN: explain BEFORE asking, never fire a native system
         // popup straight from launch code with no context. If ANYTHING the app uses still
@@ -394,7 +404,7 @@ class MainViewModel {
                 self.permMicrophone = granted
                 self.micDenied = !granted   // BUG-12 FIX: was missing — UI showed wrong denied state
                 if granted {
-                    MicPrimer.shared.start()   // earliest possible warmup — see MicPrimer's doc comment
+                    self.primeMicIfPermitted()   // earliest possible warmup — see MicPrimer's doc comment
                     // If the engine already came up in system-only mode before the user
                     // answered this popup, restart it into BOTH mode NOW — so the first Space
                     // press lands on an already-warm mic pipeline instead of triggering a
@@ -652,7 +662,10 @@ class MainViewModel {
         // (Audio Capture: "System audio + my voice"). With the default "System audio only"
         // mode, the mic is never touched and never prompted for, so the app stays fully
         // invisible (no orange indicator, nothing in the mic list if checked).
-        if micCaptureEnabled {
+        // Gated on the EFFECTIVE rule, not the saved preference: in Interview Auto this used
+        // to fire the macOS microphone prompt, and route the user to the mic privacy pane,
+        // for a device that mode never opens.
+        if micCaptureActive {
             let micAuth = AVCaptureDevice.authorizationStatus(for: .audio)
             if micAuth == .notDetermined {
                 // Guard prevents a re-entrant loop: user hammers Space while popup is open →
@@ -728,7 +741,7 @@ class MainViewModel {
             dlog("SPACE: unmuting → LISTENING", tag: "SPACE")
             isMuted = false; isListening = true
             justStartedListening = true; listenStartTicks = 0
-            autoDetector.reset()   // fresh turn — restart the quiet clock
+            resetAutoTurnState()   // fresh turn — nothing from the last one carries over
             transcript = ""; aiAnswer = ""
             // The engine has a slow (~10s) cold start on the first listen after launch.
             // Tell the user it's warming up instead of showing a green mic that silently
@@ -1174,7 +1187,22 @@ class MainViewModel {
 
     private var transcriptLogTick = 0
     private var autoBlockLogTick = 0
+    private var lastEngineReady = false
     private func updateTranscript() {
+        // Transcription can drop mid-interview — network, session timeout, engine crash —
+        // and an automatic mode then quietly answers nothing while the header still looks
+        // armed. This poll already runs; use it to notice the flip in BOTH directions, so
+        // the drop is visible and the recovery clears itself without the user doing anything.
+        if engine.isReady != lastEngineReady {
+            lastEngineReady = engine.isReady
+            dlog("Transcription live=\(engine.isReady)", tag: "AUTO")
+            if autoModeEnabled && isListening {
+                aiAnswerHint = engine.isReady
+                    ? idleHintForCurrentMode
+                    : "⚠ Reconnecting to the speech service — nothing is being heard right now."
+            }
+            updateMicUI()
+        }
         // Keep reading the transcript even while an answer is streaming: in an automatic
         // mode the app stays open, and a question that continues must still be seen.
         guard session.isLoggedIn, isListening || (autoModeEnabled && isProcessing) else { return }
@@ -1186,7 +1214,7 @@ class MainViewModel {
             }
             return
         }
-        let text = engine.readLatestTxt()
+        let text = remainingSpeech(engine.readLatestTxt())
         transcriptLogTick += 1
         // Log every ~3 seconds (every 20 ticks at 150ms)
         if transcriptLogTick % 20 == 0 {
@@ -1232,10 +1260,66 @@ class MainViewModel {
     private var lastAnsweredAt = Date.distantPast
     /// How long after an answer a further utterance still counts as the same question.
     private let continuationWindow: TimeInterval = 20
+    /// When the CURRENT run of continuations began.
+    ///
+    /// The window used to be measured from the last answer, and every merge produced a new
+    /// answer — so the window reset itself and never closed. With someone talking nearby,
+    /// each short fragment merged, re-answered, and extended the chain again: one API call
+    /// and one credit per fragment, and a "question" that grew into a paragraph of noise
+    /// before the service finally rejected it. Anchoring to the START of the chain gives it
+    /// an end.
+    private var continuationChainStartedAt = Date.distantPast
+    private var continuationCount = 0
+    /// A question that has genuinely been split by a pause takes one or two more pieces to
+    /// finish, never five, and never runs to a paragraph.
+    private let maxContinuations = 2
+    private let maxContinuationWords = 60
+
+    /// The part of latest.txt that has ALREADY been answered.
+    ///
+    /// The mic deliberately stays open while an answer streams, so the next question is
+    /// often already being spoken when the previous answer lands. Clearing the file at that
+    /// moment — which is what re-arming used to do unconditionally — cut that question in
+    /// half: the surviving tail no longer read as a question, so nothing was answered at
+    /// all and the user sat in silence in front of the interviewer. Subtracting a remembered
+    /// prefix keeps every word instead, and still gives each turn a clean slate.
+    private var consumedPrefix = ""
+
+    /// What has been said that we have NOT already answered.
+    ///
+    /// Falls back to the whole transcript whenever the prefix stops matching — the
+    /// recogniser revises its earlier words, and the engine clears the file on reset — so a
+    /// stale prefix can never subtract text that is actually new.
+    private func remainingSpeech(_ raw: String) -> String {
+        let full = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let consumed = consumedPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !consumed.isEmpty else { return full }
+        guard full.hasPrefix(consumed) else {
+            consumedPrefix = ""
+            return full
+        }
+        return String(full.dropFirst(consumed.count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Forget the previous turn completely.
+    ///
+    /// Continuation merging, the duplicate guard and the consumed prefix all describe ONE
+    /// stretch of listening. Left standing across a mode change or a new session they get
+    /// applied to speech they have nothing to do with — the first thing said in Practice
+    /// Auto was being glued onto a question asked in Interview Auto.
+    private func resetAutoTurnState() {
+        autoDetector.forgetLastAnswered()
+        lastAnsweredQuestion = ""
+        lastAnsweredAt = .distantPast
+        consumedPrefix = ""
+        continuationChainStartedAt = .distantPast
+        continuationCount = 0
+    }
 
     private func handleUtteranceEnd() {
         guard autoModeEnabled, isListening, !isScreenAnalyzing, engine.isReady else { return }
-        var text = engine.readLatestTxt().trimmingCharacters(in: .whitespacesAndNewlines)
+        var text = remainingSpeech(engine.readLatestTxt())
         guard !text.isEmpty else { return }
 
         // CONTINUATION: silence alone cannot tell "finished" from "thinking mid-sentence".
@@ -1246,10 +1330,18 @@ class MainViewModel {
         // SAME question continuing: merge it with what was already asked and answer the
         // whole thing, replacing the partial answer.
         let sinceAnswer = Date().timeIntervalSince(lastAnsweredAt)
+        let chainAge = Date().timeIntervalSince(continuationChainStartedAt)
+        let mergedCandidate = (lastAnsweredQuestion + " " + text)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let mergedWords = mergedCandidate.split(whereSeparator: { $0 == " " }).count
         if !lastAnsweredQuestion.isEmpty, sinceAnswer < continuationWindow,
+           chainAge < continuationWindow,
+           continuationCount < maxContinuations,
+           mergedWords <= maxContinuationWords,
+           !AutoTurnDetector.isFragmentedNoise(mergedCandidate),
            Self.looksLikeContinuation(previous: lastAnsweredQuestion, next: text) {
-            let merged = (lastAnsweredQuestion + " " + text)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            continuationCount += 1
+            let merged = mergedCandidate
             dlog("AUTO: continuation — re-answering the full question: '\(merged.prefix(70))'", tag: "AUTO")
             // Say WHY the answer just changed. Without this the replacement looks like the
             // app glitched and lost the answer, right when the user is reading it.
@@ -1262,7 +1354,6 @@ class MainViewModel {
             transcript = merged
             lastAnsweredQuestion = merged
             lastAnsweredAt = Date()
-            autoDetector.reset()
             submitAutomaticTurn(question: merged)
             return
         }
@@ -1278,7 +1369,14 @@ class MainViewModel {
         // Detected by overlap rather than timing: a cooldown would either be too short for
         // a long answer or deafen the app to a genuine follow-up. If what was just heard is
         // largely made of words from the answer on screen, it is the answer being spoken.
-        if Self.echoesOurAnswer(spoken: text, answer: aiAnswer) {
+        // ...but ONLY in a mode that can actually hear us. Interview Auto closes the mic
+        // by design, so nothing the candidate says reaches the recogniser and every match
+        // here is a false positive — and a false positive is expensive, because it discards
+        // the utterance AND wipes the transcript. The realistic trigger is the interviewer
+        // restating their own question, which matches instantly: `aiAnswer` opens with the
+        // literal "Q: <question>" line, so a repeat is word-for-word our own text.
+        if listeningMode.usesMicrophone,
+           Self.echoesOurAnswer(spoken: text, answer: Self.answerBody(aiAnswer)) {
             dlog("AUTO: our own answer being read aloud — discarding it", tag: "AUTO")
             // DISCARD it rather than just ignoring it. The transcript accumulates, so an
             // echo left in place gets glued to the next real question — "…learn more about
@@ -1286,7 +1384,7 @@ class MainViewModel {
             // looks mostly like the answer, so the genuine question is thrown out with it.
             // Clearing here means the next thing said stands on its own.
             transcript = ""
-            autoDetector.reset()
+            resetAutoTurnState()
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 self?.engine.clearLatestTxt()
                 self?.engine.writeResetFlag()
@@ -1294,11 +1392,40 @@ class MainViewModel {
             return
         }
 
+        // NOT THE LANGUAGE WE ARE LISTENING FOR — or a conversation across the room. The
+        // engine is configured for English and maps whatever it hears onto English words, so
+        // Telugu (or a phone call nearby) arrives as confident nonsense that passes every
+        // question test and costs a credit each time. Drop it, and step past it so it cannot
+        // glue itself to a real question later.
+        if AutoTurnDetector.isFragmentedNoise(text) {
+            dlog("AUTO: transcript is fragmented noise, not speech we can answer — discarding: '\(text.prefix(60))'", tag: "AUTO")
+            consumedPrefix = engine.readLatestTxt()
+            transcript = ""
+            return
+        }
+
         // Still skip backchannel and self-corrections — "okay", "yes sir", "sorry" are
         // complete utterances acoustically, and answering them would burn a credit and
         // put a pointless answer on screen mid-interview.
-        guard AutoTurnDetector.isLikelyCompleteQuestion(AutoTurnDetector.normalize(text)) else {
-            dlog("AUTO: utterance ended but it is not a question — ignoring: '\(text.prefix(50))'", tag: "AUTO")
+        // Practice Auto demands a real question form — see requireInterrogative. Alone with
+        // the app, the user asks in questions and rehearses in statements, and answering the
+        // rehearsal is what turned the mode into a loop answering its own answers.
+        guard AutoTurnDetector.isLikelyCompleteQuestion(AutoTurnDetector.normalize(text),
+                                                        requireInterrogative: listeningMode == .practiceAuto) else {
+            // IGNORING IS NOT ENOUGH. Rejected speech stays in the file and gets glued to the
+            // next real question, and once the pile carries two full stops with no
+            // interrogative in its opening words it is rejected FOREVER — every later
+            // question dies with it and the app never answers again until New Session.
+            // Practice Auto guarantees this: saying the answer out loud is the point of the
+            // mode, none of it is a question, and paraphrasing means echo detection never
+            // catches it either. So step past speech that is spent.
+            if AutoTurnDetector.isSpentSpeech(text) {
+                consumedPrefix = engine.readLatestTxt()
+                transcript = ""
+                dlog("AUTO: not a question and finished — stepping past it so the next one stands alone: '\(text.prefix(50))'", tag: "AUTO")
+            } else {
+                dlog("AUTO: utterance ended but it is not a question — ignoring: '\(text.prefix(50))'", tag: "AUTO")
+            }
             return
         }
         // Do not answer the same question twice inside the dedup window.
@@ -1316,6 +1443,16 @@ class MainViewModel {
         lastAnsweredQuestion = text
         lastAnsweredAt = Date()
         submitAutomaticTurn()
+    }
+
+    /// The answer TEXT, without the "Q: <question>" header the answer pane is built with.
+    ///
+    /// The header repeats the question verbatim, so comparing speech against the whole pane
+    /// meant a repeated or rephrased question scored as an echo of ourselves and was thrown
+    /// away — the one moment the user most needs an answer.
+    static func answerBody(_ pane: String) -> String {
+        guard pane.hasPrefix("Q: "), let split = pane.range(of: "\n\n") else { return pane }
+        return String(pane[split.upperBound...])
     }
 
     /// Is the speech we just heard the user reading our own answer back?
@@ -1401,13 +1538,32 @@ class MainViewModel {
             // arriving at the moment we decided the turn was over.
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard let self, self.autoModeEnabled else { return }
+            // Everything heard up to this instant is what we are about to answer. Record it
+            // BEFORE answering, so whatever arrives next can be told apart from it without
+            // clearing the file out from under a speaker who is still mid-sentence.
+            let raw = self.engine.readLatestTxt()
+            let heard = self.remainingSpeech(raw)
+            self.consumedPrefix = raw
             if let forced, !forced.isEmpty {
                 self.transcript = forced
+                self.lastAnsweredQuestion = forced
+                self.lastAnsweredAt = Date()
                 self.startAI(manualQuestion: forced)
                 return
             }
-            let q = self.engine.readLatestTxt().trimmingCharacters(in: .whitespacesAndNewlines)
-            if !q.isEmpty { self.transcript = q }
+            // The drain above exists precisely because the tail of the question was still
+            // arriving. Record what we are ACTUALLY answering, not the shorter text that
+            // triggered the turn — otherwise a continuation merges against a truncated copy
+            // and re-asks half the question back to the model.
+            if !heard.isEmpty {
+                self.transcript = heard
+                self.lastAnsweredQuestion = heard
+                self.lastAnsweredAt = Date()
+                // A fresh question ends whatever chain preceded it, so the next continuation
+                // gets its own full budget rather than inheriting a spent one.
+                self.continuationChainStartedAt = Date()
+                self.continuationCount = 0
+            }
             self.startAI()
         }
     }
@@ -1426,27 +1582,34 @@ class MainViewModel {
             dlog("AUTO: busy (answering/capturing) — not arming yet", tag: "AUTO")
             return
         }
-        // THE LATCH: the detector holds isSubmitting until it is reset, and since the mic
-        // now stays OPEN while answering, isListening is still true when we get here. The
-        // old early-return skipped reset() entirely, so isSubmitting stayed true forever
-        // and not one further question could ever fire — the exact failure this guard was
-        // meant to prevent. Clearing the detector is required on BOTH paths; only the
-        // engine plumbing below is conditional on actually being muted.
+        // The mic now stays OPEN while answering, so isListening is still true when we get
+        // here and this is the path that actually runs after every answer. It must leave the
+        // app genuinely ready for the next question; the fuller re-arm below only applies
+        // when the mic really was muted.
         if isListening {
-            autoDetector.reset()
-            transcript = ""
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                self?.engine.clearLatestTxt()
-                self?.engine.writeResetFlag()
+            // Somebody may be MID-SENTENCE right now — the mic stayed open through the whole
+            // answer on purpose. Clear only when nothing new is waiting; otherwise keep the
+            // words and let the consumed prefix separate them from what we already answered.
+            let remainder = remainingSpeech(engine.readLatestTxt())
+            if remainder.isEmpty {
+                consumedPrefix = ""
+                transcript = ""
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    self?.engine.clearLatestTxt()
+                    self?.engine.writeResetFlag()
+                }
+                dlog("AUTO: ready for the next question (mic stayed open)", tag: "AUTO")
+            } else {
+                transcript = remainder
+                dlog("AUTO: next question already being spoken — keeping it: '\(remainder.prefix(60))'", tag: "AUTO")
             }
-            dlog("AUTO: ready for the next question (mic stayed open)", tag: "AUTO")
             return
         }
         dlog("AUTO: re-arming for the next question", tag: "AUTO")
         isMuted = false; isListening = true
         justStartedListening = true; listenStartTicks = 0
         transcript = ""
-        autoDetector.reset()
+        resetAutoTurnState()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             self?.engine.clearLatestTxt()
             self?.engine.writeResetFlag()
@@ -1472,7 +1635,17 @@ class MainViewModel {
     func updateMicUI() {
         refreshHotkeyGate()   // login/logout & listening transitions flow through here
         if isProcessing      { micStatus = "THINKING";  micColor = .orange }
-        else if isListening  { micStatus = "LISTENING"; micColor = .green }
+        else if isListening  {
+            // An automatic mode with no live transcription answers NOTHING, silently — the
+            // user speaks, waits, and gets no answer and no error. A green LISTENING pill
+            // through that window actively tells them the opposite of what is true, so say
+            // CONNECTING until the recogniser is genuinely online.
+            if autoModeEnabled && !engine.isReady {
+                micStatus = "CONNECTING"; micColor = .orange
+            } else {
+                micStatus = "LISTENING"; micColor = .green
+            }
+        }
         else if isMuted      { micStatus = "MUTED";     micColor = Color(red: 239/255, green: 68/255, blue: 68/255) }
         else                 { micStatus = isRecording ? "RECORDING" : "READY"
                                micColor = Color(red: 239/255, green: 68/255, blue: 68/255) }
@@ -1517,7 +1690,10 @@ class MainViewModel {
         endSession(); transcript = ""; aiAnswer = ""
         answerEpoch += 1   // cancel any in-flight streaming callbacks
         liveHints = ""; saveHints()   // fresh interview → fresh hints
-        aiAnswerHint = "New session started. Press SPACE to begin."
+        // Same reason as the launch hint: an automatic mode needs no keypress to begin.
+        aiAnswerHint = autoModeEnabled
+            ? "New session started. " + idleHintForCurrentMode
+            : "New session started. Press SPACE to begin."
         startNewSession()
     }
 
@@ -1935,7 +2111,7 @@ class MainViewModel {
             // OS hardware wake-up cost itself (see MicPrimer.swift) with nothing transcribed
             // from the mic in the meantime. Looked exactly like "the mic is broken" until it
             // silently recovered on its own a bit later.
-            MicPrimer.shared.start()
+            primeMicIfPermitted()
         } else if !enabled {
             // BUG FIX: MicPrimer may already be running from earlier in this session (it
             // starts as soon as mic is authorized, before the user ever touches Settings).
@@ -1972,7 +2148,7 @@ class MainViewModel {
         showThinking = false
         aiAnswer = ""
         transcript = ""
-        autoDetector.reset()
+        resetAutoTurnState()
         aiAnswerHint = idleHintForCurrentMode
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             self?.engine.clearLatestTxt()
@@ -1983,7 +2159,7 @@ class MainViewModel {
         // decides mic capture at start time — so a mode change that flips it needs the
         // engine restarted, not just a flag set.
         if previous.usesMicrophone != mode.usesMicrophone {
-            setMicCaptureEnabled(mode.usesMicrophone)
+            applyMicRule(for: mode)
         }
 
         guard mode.isAutomatic else {
@@ -1996,7 +2172,6 @@ class MainViewModel {
             return
         }
 
-        autoDetector.reset()
         // Starting an automatic mode has to actually START it, including what Space would
         // have done on the user's behalf. Failing silently here is what made the pill light
         // up while the mic stayed exactly as it was.
@@ -2019,6 +2194,39 @@ class MainViewModel {
             ? "Interview Auto — let the interviewer talk. The answer appears when they finish."
             : "Practice Auto — just ask out loud. The answer appears when you finish."
         rearmAutoModeIfNeeded()
+    }
+
+    /// Apply the MODE's microphone rule WITHOUT touching the user's saved Settings choice.
+    ///
+    /// This used to call setMicCaptureEnabled(), which persists. So choosing Interview Auto
+    /// permanently switched the user's "System audio + my voice" preference off, choosing
+    /// Practice Auto switched it back on, and returning to Manual left whatever the last
+    /// automatic mode had written — a setting the user picked, silently overwritten by an
+    /// unrelated control. The mode is a runtime veto; the preference is theirs.
+    private func applyMicRule(for mode: ListeningMode) {
+        engine.micCaptureAllowed = mode.usesMicrophone
+        dlog("Mic rule for \(mode.rawValue): allowed=\(mode.usesMicrophone) (saved preference micCaptureEnabled=\(micCaptureEnabled) untouched)", tag: "AUTO")
+        if mode.usesMicrophone {
+            primeMicIfPermitted()   // re-warm; see setMicCaptureEnabled for why
+        } else {
+            MicPrimer.shared.stop()        // or the warmed AVAudioEngine keeps the mic open
+        }
+        guard session.isLoggedIn, engine.isRunning else { return }
+        engine.stop()
+        engine.start(smKey: session.speechmaticsKey)
+    }
+
+    /// Nothing may be captured: the system tap could not start and this mode forbids the mic.
+    private func handleCaptureUnavailable() {
+        isListening = false; isMuted = true
+        micStatus = "NO AUDIO"; micColor = Color(white: 0.42)
+        showThinking = false; isProcessing = false
+        let why = listeningMode == .interviewAuto
+            ? "Interview Auto captures meeting audio only, and macOS is not allowing that capture right now — most often because Screen Recording is turned off for this app.\n\nIt will NOT switch to your microphone instead: in a real interview that would transcribe your own voice and answer it as the interviewer's question.\n\nEnable Screen Recording in System Settings → Privacy & Security, then click NO AUDIO to retry — or switch to Manual to use your microphone deliberately."
+            : "Your audio settings are System-audio-only, and macOS is not allowing that capture right now — most often because Screen Recording is turned off for this app.\n\nEnable Screen Recording in System Settings → Privacy & Security, then click NO AUDIO to retry — or turn on \"+ my voice\" in Settings."
+        aiAnswer = "⚠ " + why
+        dlog("AUTO: capture unavailable in \(listeningMode.rawValue) — refused to fall back to the mic", tag: "AUTO")
+        updateMicUI()
     }
 
     // MARK: - Stealth Mode (Settings toggle)
@@ -2056,14 +2264,48 @@ class MainViewModel {
         transcript = ""; aiAnswer = ""; answerIsBehavioral = false
         aiAnswerHint = idleHintForCurrentMode
         PromptBuilder.shared.clearHistory()
+        resetAutoTurnState()
         engine.clearLatestTxt()
         stopThinkingUI()
     }
 
+    /// Both states mean "no audio is reaching the app, tap to try again". NO AUDIO was
+    /// initially invisible to the header, so the one control that recovers from it did
+    /// nothing when clicked.
+    /// Warm the microphone ONLY if both the user's setting and the active mode permit it.
+    ///
+    /// MicPrimer opens a real AVAudioEngine on the mic, which lights the orange macOS
+    /// indicator. Three separate call sites started it while only consulting the saved
+    /// preference, so relaunching into Interview Auto — or granting mic permission, or
+    /// toggling "+ my voice" — turned the candidate's mic on inside the one mode whose
+    /// promise is that it stays off. One gate, so there is one place to get it right.
+    /// Is the microphone genuinely in play right now — saved preference AND active mode?
+    /// Anything that prompts for, warms, or complains about the mic must ask THIS, not the
+    /// preference alone.
+    var micCaptureActive: Bool { micCaptureEnabled && listeningMode.usesMicrophone }
+
+    private func primeMicIfPermitted() {
+        guard micCaptureActive,
+              AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+            dlog("MicPrimer suppressed — micCaptureEnabled=\(micCaptureEnabled) mode=\(listeningMode.rawValue)", tag: "AUTO")
+            return
+        }
+        MicPrimer.shared.start()
+    }
+
+    var micNeedsRetry: Bool { micStatus == "NO MIC" || micStatus == "NO AUDIO" }
+
     func retryMic() {
-        // Manual retry from the NO MIC badge. Always re-fetch + restart (even if a key
-        // exists) — the existing key may be the rejected one we're trying to replace.
+        // Manual retry from the NO MIC / NO AUDIO badge. Always re-fetch + restart (even if a
+        // key exists) — the existing key may be the rejected one we're trying to replace.
         guard session.isLoggedIn else { return }
+        // A capture refusal is not a key problem: the user has just granted Screen Recording
+        // and wants another attempt at the tap. Clear the message so a stale refusal doesn't
+        // sit on screen after a successful retry.
+        if micStatus == "NO AUDIO" {
+            aiAnswer = ""; aiAnswerHint = idleHintForCurrentMode
+            engine.allowSystemAudioRetry()   // the user may have just granted Screen Recording
+        }
         micStatus = "…"; micColor = Color(white: 0.42)
         Task {
             let ok = await session.fetchSpeechmaticsKeyAsync()

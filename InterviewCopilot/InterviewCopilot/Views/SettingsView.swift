@@ -59,6 +59,23 @@ struct SettingsView: View {
                                     detail: "Also transcribes what you say. macOS shows its orange mic indicator only while you're actively listening.",
                                     selected: vm.micCaptureEnabled
                                 ) { vm.setMicCaptureEnabled(true) }
+
+                                // Interview Auto overrides this choice for as long as it is
+                                // active. Without saying so, Settings shows "+ my voice"
+                                // selected while the mic is in fact shut — a setting that
+                                // reads as on and behaves as off.
+                                if vm.micCaptureEnabled && !vm.listeningMode.usesMicrophone {
+                                    HStack(alignment: .top, spacing: 7) {
+                                        Image(systemName: "info.circle.fill")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(Color(hex: "#34E08A"))
+                                        Text("Interview Auto is on, so your microphone stays closed no matter what is picked here. Your choice is remembered and applies again in the other modes.")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(Color(hex: "#8b9bb0"))
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    .padding(.top, 2)
+                                }
                             }
                         }
 

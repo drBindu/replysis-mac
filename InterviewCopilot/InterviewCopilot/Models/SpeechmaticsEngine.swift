@@ -20,6 +20,17 @@ class SpeechmaticsEngine {
     /// This is the real end-of-turn signal; everything text-based is a guess at it.
     var onUtteranceEnd: (() -> Void)?
 
+    /// The MODE's veto on the microphone, separate from the user's saved Settings choice.
+    ///
+    /// Interview Auto does not merely PREFER meeting audio — it promises the candidate's mic
+    /// stays shut. That promise is a runtime rule, so it lives here rather than being written
+    /// into the user's preferences: a mode must never rewrite a setting the user chose.
+    var micCaptureAllowed = true
+
+    /// Fired when NO audio source is permitted — the system tap could not start and the
+    /// microphone is forbidden. The app must say so; it must never quietly capture instead.
+    var onCaptureUnavailable: (() -> Void)?
+
     /// Fired when Speechmatics rejects the key (not_authorised / invalid key). Lets the
     /// UI show an honest "speech unavailable" message instead of silently doing nothing.
     var onKeyError: (() -> Void)?
@@ -177,7 +188,9 @@ class SpeechmaticsEngine {
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return true }
             return obj["micCaptureEnabled"] as? Bool ?? true
         }()
-        let micGranted = micCaptureEnabled && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        // The saved preference AND the active mode must both permit the mic.
+        let micAllowed = micCaptureEnabled && micCaptureAllowed
+        let micGranted = micAllowed && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         var startedSysTap = false
         if !sysAudioCrashed, #available(macOS 14.2, *) {
             let fifo = appDataFolder.appendingPathComponent("sysaudio.pcm").path
@@ -190,6 +203,23 @@ class SpeechmaticsEngine {
             }
         }
         if !startedSysTap {
+            // NEVER fall back to the microphone when the mic is forbidden.
+            //
+            // This is the worst failure the app can have. The tap fails on a denied audio
+            // permission, on macOS < 14.2, and again after a mid-session crash (sysAudioCrashed).
+            // Falling back to "-mode mic" then opened the CANDIDATE'S microphone in Interview
+            // Auto: the orange macOS indicator lights up mid-interview, and their own spoken
+            // answer is transcribed and answered back as though the interviewer had asked it —
+            // the exact thing the mode exists to prevent, happening silently at the worst
+            // possible moment. Refuse, and say why.
+            guard micAllowed else {
+                isStarting = false
+                statusText = "NO AUDIO"
+                monitorTimer?.invalidate(); monitorTimer = nil
+                dlog("SM: system-audio tap unavailable and the microphone is not permitted in this mode — refusing to capture rather than opening the mic", tag: "SM")
+                onCaptureUnavailable?()
+                return
+            }
             args += ["-mode", "mic"]
             dlog("  Audio mode: mic only (system-audio tap unavailable)", tag: "SM")
         }
@@ -485,6 +515,14 @@ class SpeechmaticsEngine {
     }
 
     // MARK: - Flags
+
+    /// Let the system-audio tap be tried again.
+    ///
+    /// A tap failure latches sysAudioCrashed for the rest of the session so a denied
+    /// permission cannot loop a dialog every 3 seconds. But it also made the retry control
+    /// useless: the user grants Screen Recording, clicks retry, and the tap is skipped
+    /// anyway. An EXPLICIT retry is exactly the signal that the cause may be fixed.
+    func allowSystemAudioRetry() { sysAudioCrashed = false }
 
     func writePauseFlag()  { try? "1".write(to: pauseFlagPath,  atomically: true, encoding: .utf8) }
     func deletePauseFlag() { try? FileManager.default.removeItem(at: pauseFlagPath) }

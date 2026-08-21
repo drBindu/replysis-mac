@@ -193,11 +193,14 @@ struct MainView: View {
             )
         }
         .buttonStyle(.plain)
-        .help(vm.micStatus == "NO MIC" ? "Tap to retry microphone" : "Press SPACE to toggle mic")
+        .help(vm.micNeedsRetry ? "Tap to retry audio capture" : "Press SPACE to toggle mic")
     }
 
     var micHintText: String {
-        if vm.micStatus == "NO MIC" { return "Tap to retry" }
+        if vm.micNeedsRetry { return "Tap to retry" }
+        // Armed but not yet hearing anything. Saying "listening" here is the difference
+        // between the user waiting calmly and the user believing it heard them.
+        if vm.micStatus == "CONNECTING" { return "Connecting — nothing is being heard yet" }
         switch vm.listeningMode {
         case .manual:
             return vm.isListening ? "Press SPACE again to get answer" : "Press SPACE to listen"
@@ -212,12 +215,13 @@ struct MainView: View {
         }
     }
     var micHintColor: Color {
+        if vm.micStatus == "CONNECTING" { return Color(hex: "#f59e0b") }
         if vm.isListening { return Color(hex: "#4ade80") }
-        if vm.micStatus == "NO MIC" { return Color(hex: "#6b7280") }
+        if vm.micNeedsRetry { return Color(hex: "#6b7280") }
         return Color(hex: "#3d4d5f")
     }
     func micAction() {
-        if vm.micStatus == "NO MIC" { vm.retryMic() }
+        if vm.micNeedsRetry { vm.retryMic() }
         else { vm.handleSpacePress(source: "BUTTON") }
     }
 
@@ -1136,7 +1140,9 @@ struct MainView: View {
             VStack(spacing: 0) {
                 // Hotkey bar
                 HStack {
-                    Text("INTERVIEWER")
+                    // Practice Auto listens to the USER, so calling this box INTERVIEWER
+                    // labelled their own voice as somebody else's.
+                    Text(vm.listeningMode == .practiceAuto ? "YOU" : "INTERVIEWER")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundColor(Color(hex: "#2A4A6A"))
 
@@ -1145,7 +1151,13 @@ struct MainView: View {
                     HStack(spacing: 6) {
                         hotKeyBadge("F8  this screen", color: "#4ade80", bg: "#0D2E0D")
                         hotKeyBadge("F9  main screen", color: "#4ade80", bg: "#0D2E0D")
-                        hotKeyBadge("SPACE  listen / answer", color: "#38BDF8", bg: "#0D1B2E")
+                        // An automatic mode exists to remove the keypress, so advertising
+                        // SPACE there is advice that contradicts the mode the user picked.
+                        if vm.listeningMode.isAutomatic {
+                            hotKeyBadge("AUTO  answers on its own", color: "#34E08A", bg: "#0D2E0D")
+                        } else {
+                            hotKeyBadge("SPACE  listen / answer", color: "#38BDF8", bg: "#0D1B2E")
+                        }
                     }
                 }
                 .padding(.bottom, 8)
@@ -1158,7 +1170,9 @@ struct MainView: View {
                                 Image(systemName: "waveform")
                                     .font(.system(size: 14, weight: .light))
                                     .foregroundColor(Color(hex: "#33506f"))
-                                Text("Your conversation appears here as you speak")
+                                Text(vm.listeningMode == .practiceAuto
+                                     ? "Ask your question out loud — it appears here"
+                                     : "Your conversation appears here as you speak")
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundColor(Color(hex: "#33506f"))
                             }
