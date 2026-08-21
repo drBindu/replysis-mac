@@ -86,14 +86,33 @@ class PromptBuilder {
     /// The fence count is deliberately not required to be even: streaming produces
     /// unclosed fences constantly, and a half-arrived block is exactly the one most likely
     /// to still be in the newest turn when the next question is asked.
+    /// The section header a screen answer puts its code under.
+    ///
+    /// Screen answers are told NOT to use fences — they use these rule headers instead — so
+    /// collapsing fences alone missed the biggest code blocks the app produces. A screen
+    /// answer is where a full solution actually appears; the spoken path only emits fenced
+    /// code when the model does it unprompted.
+    private static let solutionHeader = "━━━ SOLUTION ━━━"
+
     static func collapseCodeBlocks(_ text: String) -> String {
-        guard text.contains("```") else { return text }
-        let parts = text.components(separatedBy: "```")
-        var out = ""
-        for (i, part) in parts.enumerated() {
-            // The fence toggles: even parts are prose, odd parts are code. A trailing odd
-            // part is an unclosed block, and collapses the same way.
-            out += (i % 2 == 0) ? part : "[code given]"
+        var out = text
+        if out.contains("```") {
+            let parts = out.components(separatedBy: "```")
+            var rebuilt = ""
+            for (i, part) in parts.enumerated() {
+                // The fence toggles: even parts are prose, odd parts are code. A trailing
+                // odd part is an unclosed block, and collapses the same way.
+                rebuilt += (i % 2 == 0) ? part : "[code given]"
+            }
+            out = rebuilt
+        }
+        // Collapse a SOLUTION section: everything from its header up to the next header,
+        // or to the end when it is the last section.
+        while let start = out.range(of: solutionHeader) {
+            let after = out[start.upperBound...]
+            let end = after.range(of: "━━━").map { after.distance(from: after.startIndex, to: $0.lowerBound) }
+            let tailStart = end.map { after.index(after.startIndex, offsetBy: $0) } ?? after.endIndex
+            out = String(out[..<start.lowerBound]) + "[code given]\n\n" + String(after[tailStart...])
         }
         return out
     }
