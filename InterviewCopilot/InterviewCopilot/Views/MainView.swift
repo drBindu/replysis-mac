@@ -592,9 +592,21 @@ struct MainView: View {
                             subtitle: "Save your progress & unlock more credits", accent: Color(hex: "#38bdf8")) {
                         showProfileMenu = false; showLogin = true
                     }
-                } else if !vm.session.isUnlimited {
+                } else if !vm.session.isPaidPlan {
+                    // Only offered to accounts actually below the paid tiers. Gating this on
+                    // isUnlimited offered "Upgrade to Pro" to a Max subscriber, because Max
+                    // is paid but still metered — an upsell to a LOWER tier than the one
+                    // they are on.
                     menuRow(icon: "bolt.fill", title: "Upgrade to Pro",
                             subtitle: "Unlimited answers", accent: Color(hex: "#a78bfa")) {
+                        showProfileMenu = false
+                        NSWorkspace.shared.open(URL(string: "https://replysis.com/pricing")!)
+                    }
+                } else if !vm.session.isUnlimited {
+                    // Paid but metered: the useful action is more credits, not a new plan.
+                    menuRow(icon: "creditcard.fill", title: "Top up credits",
+                            subtitle: "\(vm.session.plan.capitalized) plan · \(vm.session.credits) left",
+                            accent: Color(hex: "#34E08A")) {
                         showProfileMenu = false
                         NSWorkspace.shared.open(URL(string: "https://replysis.com/pricing")!)
                     }

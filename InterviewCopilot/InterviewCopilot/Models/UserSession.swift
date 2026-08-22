@@ -69,6 +69,23 @@ class UserSession {
     // show honest "free trial" messaging and so a real sign-in is never confused with it.
     var isGuestSession = false
 
+    /// Is this account already on a paid tier?
+    ///
+    /// NOT the same question as isUnlimited. Max is a paid plan that still meters credits,
+    /// so isUnlimited is false on it — and the profile menu used that to decide whether to
+    /// offer an upgrade, which showed "Upgrade to Pro · Unlimited answers" to somebody on
+    /// the TOP plan. That is an offer to move down a tier, and it reads as the app not
+    /// knowing what they bought.
+    ///
+    /// Matched on substrings because the server returns the plan as free text ("max",
+    /// "Max plan", "teams"), and a plan nobody anticipated should not produce an upsell.
+    var isPaidPlan: Bool {
+        if isUnlimited { return true }
+        let p = plan.lowercased()
+        return ["pro", "max", "lifetime", "team", "enterprise", "unlimited"]
+            .contains { p.contains($0) }
+    }
+
     private let sessionFile: URL = {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let dir = support.appendingPathComponent("InterviewCopilot")
