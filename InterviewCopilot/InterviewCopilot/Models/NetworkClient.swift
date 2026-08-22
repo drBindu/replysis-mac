@@ -45,11 +45,38 @@ class NetworkClient {
                   onToken: onToken, onDone: onDone, onError: onError)
     }
 
+    // MARK: - Screen cache
+    //
+    // Sending the picture AHEAD of the question was the larger half of the screen-answer
+    // wait: 1,483ms to first word, of which the model was 720ms and most of the rest was
+    // the image going up the wire. Cached server-side for ninety seconds, returned only to
+    // the identity that sent it, and returned exactly once.
+
+    /// Upload a screenshot now and get an id to reference it by later. Returns nil on any
+    /// failure — the caller then sends the bytes inline, which still works.
+    func cacheScreenshot(imageBase64: String) async -> String? {
+        guard let url = URL(string: "\(AppConfig.backendUrl)/api/v1/interview/screen-cache") else { return nil }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(UserSession.shared.idToken)", forHTTPHeaderField: "Authorization")
+        req.setValue(DeviceIdentity.current, forHTTPHeaderField: "X-Device-Id")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["image": imageBase64])
+        do {
+            let (data, response) = try await session.data(for: req)
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                return nil
+            }
+            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+            return obj["imageId"] as? String
+        } catch { return nil }
+    }
+
     // MARK: - Screen Analysis Stream
 
     func streamScreenAnalysis(imageBase64: String, resumeCtx: String, provider: String,
                               transcript: String = "", jobContext: String = "",
-                              captureSource: String = "",
+                              captureSource: String = "", imageId: String? = nil,
                               onToken: @escaping (String) -> Void,
                               onDone: @escaping () -> Void,
                               onError: @escaping (String) -> Void) {
@@ -57,11 +84,17 @@ class NetworkClient {
             onError("Invalid URL"); return
         }
 
-        let payload: [String: Any] = [
-            "image": imageBase64,
+        var payload: [String: Any] = [
             "prompt": buildScreenPrompt(resumeCtx: resumeCtx, transcript: transcript, jobContext: jobContext, captureSource: captureSource),
             "provider": provider
         ]
+        // Reference an already-uploaded picture when there is one; otherwise send the bytes,
+        // which is what happens whenever the pre-upload did not finish in time or failed.
+        if let imageId, !imageId.isEmpty {
+            payload["imageIds"] = [imageId]
+        } else {
+            payload["image"] = imageBase64
+        }
         streamSSE(url: url, body: try? JSONSerialization.data(withJSONObject: payload),
                   onToken: onToken, onDone: onDone, onError: onError)
     }

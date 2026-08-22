@@ -1160,6 +1160,9 @@ class MainViewModel {
             transcript: currentTranscript,
             jobContext: jobContext,
             captureSource: lastCaptureSource,
+            // When the picture went up while they were still speaking, the question carries
+            // its id and not two hundred kilobytes. Nil falls back to sending the bytes.
+            imageId: usableImageId(matching: Self.coarseSignature(imageData)),
             onToken: { [weak self] token in
                 guard let self = self, self.answerEpoch == epoch else { return }
                 accumulated += token; tokenCount += 1
@@ -1222,6 +1225,107 @@ class MainViewModel {
     /// "frontmost" becomes whichever window was clicked last, and the answer quietly
     /// describes the wrong thing. Watching a screen means the screen.
     private var capturingWholeScreen = false
+
+    // ── A picture, sent before the question ───────────────────────────────────
+    //
+    // Sending the screenshot ahead was the larger half of the wait: 1,483ms to first word,
+    // of which the model was 720ms and most of the rest was the image going up the wire.
+    // The upload happens while the speaker is still finishing, so the question carries an
+    // id instead of the bytes.
+    //
+    // NO TIMER. Capturing every couple of seconds for as long as the app is open is a
+    // screenshot of somebody's work every two seconds, uploaded whenever the picture
+    // changes — around eleven megabytes a minute of their connection, and their screen,
+    // with no interview happening. This prepares a picture only when a turn is actually
+    // ending, which is the moment it is about to be needed anyway.
+    private var preparedImageId: String?
+    private var preparedImageAt: Date = .distantPast
+    private var preparedSignature: [UInt8] = []
+    private var preparingScreenshot = false
+    /// The server holds a cached image for ninety seconds; stay well inside that.
+    private let preparedImageLifetime: TimeInterval = 75
+
+    /// Capture now and upload, so the question only has to carry an id.
+    ///
+    /// Skips the upload entirely when the screen has not actually MOVED. A page with a live
+    /// "2,332 Online" counter produces different bytes every two seconds, so comparing bytes
+    /// re-sent a still screen constantly and doubled the token cost of every question. A
+    /// coarse 16x16 sixteen-grey signature tells scrolling from a ticking counter.
+    private func prepareScreenshotAhead() async {
+        guard isWatchMode, session.isLoggedIn, !preparingScreenshot else { return }
+        guard listeningMeterTimer != nil || isListening else { return }   // only during a live session
+        preparingScreenshot = true
+        defer { preparingScreenshot = false }
+
+        capturingWholeScreen = true            // watching means the screen
+        guard let data = await captureScreen(), !data.isEmpty else { return }
+        let signature = Self.coarseSignature(data)
+        if Self.signaturesMatch(signature, preparedSignature),
+           Date().timeIntervalSince(preparedImageAt) < preparedImageLifetime, preparedImageId != nil {
+            dlog("SCREEN: unchanged since the last upload — reusing it", tag: "SCREEN")
+            return
+        }
+        if let id = await NetworkClient.shared.cacheScreenshot(imageBase64: data.base64EncodedString()) {
+            preparedImageId = id
+            preparedImageAt = Date()
+            preparedSignature = signature
+            dlog("SCREEN: uploaded ahead of the question (id \(id.prefix(8)))", tag: "SCREEN")
+        }
+    }
+
+    /// Has the screen actually MOVED?
+    ///
+    /// Comparing signatures for exact equality is not enough, and measuring it is the only
+    /// way to find that out: a live "2,332 Online" counter still shifts three of the 256
+    /// cells, while scrolling the same page shifts eighty-one. Exact equality therefore
+    /// counted the counter as a change and re-uploaded a still screen anyway — the very
+    /// thing the signature exists to prevent, quietly doubling the token cost of every
+    /// question while looking like it worked.
+    ///
+    /// A handful of cells is noise; a moved page is dozens. The gap between the two is wide,
+    /// which is why the threshold can sit well clear of both.
+    static func signaturesMatch(_ a: [UInt8], _ b: [UInt8]) -> Bool {
+        guard !a.isEmpty, a.count == b.count else { return false }
+        var moved = 0
+        for (x, y) in zip(a, b) where abs(Int(x) - Int(y)) > 1 {
+            moved += 1
+            if moved > 6 { return false }
+        }
+        return true
+    }
+
+    /// A 16x16, sixteen-level greyscale fingerprint. Coarse ON PURPOSE: fine enough that
+    /// scrolling or a new panel changes it, blunt enough that a ticking counter does not.
+    static func coarseSignature(_ jpeg: Data) -> [UInt8] {
+        guard let src = NSBitmapImageRep(data: jpeg)?.cgImage else { return [] }
+        let n = 16
+        var pixels = [UInt8](repeating: 0, count: n * n)
+        guard let ctx = CGContext(data: &pixels, width: n, height: n, bitsPerComponent: 8,
+                                  bytesPerRow: n, space: CGColorSpaceCreateDeviceGray(),
+                                  bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return [] }
+        ctx.draw(src, in: CGRect(x: 0, y: 0, width: n, height: n))
+        return pixels.map { $0 >> 4 }   // sixteen grey levels
+    }
+
+    /// The prepared id, if it is still fresh enough for the server to honour.
+    /// The prepared id, but ONLY if it is still fresh and still shows the same screen.
+    ///
+    /// Matching the signature is what makes this safe. Sending an id prepared moments ago
+    /// alongside a screen that has since scrolled would answer a picture the candidate is no
+    /// longer looking at — a wrong answer that reads as a confident one, which is the exact
+    /// failure the whole screen path exists to avoid. When they differ, the fresh bytes go
+    /// inline and the only thing lost is the head start.
+    private func usableImageId(matching signature: [UInt8]) -> String? {
+        guard let id = preparedImageId,
+              Date().timeIntervalSince(preparedImageAt) < preparedImageLifetime,
+              Self.signaturesMatch(signature, preparedSignature) else { return nil }
+        // The server returns a cached image EXACTLY ONCE, so a used id is spent. Clearing it
+        // means the next question uploads again rather than referencing something the server
+        // has already handed back and dropped.
+        preparedImageId = nil
+        preparedSignature = []
+        return id
+    }
 
     private func captureScreen() async -> Data? {
         do {
@@ -1611,9 +1715,15 @@ class MainViewModel {
             let wait = min(max(unclearSilence, paceFloor), maxUnclearSilence)
             unclearPendingText = text
             unclearDeadline = Date().addingTimeInterval(wait)
+            // An unclear ending buys 820ms or more — enough to have the picture up before
+            // the turn even commits.
+            if isWatchMode { Task { [weak self] in await self?.prepareScreenshotAhead() } }
             dlog("AUTO: ending unclear — giving it \(Int(wait * 1000))ms: '\(text.suffix(40))'", tag: "AUTO")
             return
         case .finished:
+            // The upload overlaps the drain and the answer request, so by the time the
+            // question is sent the picture is usually already there.
+            if isWatchMode { Task { [weak self] in await self?.prepareScreenshotAhead() } }
             commitAutomaticTurn(text)
         }
     }
