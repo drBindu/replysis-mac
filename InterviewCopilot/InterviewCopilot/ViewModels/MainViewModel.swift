@@ -124,7 +124,18 @@ class MainViewModel {
     var mainWindowOpacity: Double = 0.40
     var overlayOpacity: Double = 0.90
     var isScreenAnalyzing = false
-    var isWatchMode = false         // continuous screen watch mode
+    /// Are screen answers ARMED — should a question about the screen be answered from it?
+    ///
+    /// On by default, and remembered. It used to be a toolbar switch that started off every
+    /// launch, which made the feature most likely to matter in a coding round the one a
+    /// candidate had to remember to arm with an interviewer already talking. The toolbar now
+    /// holds the ACTION (Read Screen) instead; this is the standing preference.
+    ///
+    /// Defaulting it on is only safe here because capture is question-driven: there is no
+    /// timer, so an armed app that nobody is talking to captures nothing at all. On Windows
+    /// the same default turned a two-second capture loop into a screenshot every two seconds
+    /// for as long as the app was open.
+    var isWatchMode = true
     /// Auto Mode: the app decides when the interviewer finished asking and answers with
     /// nothing pressed. This is the difference between using the product in a real
     /// interview and visibly operating it while someone watches.
@@ -911,7 +922,12 @@ class MainViewModel {
         // interviewer that something is reading their screen. isPersonalQuestion is narrow
         // on purpose: anything uncertain stays on the screen path, and "solve this" or
         // "this code" always wins, so "do you prefer this code or that one" still counts.
-        let aboutTheScreen = isWatchMode && !PromptBuilder.isPersonalQuestion(q)
+        // Armed BY DEFAULT now, so the first question from a brand-new user must not walk
+        // into a Screen Recording wall. Without the permission we simply answer from what
+        // was said — the same answer the app gave before screen answers existed — rather
+        // than failing the question to advertise a feature they have not enabled.
+        let canReadScreen = CGPreflightScreenCaptureAccess()
+        let aboutTheScreen = isWatchMode && canReadScreen && !PromptBuilder.isPersonalQuestion(q)
         if aboutTheScreen, !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !isScreenAnalyzing {
             // Watching means the SCREEN. "Frontmost window" in a mode nobody is touching is
             // whichever window was clicked last, which is how an answer ends up confidently
@@ -1094,6 +1110,14 @@ class MainViewModel {
     }
 
     // Toggle continuous watch mode — auto-captures every 8 seconds
+    /// Settings toggle. Kept separate from the toolbar, which now performs an action.
+    func setScreenAnswers(_ enabled: Bool) {
+        guard isWatchMode != enabled else { return }
+        isWatchMode = enabled
+        saveSettings()
+        dlog("Screen answers \(enabled ? "ARMED" : "off")", tag: "SCREEN")
+    }
+
     func toggleWatchMode() {
         guard session.isLoggedIn else { aiAnswer = "⚠ Please sign in first."; return }
         if isWatchMode {
@@ -2689,6 +2713,7 @@ class MainViewModel {
             // of the box. Users who want to stay fully invisible in a real interview can
             // switch to system-audio-only in Settings.
             micCaptureEnabled = obj["micCaptureEnabled"] as? Bool ?? true
+            isWatchMode = obj["screenAnswers"] as? Bool ?? true
             listeningMode = ListeningMode(rawValue: obj["listeningMode"] as? String ?? "")
                 ?? ((obj["autoModeEnabled"] as? Bool ?? false) ? .interviewAuto : .manual)
             // Default ON: hidden from screen sharing/recording out of the box. Settings
@@ -2715,6 +2740,7 @@ class MainViewModel {
         let obj: [String: Any] = ["useGroq": useGroq, "mainOpacity": mainWindowOpacity,
                                   "overlayOpacity": overlayOpacity, "concise": conciseAnswers,
                                   "micCaptureEnabled": micCaptureEnabled,
+                                  "screenAnswers": isWatchMode,
                                   "listeningMode": listeningMode.rawValue,
                                   "stealthModeEnabled": stealthModeEnabled,
                                   "opacityDefaultV2Applied": true]

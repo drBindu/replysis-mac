@@ -79,6 +79,35 @@ struct SettingsView: View {
                             }
                         }
 
+                        // Screen answers — the standing preference the toolbar used to hold.
+                        settingsSection("SCREEN ANSWERS") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                audioModeRow(
+                                    title: "Answer from the screen (Recommended)",
+                                    detail: "When a question is about what's on screen — a coding problem, an error, a diagram — read the screen and answer from it. Questions about you are still answered from your resume.",
+                                    selected: vm.isWatchMode
+                                ) { vm.setScreenAnswers(true) }
+                                audioModeRow(
+                                    title: "Answer from speech only",
+                                    detail: "Never read the screen automatically. The READ SCREEN button and F8 still work whenever you press them.",
+                                    selected: !vm.isWatchMode
+                                ) { vm.setScreenAnswers(false) }
+
+                                if vm.isWatchMode && !vm.permScreenRecording {
+                                    HStack(alignment: .top, spacing: 7) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(Color(hex: "#f59e0b"))
+                                        Text("Screen Recording isn't granted yet, so questions are being answered from speech alone. Enable it in System Settings → Privacy & Security → Screen & System Audio Recording, then reopen the app.")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(Color(hex: "#8b9bb0"))
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    .padding(.top, 2)
+                                }
+                            }
+                        }
+
                         // Stealth Mode — hides the window from screen sharing & recording
                         // (Zoom/Meet/Teams, QuickTime). Default ON. Moved here (off the main
                         // header) so the toolbar stays clean; this is a set-once preference,

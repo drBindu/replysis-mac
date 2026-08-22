@@ -456,28 +456,40 @@ struct MainView: View {
     // ── WATCH SCREEN | COMPACT — one grouped pill, as on Windows ──
     var watchAndCompactGroup: some View {
         HStack(spacing: 0) {
-            Button(action: { vm.toggleWatchMode() }) {
+            // AN ACTION, NOT A SWITCH. Pressing it reads the screen there and then.
+            //
+            // The label never changes when pressed: a control whose text changes is read as
+            // a switch, and this one is not. Only the colour says whether screen answers are
+            // armed, and that is a Settings preference now — it used to be this button,
+            // which meant the feature most likely to matter in a coding round was the one a
+            // candidate had to remember to turn on with an interviewer already talking.
+            Button(action: { vm.runScreenAnalysis(wholeScreen: false) }) {
                 HStack(spacing: 7) {
                     if vm.isScreenAnalyzing {
-                        // The Analyze button used to carry this spinner. Without it here,
-                        // a running capture would have no visible indicator at all.
+                        // Without this, a running capture would have no visible indicator.
                         ProgressView().scaleEffect(0.45).frame(width: 12, height: 12)
                     } else {
                         Image(systemName: "display")
                             .font(.system(size: 12, weight: .semibold))
                     }
-                    Text(vm.isScreenAnalyzing ? "READING SCREEN" : "WATCH SCREEN")
+                    Text("READ SCREEN")
                         .font(.system(size: 11, weight: .bold)).tracking(0.5)
                         .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                    Text("F8")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(Color(hex: "#64748b"))
+                        .padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.06)))
                 }
                 .foregroundColor(vm.isWatchMode ? Color(hex: "#fbbf24") : Color(hex: "#cbd5e1"))
                 .padding(.horizontal, 13).padding(.vertical, 9)
                 .background(vm.isWatchMode ? Color(hex: "#241a06") : Color.clear)
             }
             .buttonStyle(.plain)
+            .disabled(vm.isScreenAnalyzing)
             .help(vm.isWatchMode
-                  ? "Watch Screen ON — every question is answered from the shared screen."
-                  : "Turn on when the interviewer shares their screen")
+                  ? "Read the screen now (F8). Screen answers are ARMED — questions about the screen are answered from it automatically. Change that in Settings."
+                  : "Read the screen now (F8). Automatic screen answers are off — turn them on in Settings.")
 
             Rectangle().fill(Color.white.opacity(0.10)).frame(width: 1, height: 20)
 
