@@ -1856,7 +1856,15 @@ class MainViewModel {
 
         // A pause and a stray keypress are not the same situation, and only one of them
         // deserves three minutes of patience.
-        let patience = heardAnythingThisSession ? idleListeningTimeout : silentSessionTimeout
+        //
+        // The 45-second rule exists for a key pressed by mistake — and in an automatic mode
+        // no key was pressed. The user deliberately chose a mode whose whole promise is that
+        // it keeps listening with nothing touched, and switching the microphone off 45
+        // seconds later contradicts the thing they just asked for: armed before a call that
+        // has not started yet is the ordinary case, not a mistake. Three minutes still
+        // catches the app left open on an empty room, which is what the waste actually is.
+        let patience = (heardAnythingThisSession || autoModeEnabled)
+            ? idleListeningTimeout : silentSessionTimeout
         if now.timeIntervalSince(lastSpeechHeardAt) >= patience {
             dlog(heardAnythingThisSession
                  ? "METER: no speech for \(Int(idleListeningTimeout / 60)) minutes — stopping the microphone"
@@ -1988,6 +1996,7 @@ class MainViewModel {
         // see AppUpdater.setInterviewActive for why. Resumed in endSession().
         AppUpdater.shared.setInterviewActive(true)
         resumeLocked = false
+        stoppedForIdle = false   // a new session is a deliberate fresh start
         PromptBuilder.shared.clearHistory()
         let dir = engine.appDataFolder
         var num = sessionNumber
@@ -2484,6 +2493,13 @@ class MainViewModel {
         aiAnswer = ""
         transcript = ""
         resetAutoTurnState()
+        // Picking a mode IS the deliberate "start listening" action, so it clears the idle
+        // stop. Without this the latch survived the mode change and blocked the re-arm: the
+        // pill lit up, the microphone stayed shut, and nothing on screen said why. Only a
+        // Space press could clear it — in the one mode built so Space never has to be
+        // pressed.
+        stoppedForIdle = false
+        listeningNoticeTimer?.invalidate(); listeningNotice = ""
         aiAnswerHint = idleHintForCurrentMode
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             self?.engine.clearLatestTxt()
