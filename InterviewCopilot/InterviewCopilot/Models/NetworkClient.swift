@@ -152,6 +152,12 @@ class NetworkClient {
                         }
                     }
                     for try await line in bytes.lines {
+                        // The server's own words, when it has them. Retrying this would only
+                        // hit the same limit and double the time before the user is told.
+                        if let serverError = Self.errorFromSSELine(line) {
+                            onMain { onError("SERVER_MSG:" + serverError) }
+                            return
+                        }
                         guard let tok = Self.tokenFromSSELine(line) else {
                             if line.hasSuffix("[DONE]") { break }
                             continue
@@ -218,6 +224,26 @@ class NetworkClient {
     }
 
     // Parse one SSE line ("data: {...}" / "data:{...}") → token, or nil for non-data lines.
+    /// An error the SERVER put inside the stream.
+    ///
+    /// A rate limit does not always arrive as HTTP 429. This backend answers 200 and then
+    /// sends `data: {"error": "This minute's AI allowance is used up…"}` — a better message
+    /// than anything written here, because it knows which allowance ran out and how long it
+    /// takes to refill. Reading only the HTTP status missed it entirely: no tokens ever
+    /// arrived, so the stream looked empty, was silently retried into the same limit, and
+    /// surfaced as "Server returned empty response. Please try again." — the useless
+    /// wording this whole area exists to remove.
+    private static func errorFromSSELine(_ line: String) -> String? {
+        guard line.hasPrefix("data:") else { return nil }
+        var json = String(line.dropFirst(5))
+        if json.hasPrefix(" ") { json.removeFirst() }
+        guard json.hasPrefix("{"), json.contains("\"error\""),
+              let data = json.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let message = obj["error"] as? String, !message.isEmpty else { return nil }
+        return message
+    }
+
     private static func tokenFromSSELine(_ line: String) -> String? {
         guard line.hasPrefix("data:") else { return nil }
         var json = String(line.dropFirst(5))

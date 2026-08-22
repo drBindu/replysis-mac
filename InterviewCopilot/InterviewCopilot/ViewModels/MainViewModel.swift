@@ -1007,6 +1007,12 @@ class MainViewModel {
                 else if err.hasPrefix("RATE_LIMIT") {
                     self.aiAnswer = Self.rateLimitMessage(err)
                 }
+                else if err.hasPrefix("SERVER_MSG:") {
+                    // The server said something specific and useful. Replacing it with a
+                    // generic line here would throw away the only message that knows which
+                    // allowance ran out and how long it takes to come back.
+                    self.aiAnswer = "⏳ " + String(err.dropFirst("SERVER_MSG:".count))
+                }
                 else                         { self.aiAnswer = "⚠ Something went wrong. Please try again." }
                 // DATA-LOSS FIX: previously the error paths saved nothing, so if the AI
                 // failed (out of credits, connection issue) the interviewer's question was
@@ -1195,7 +1201,17 @@ class MainViewModel {
                 if err == "NO_CREDITS" && self.session.isGuestSession {
                     self.aiAnswer = "⚠ Your 100 free credits are used up.\n\nSign in to buy more and keep going — your account is where credits are purchased."
                     NotificationCenter.default.post(name: .showLogin, object: nil)
-                } else if !self.isWatchMode {
+                } else if err.hasPrefix("SERVER_MSG:") {
+                    self.aiAnswer = "⏳ " + String(err.dropFirst("SERVER_MSG:".count))
+                } else if err.hasPrefix("RATE_LIMIT") {
+                    self.aiAnswer = Self.rateLimitMessage(err)
+                } else {
+                    // NOT gated on watch mode any more. Errors were being swallowed there —
+                    // exactly where they are least visible, because in watch mode nobody
+                    // pressed anything and there is no obvious moment to blame. A question
+                    // was asked, nothing appeared, and nothing said why. Reading a screen is
+                    // also the most expensive request the app makes, so it is the first to be
+                    // rate limited and the one most likely to fail.
                     self.aiAnswer = "⚠ Screen analysis error: \(err)"
                 }
                 self.stopThinkingUI()
