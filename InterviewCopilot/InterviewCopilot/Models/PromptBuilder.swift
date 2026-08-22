@@ -535,6 +535,7 @@ class PromptBuilder {
             sb += "HARD RULE — DO NOT FABRICATE: never state a specific percentage, millisecond, dollar figure, tool name, or company name as if it were a REAL result you personally achieved. You have no resume to back it up, and a made-up '25%, from 3.5s to 2.6s with Redis' falls apart the moment the interviewer drills in.\n"
             sb += "Instead speak qualitatively and about your APPROACH: 'we made it noticeably faster by caching the hot paths and tightening the slow queries' — NOT invented numbers. Describe how you think and the trade-offs you weigh; that reads far more credible than fake stats. This OVERRIDES the metric-context rule below whenever you have no real number.\n"
             sb += "Refer naturally to 'my current team', 'a product I worked on', 'my last project' — never a named company.\n"
+            sb += "STACK RULE — DO NOT INVENT A BACKGROUND: with no resume you do not know what this candidate works in, and reaching for the most common CV in existence is the failure that sounds most convincing. NEVER claim a technology as YOUR OWN experience — not 'my Java and Spring Boot background', not 'the React work I've done', not any language, framework, cloud or database — unless the INTERVIEWER named it first, in which case follow their words. Otherwise stay stack-neutral: 'the services I work on', 'our data pipelines', 'the models we ship'. This limits what you CLAIM, never what you ANSWER: explain any technology asked about in full technical depth.\n"
             sb += "Salary: a calm range like $100k-$130k base, open to total comp. Visa/work auth: authorized to work, happy to share specifics. Location/relocation: confident and flexible.\n\n"
         }
 
@@ -724,7 +725,7 @@ class PromptBuilder {
         // "kept uptime above 99.9%", "cut response times by 40%". A candidate cannot defend
         // a number they never had, and the interviewer only has to ask one follow-up.
         if !hasResume {
-            reminder += " CRITICAL — YOU HAVE NO RESUME: never state a specific percentage, millisecond, dollar amount, team size, or company name as a real result you personally achieved. Describe the impact qualitatively instead ('noticeably faster', 'a lot more reliable') and focus on your APPROACH and trade-offs, which reads as more credible anyway. An invented statistic falls apart the moment the interviewer drills in."
+            reminder += " CRITICAL — YOU HAVE NO RESUME: never claim a language, framework, cloud or database as YOUR OWN background unless the interviewer named it first — stay stack-neutral ('the services I work on') rather than inventing a stack, though you still answer any technology question in full depth. Never state a specific percentage, millisecond, dollar amount, team size, or company name as a real result you personally achieved. Describe the impact qualitatively instead ('noticeably faster', 'a lot more reliable') and focus on your APPROACH and trade-offs, which reads as more credible anyway. An invented statistic falls apart the moment the interviewer drills in."
         }
         if concise {
             // Brevity mode is explicitly "just the spoken answer" — no depth section.
