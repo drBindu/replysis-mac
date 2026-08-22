@@ -8,6 +8,38 @@ class DebugLog {
     private(set) var entries: [String] = []
     private let maxEntries = 500
 
+    /// Hard ceiling on the file, enforced WHILE the app runs.
+    ///
+    /// The cap used to be checked only when the handle was first opened, so a single long
+    /// interview could grow the file without limit — the one session most worth capping.
+    private static let maxFileBytes = 2_000_000
+    private var bytesWritten = 0
+
+    /// In release, quoted spans are replaced by their length.
+    ///
+    /// Everything the app logs about speech puts the words inside single quotes, so this
+    /// removes verbatim interview content at every call site at once while keeping the
+    /// decision around it — which is the part that is actually useful when supporting a
+    /// user. A support log should say a turn was rejected as unfinished, not what was said.
+    #if DEBUG
+    private static let redactContent = false
+    #else
+    private static let redactContent = true
+    #endif
+
+    static func redact(_ message: String) -> String {
+        guard redactContent, message.contains("'") else { return message }
+        var out = "", inQuote = false, count = 0
+        for ch in message {
+            if ch == "'" {
+                if inQuote { out += "⟨\(count) chars⟩'"; inQuote = false; count = 0 }
+                else { out += "'"; inQuote = true }
+            } else if inQuote { count += 1 } else { out.append(ch) }
+        }
+        if inQuote { out += "⟨\(count) chars⟩" }   // unterminated quote
+        return out
+    }
+
     // Serial queue for disk I/O — keeps file writes off the main actor so token
     // streaming (which calls dlog() on every chunk) never blocks the UI.
     private let ioQueue = DispatchQueue(label: "com.interviewcopilot.debuglog.io", qos: .utility)
@@ -40,11 +72,18 @@ class DebugLog {
         // Now: append with a clear per-launch marker, only truncating if the file has
         // grown large (stale logs from many past sessions), not on every single launch.
         let existingSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? nil
-        if let size = existingSize, size > 2_000_000 {
+        if let size = existingSize, size > Self.maxFileBytes {
             try? "".write(to: url, atomically: true, encoding: .utf8)   // reset only when it's gotten big
         } else if !FileManager.default.fileExists(atPath: url.path) {
-            FileManager.default.createFile(atPath: url.path, contents: nil)
+            // 0600 AT CREATION. The default umask left this world-readable, and the file
+            // carries what was said in an interview — the session transcripts beside it are
+            // already 0600, so this was the one place the same content was not protected.
+            FileManager.default.createFile(atPath: url.path, contents: nil,
+                                           attributes: [.posixPermissions: 0o600])
         }
+        // Tighten any file left behind by an older build, which created it world-readable.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        bytesWritten = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int).flatMap { $0 } ?? 0
         let handle = try? FileHandle(forWritingTo: url)
         handle?.seekToEndOfFile()
         let marker = "\n──── NEW LAUNCH pid=\(ProcessInfo.processInfo.processIdentifier) ────\n"
@@ -54,18 +93,44 @@ class DebugLog {
 
     func log(_ message: String, tag: String = "INFO") {
         let ts = Self.formatter.string(from: Date())
-        let line = "[\(ts)] [\(tag)] \(message)"
+        let line = "[\(ts)] [\(tag)] \(Self.redact(message))"
         entries.append(line)
         if entries.count > maxEntries { entries.removeFirst(entries.count - maxEntries) }
+        // print() also copies every line into unified logging, where it is readable by
+        // other tooling and captured in a sysdiagnose. The file is the supported channel.
+        #if DEBUG
         print(line)
+        #endif
         // Write to disk off the main actor — file I/O during token streaming was
         // blocking the UI thread and causing janky answer rendering.
-        if let data = (line + "\n").data(using: .utf8), let handle = fileHandle {
-            ioQueue.async { handle.write(data) }
+        guard let data = (line + "\n").data(using: .utf8), let handle = fileHandle else { return }
+        bytesWritten += data.count
+        let mustRotate = bytesWritten > Self.maxFileBytes
+        if mustRotate { bytesWritten = data.count }
+        ioQueue.async {
+            if mustRotate {
+                try? handle.truncate(atOffset: 0)
+                try? handle.seek(toOffset: 0)
+            }
+            handle.write(data)
         }
     }
 
     func clear() { entries.removeAll() }
+
+    /// Wipe the log entirely. Signing out should not leave the previous account's interview
+    /// content on the machine for the next person who signs in.
+    func purge() {
+        entries.removeAll()
+        bytesWritten = 0
+        let handle = fileHandle
+        ioQueue.async {
+            try? handle?.truncate(atOffset: 0)
+            try? handle?.seek(toOffset: 0)
+        }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600],
+                                               ofItemAtPath: Self.logFileURL.path)
+    }
 
     var text: String { entries.joined(separator: "\n") }
 }

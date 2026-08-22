@@ -5,7 +5,7 @@
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Replysis captures your computer's audio so it can transcribe the interviewer's questions during a call.</string>
 	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/moto123a/interview-copilot-mac/main/appcast.xml</string>
+	<string>https://raw.githubusercontent.com/drBindu/replysis-mac/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>Z/GmlGrdWA8lVxVMbukzNBwqDBRLZi9YbOqSH4hClsI=</string>
 	<key>SUEnableAutomaticChecks</key>

@@ -184,6 +184,9 @@ class UserSession {
         speechmaticsKey = ""
         Keychain.delete(account: "session")
         Keychain.delete(account: Self.speechKeyAccount)   // never outlive the session it belongs to
+        // The debug log holds what was said in this account's interviews. Signing out must
+        // not leave it on the machine for whoever signs in next.
+        DebugLog.shared.purge()
         try? FileManager.default.removeItem(at: sessionFile)
     }
 
