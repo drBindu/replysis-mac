@@ -2118,6 +2118,10 @@ class MainViewModel {
     private var lastRawTranscript = ""
     /// -1 = unlimited, or not yet known. Never a count.
     var audioMinutesRemaining = -1
+    /// Last time the user was told transcription looked deaf. At most once a minute — a
+    /// warning that repeats buries the answer it is warning about.
+    private var lastDeafWarningAt = Date.distantPast
+
     /// Set when the mic gave up on a silent room, so an automatic mode does not simply
     /// re-arm itself and undo the saving. Cleared the moment the user presses Space.
     private var stoppedForIdle = false
@@ -2136,6 +2140,7 @@ class MainViewModel {
         listeningSince = Date()
         lastSpeechHeardAt = Date()
         heardAnythingThisSession = false
+        engine.resetDeafDetection()   // a fresh turn never starts already accused
         listeningNoticeTimer?.invalidate(); listeningNotice = ""   // a new session, not the old one's news
         listeningMeterTimer?.invalidate()
         listeningMeterTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
@@ -2163,6 +2168,15 @@ class MainViewModel {
     private func listeningMeterTick() {
         guard isListening else { stopListeningMeter(); return }
         let now = Date()
+
+        // AUDIO GOING IN, NOTHING COMING OUT. The engine looks healthy in every status line
+        // it prints, so without this the app cannot tell working from deaf — which is how
+        // three separate FIFO-reader bugs each reached a user before anyone noticed.
+        if engine.looksDeaf, now.timeIntervalSince(lastDeafWarningAt) > 60 {
+            lastDeafWarningAt = now
+            dlog("METER: audio arriving but no words for 12s — transcription looks deaf", tag: "METER")
+            showListeningNotice("HEARING AUDIO BUT NO WORDS — CHECK TRANSCRIPTION")
+        }
 
         // A pause and a stray keypress are not the same situation, and only one of them
         // deserves three minutes of patience.

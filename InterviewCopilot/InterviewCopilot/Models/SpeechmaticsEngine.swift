@@ -20,6 +20,35 @@ class SpeechmaticsEngine {
     /// This is the real end-of-turn signal; everything text-based is a guess at it.
     var onUtteranceEnd: (() -> Void)?
 
+    // ── Is the engine DEAF? ───────────────────────────────────────────────────
+    //
+    // Three serious bugs have lived in the FIFO reader, and every one of them presented
+    // identically from the app's side: engine running, connected, every status line
+    // healthy, and not one word transcribed. Nothing in the app noticed, so it was found
+    // by whoever happened to be watching.
+    //
+    // Two signals the engine already prints, neither useful alone. Audio arriving says
+    // nothing — silence is normal. Words not arriving says nothing — a lull is normal. The
+    // PAIR is decisive: audio going in and nothing coming out is the engine being deaf.
+    private(set) var lastAudioActivityAt = Date.distantPast
+    private(set) var lastWordsAt = Date.distantPast
+
+    /// Audio in the last 3s, and no words for 12s.
+    ///
+    /// Twelve because Speechmatics runs about 0.7s behind live speech, so anything under a
+    /// few seconds is ordinary and warning on it would train the user to ignore the warning.
+    var looksDeaf: Bool {
+        let now = Date()
+        return now.timeIntervalSince(lastAudioActivityAt) < 3
+            && now.timeIntervalSince(lastWordsAt) > 12
+    }
+
+    /// Called when a listening turn begins, so a fresh session never starts already accused.
+    func resetDeafDetection() {
+        lastWordsAt = Date()
+        lastAudioActivityAt = .distantPast
+    }
+
     /// The MODE's veto on the microphone, separate from the user's saved Settings choice.
     ///
     /// Interview Auto does not merely PREFER meeting audio — it promises the candidate's mic
@@ -360,6 +389,15 @@ class SpeechmaticsEngine {
             }
             // The engine prints "STATUS: ONLINE" once the websocket is connected and it's
             // pulling audio — the moment speaking will really be transcribed.
+            // Audio is reaching the engine (any non-zero amplitude).
+            if line.contains("AUDIO live") {
+                Task { @MainActor [weak self] in self?.lastAudioActivityAt = Date() }
+            }
+            // Words are coming back out. "(0 chars)" is an empty result and does NOT count —
+            // that is precisely what a deaf engine emits.
+            if line.contains("received (") && !line.contains("(0 chars)") {
+                Task { @MainActor [weak self] in self?.lastWordsAt = Date() }
+            }
             if line.contains("STATUS: ONLINE") || line.contains("ENGINE: READY") {
                 Task { @MainActor [weak self] in self?.isReady = true }
             }
