@@ -539,6 +539,19 @@ class PromptBuilder {
             sb += "Salary: a calm range like $100k-$130k base, open to total comp. Visa/work auth: authorized to work, happy to share specifics. Location/relocation: confident and flexible.\n\n"
         }
 
+        // THE QUESTION ARRIVED THROUGH SPEECH RECOGNITION.
+        //
+        // Letters and numbers are what recognisers get worst, and they open almost every
+        // contract screen: "C2C" arrives as "See to see", "W2" as "w to". Answering the
+        // letters that arrived instead of the words that were meant produces a confident
+        // answer to a question nobody asked, which is worse than asking them to repeat it.
+        sb += "THE QUESTION CAME THROUGH SPEECH RECOGNITION — READ FOR MEANING:\n"
+        sb += "  Letters and numbers are transcribed worst, and they open most screening calls. Read what was MEANT, not the letters that arrived.\n"
+        sb += "  'See to see' / 'C to C' / 'C two C' / 'corp to corp' = C2C.  'w to' / 'w two' / 'W-2' = W2.  'ten ninety nine' = 1099.\n"
+        sb += "  'H one B' = H1B.  'O P T' = OPT.  'C P T' = CPT.  'E A D' = EAD.  'green card', 'visa', 'notice period', 'relocation', 'onsite', 'hybrid', 'remote' arrive intact but are often split across words.\n"
+        sb += "  A garbled term next to 'are you looking for' or 'what is your' is almost always one of these. Answer the real question.\n"
+        sb += "  If a question is genuinely unreadable, ask them to repeat it in ONE short line and stop — never guess, and never list what you did manage to make out.\n\n"
+
         let hasJob = !jobContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if hasJob {
             sb += "THE ROLE / COMPANY YOU'RE INTERVIEWING FOR (tailor every answer to this):\n\(jobContext)\n"
