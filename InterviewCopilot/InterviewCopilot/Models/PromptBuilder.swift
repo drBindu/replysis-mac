@@ -503,7 +503,8 @@ class PromptBuilder {
 
     // MARK: - System Prompt (all 13 rules)
 
-    private func buildSystemPrompt(resumeFacts: String, jobContext: String = "") -> String {
+    private func buildSystemPrompt(resumeFacts: String, jobContext: String = "",
+                                   screening: String = "") -> String {
         let cacheKey = resumeFacts + "||JOB||" + jobContext
         if let cached = cachedSystemPrompt, cachedResumeFacts == cacheKey { return cached }
 
@@ -551,6 +552,16 @@ class PromptBuilder {
         sb += "  'H one B' = H1B.  'O P T' = OPT.  'C P T' = CPT.  'E A D' = EAD.  'green card', 'visa', 'notice period', 'relocation', 'onsite', 'hybrid', 'remote' arrive intact but are often split across words.\n"
         sb += "  A garbled term next to 'are you looking for' or 'what is your' is almost always one of these. Answer the real question.\n"
         sb += "  If a question is genuinely unreadable, ask them to repeat it in ONE short line and stop — never guess, and never list what you did manage to make out.\n\n"
+
+        // WHAT THIS CANDIDATE WANTS — kept separate from the ROLE block on purpose. Merged
+        // into it, a visa status reads as a requirement of the job rather than a fact about
+        // the person, and the answer comes back describing the role's needs.
+        let hasScreening = !screening.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if hasScreening {
+            sb += "WHAT YOU (THE CANDIDATE) WANT — these are FACTS about you, stated by you:\n\(screening)\n"
+            sb += "  - When asked about any of these, LEAD WITH THE ANSWER: 'I'm looking for C2C, and I can start in two weeks.' One short line of flexibility after it only if it is true. A paragraph about growth and learning answers none of it and reads to a screener as dodging a direct question.\n"
+            sb += "  - Anything NOT listed above is not known. Say it is open or negotiable, or offer to follow up — NEVER invent a rate, a visa status, a start date or a location. A recruiter writes these down verbatim and checks them later.\n\n"
+        }
 
         let hasJob = !jobContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if hasJob {
@@ -818,12 +829,15 @@ class PromptBuilder {
     func buildMessages(resumeFacts: String, currentQuestion: String,
                        qTypeHint: QuestionType? = nil, drillDownHint: Bool? = nil,
                        jobContext: String = "", concise: Bool = false,
-                       hints: String = "") -> [[String: String]] {
+                       hints: String = "", screening: String = "") -> [[String: String]] {
         let qType = qTypeHint ?? detectType(currentQuestion)
         let drillDown = drillDownHint ?? isDrillDown(currentQuestion)
 
         var messages: [[String: String]] = []
-        messages.append(["role": "system", "content": buildSystemPrompt(resumeFacts: resumeFacts, jobContext: jobContext)])
+        messages.append(["role": "system",
+                         "content": buildSystemPrompt(resumeFacts: resumeFacts,
+                                                      jobContext: jobContext,
+                                                      screening: screening)])
 
         // Only the most RECENT turns go to the model. The full `history` (up to 80)
         // still powers fact-locking, the last-answer hint, and topic-tracking below —

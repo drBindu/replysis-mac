@@ -46,6 +46,51 @@ class MainViewModel {
     var companyName = ""
     var jobDescription = ""
     var conciseAnswers = false      // when true, answers are short & spoken-length
+    // ── Screening details ─────────────────────────────────────────────────────
+    //
+    // "Are you looking for C2C or W2 or full time?" is asked in the first two minutes of
+    // nearly every US contract screen, and the answer appears on no resume ever written.
+    // With nothing to go on the app produced a paragraph about wanting to grow and learn,
+    // which answers none of it and reads to a screener as dodging a direct question.
+    //
+    // Saved with the company and role so they are answered once, not before every interview.
+    static let notSpecified = "Not specified"
+    static let workTypeOptions   = [notSpecified, "C2C (corp to corp)", "W2 contract",
+                                    "C2H (contract to hire)", "Full time", "1099", "Open to any"]
+    static let workAuthOptions   = [notSpecified, "US citizen", "Green card", "H1B", "H4 EAD",
+                                    "OPT", "CPT", "TN", "L2 EAD", "No sponsorship needed",
+                                    "Will need sponsorship", "Prefer not to answer"]
+    static let canStartOptions   = [notSpecified, "Immediately", "In 1 week", "In 2 weeks",
+                                    "In 1 month", "In 2 months", "Flexible"]
+    static let locationOptions   = [notSpecified, "Remote", "Hybrid", "Onsite", "Open to relocation"]
+
+    var workType    = MainViewModel.notSpecified
+    var workAuth    = MainViewModel.notSpecified
+    var canStart    = MainViewModel.notSpecified
+    var workLocation = MainViewModel.notSpecified
+    var payRate     = ""
+
+    /// Only what was actually set.
+    ///
+    /// ANYTHING LEFT UNSET IS LEFT OUT ENTIRELY. A blank must never become a confident
+    /// answer: inventing a visa status or a rate on somebody's behalf is worse than saying
+    /// it is open, and both are things a recruiter writes down verbatim and checks later.
+    var screeningContext: String {
+        var lines: [String] = []
+        let ns = Self.notSpecified
+        if workType != ns    { lines.append("Work type wanted: \(workType)") }
+        if workAuth == "Prefer not to answer" {
+            lines.append("Work authorization: the candidate does NOT want to state this. If asked, say warmly that you are authorized to work and happy to go through specifics with the recruiter — never invent a status.")
+        } else if workAuth != ns {
+            lines.append("Work authorization: \(workAuth)")
+        }
+        if canStart != ns    { lines.append("Can start: \(canStart)") }
+        if workLocation != ns { lines.append("Work location: \(workLocation)") }
+        let pay = payRate.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !pay.isEmpty      { lines.append("Pay expectation: \(pay)") }
+        return lines.joined(separator: "\n")
+    }
+
     var jobContext: String {
         var parts: [String] = []
         let c = companyName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -905,7 +950,7 @@ class MainViewModel {
         let messages = builder.buildMessages(resumeFacts: resumeFacts, currentQuestion: q,
                                              qTypeHint: qType, drillDownHint: isDrill,
                                              jobContext: jobContext, concise: conciseAnswers,
-                                             hints: liveHints)
+                                             hints: liveHints, screening: screeningContext)
         let provider = useGroq ? "groq" : "openai"
         let lowBanner = (!session.isUnlimited && session.credits > 0 && session.credits < 5)
             ? "⚠ Only \(session.credits) credit(s) remaining.\n\n" : ""
@@ -2371,12 +2416,21 @@ class MainViewModel {
            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
             companyName = obj["company"] ?? ""
             jobDescription = obj["description"] ?? ""
+            // Missing keys stay "Not specified" — an older job.json has none of these, and
+            // defaulting a work authorization would be exactly the invention this avoids.
+            workType     = obj["workType"]     ?? Self.notSpecified
+            workAuth     = obj["workAuth"]     ?? Self.notSpecified
+            canStart     = obj["canStart"]     ?? Self.notSpecified
+            workLocation = obj["workLocation"] ?? Self.notSpecified
+            payRate      = obj["payRate"]      ?? ""
         }
     }
 
     func saveJob() {
         let path = engine.appDataFolder.appendingPathComponent("job.json")
-        let obj = ["company": companyName, "description": jobDescription]
+        let obj = ["company": companyName, "description": jobDescription,
+                   "workType": workType, "workAuth": workAuth, "canStart": canStart,
+                   "workLocation": workLocation, "payRate": payRate]
         try? JSONSerialization.data(withJSONObject: obj).write(to: path)
     }
 

@@ -994,6 +994,11 @@ struct MainView: View {
                 .focused($focusedField, equals: .company)
                 .onChange(of: vm.companyName) { scheduleJobSave() }
 
+            // Screening details. Asked in the first two minutes of nearly every contract
+            // screen, and answerable from no resume ever written — so they are set once
+            // here rather than guessed at, or waffled around, in front of a recruiter.
+            screeningSection
+
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color(red: 14/255, green: 18/255, blue: 26/255).opacity(vm.mainWindowOpacity))
@@ -1017,6 +1022,79 @@ struct MainView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    /// The five screening answers, and a free-text rate.
+    ///
+    /// Every one defaults to "Not specified" and an unset field is left out of the prompt
+    /// entirely — a blank must never become a confident answer, because inventing somebody's
+    /// visa status or rate is worse than saying it is open, and a recruiter writes both down.
+    var screeningSection: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Image(systemName: "person.text.rectangle")
+                    .font(.system(size: 10)).foregroundColor(Color(hex: "#64748b"))
+                Text("SCREENING ANSWERS")
+                    .font(.system(size: 10, weight: .bold)).tracking(0.9)
+                    .foregroundColor(Color(hex: "#94A3B8"))
+                Text("asked in the first two minutes")
+                    .font(.system(size: 9)).foregroundColor(Color(hex: "#4b5563"))
+                Spacer()
+            }
+            HStack(spacing: 7) {
+                screeningPicker("Work type", MainViewModel.workTypeOptions, Bindable(vm).workType)
+                screeningPicker("Authorization", MainViewModel.workAuthOptions, Bindable(vm).workAuth)
+            }
+            HStack(spacing: 7) {
+                screeningPicker("Can start", MainViewModel.canStartOptions, Bindable(vm).canStart)
+                screeningPicker("Where", MainViewModel.locationOptions, Bindable(vm).workLocation)
+            }
+            // Free text, because "$65/hr on C2C" and "$140k base" are not the same shape.
+            TextField("Pay  (e.g. $65/hr on C2C, or $140k base)", text: Bindable(vm).payRate)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundColor(.white)
+                .padding(.horizontal, 10).padding(.vertical, 8)
+                .background(Color(red: 14/255, green: 18/255, blue: 26/255).opacity(vm.mainWindowOpacity))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.12), lineWidth: 1))
+                .cornerRadius(9)
+                .focused($focusedField, equals: .pay)
+                .onChange(of: vm.payRate) { scheduleJobSave() }
+        }
+    }
+
+    func screeningPicker(_ label: String, _ options: [String], _ binding: Binding<String>) -> some View {
+        let isSet = binding.wrappedValue != MainViewModel.notSpecified
+        return Menu {
+            ForEach(options, id: \.self) { opt in
+                Button(opt) { binding.wrappedValue = opt; scheduleJobSave() }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(label.uppercased())
+                        .font(.system(size: 8, weight: .bold)).tracking(0.6)
+                        .foregroundColor(Color(hex: "#4b5563"))
+                    Text(binding.wrappedValue)
+                        .font(.system(size: 11, weight: isSet ? .semibold : .regular))
+                        .foregroundColor(isSet ? Color(hex: "#7dd3fc") : Color(hex: "#64748b"))
+                        .lineLimit(1).truncationMode(.tail)
+                }
+                Spacer(minLength: 2)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(Color(hex: "#4b5563"))
+            }
+            .padding(.horizontal, 9).padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(red: 14/255, green: 18/255, blue: 26/255).opacity(vm.mainWindowOpacity))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(
+                isSet ? Color(hex: "#2b6ea8").opacity(0.55) : Color.white.opacity(0.12), lineWidth: 1))
+            .cornerRadius(9)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     // ══════════════════════════════════════════════
@@ -1417,7 +1495,7 @@ struct MainView: View {
 }
 
 // Which text field currently has keyboard focus (so Space types instead of toggling mic)
-enum FocusField: Hashable { case resume, hints, company, job }
+enum FocusField: Hashable { case resume, hints, company, job, pay }
 
 // A parsed segment of an AI answer (for the rich coding-answer renderer)
 enum AnswerBlock {
