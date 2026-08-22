@@ -641,7 +641,8 @@ class MainViewModel {
                 if let fr = event.window?.firstResponder, fr is NSText { return event }
                 switch event.keyCode {
                 case 49:        self.handleSpacePress(source: "LOCAL"); return nil   // Space
-                case 100, 101:  self.runScreenAnalysis();              return nil   // F8 / F9
+                case 100: self.runScreenAnalysis(wholeScreen: false);  return nil   // F8 — this window
+                case 101: self.runScreenAnalysis(wholeScreen: true);   return nil   // F9 — main screen
                 default:        return event
                 }
             }
@@ -658,8 +659,8 @@ class MainViewModel {
         dlog("setupHotkeys: creating new GlobalHotkey instance", tag: "HOTKEY")
         hotkey = GlobalHotkey(
             onSpacePressed: { [weak self] in self?.handleSpacePress(source: "GLOBAL") },
-            onF8Pressed:    { [weak self] in self?.runScreenAnalysis() },
-            onF9Pressed:    { [weak self] in self?.runScreenAnalysis() },
+            onF8Pressed:    { [weak self] in self?.runScreenAnalysis(wholeScreen: false) },
+            onF9Pressed:    { [weak self] in self?.runScreenAnalysis(wholeScreen: true) },
             onF12Pressed:   { },
             onKillPressed:  { NSApplication.shared.terminate(nil) }
         )
@@ -912,6 +913,10 @@ class MainViewModel {
         // "this code" always wins, so "do you prefer this code or that one" still counts.
         let aboutTheScreen = isWatchMode && !PromptBuilder.isPersonalQuestion(q)
         if aboutTheScreen, !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !isScreenAnalyzing {
+            // Watching means the SCREEN. "Frontmost window" in a mode nobody is touching is
+            // whichever window was clicked last, which is how an answer ends up confidently
+            // describing something the interviewer is not looking at.
+            capturingWholeScreen = true
             isScreenAnalyzing = true; isProcessing = true
             answerEpoch += 1
             updateMicUI()
@@ -1061,19 +1066,25 @@ class MainViewModel {
 
     // MARK: - Screen Analysis
 
-    func runScreenAnalysis() {
+    /// - Parameter wholeScreen: take the whole display instead of the front window.
+    ///   F9 is labelled "main screen" and F8 "this screen"; both called this with no
+    ///   distinction, so the two badges in the header described a difference that did not
+    ///   exist. They differ now, which also gives an explicit way to grab a whole monitor
+    ///   without turning watch mode on.
+    func runScreenAnalysis(wholeScreen: Bool = false) {
         guard !isProcessing && !isScreenAnalyzing else { return }
         // Same gate as Space: signed-out → take them to sign-in, not a dead-end message.
         guard session.isLoggedIn else {
             NotificationCenter.default.post(name: .showLogin, object: nil); return
         }
 
-        dlog("Screen analysis triggered", tag: "SCREEN")
+        dlog("Screen analysis triggered (wholeScreen=\(wholeScreen))", tag: "SCREEN")
         answerIsBehavioral = false   // screen analysis isn't a behavioral question
         answerEpoch += 1             // new answer → scroll to top
+        capturingWholeScreen = wholeScreen
         isScreenAnalyzing = true; isProcessing = true; updateMicUI()
 
-        Task { await _doScreenCapture(label: "📸 SCREEN ANALYSIS") }
+        Task { await _doScreenCapture(label: wholeScreen ? "📸 MAIN SCREEN" : "📸 THIS SCREEN") }
     }
 
     // Toggle continuous watch mode — auto-captures every 8 seconds
@@ -1191,6 +1202,26 @@ class MainViewModel {
     /// decoded, thrown away, and billed for. Capping here sends a fraction of the bytes for
     /// a byte-identical result on the model side.
     private let visionMaxEdge: Double = 1536
+    /// A single window arrives close to its real size and reads well at a 768 short edge.
+    /// A whole monitor does not: 1920x1080 shrunk to fit 768 becomes 1365x768, and body
+    /// text on a coding site goes from about fourteen pixels to ten — the edge of what a
+    /// vision model reads rather than recalls. The evidence was an answer that named Two
+    /// Sum, described the right approach, and never mentioned "Compile Error" in large red
+    /// type across half the same screen. Two Sum is the most memorised problem there is, so
+    /// a recalled answer and a read one look identical until the question is one the model
+    /// has not seen before — which is every question that matters.
+    ///
+    /// A 1080p monitor is now sent at its own resolution rather than three quarters of it.
+    private let visionMaxShortEdgeFullScreen: Double = 1100
+    private let visionMaxLongEdgeFullScreen: Double  = 2560
+
+    /// Whether this capture should take the whole display rather than the front window.
+    ///
+    /// Targeting the frontmost window is right for an explicit hotkey — the user is looking
+    /// at a thing and pressing a key about it. It is wrong for a mode left running, where
+    /// "frontmost" becomes whichever window was clicked last, and the answer quietly
+    /// describes the wrong thing. Watching a screen means the screen.
+    private var capturingWholeScreen = false
 
     private func captureScreen() async -> Data? {
         do {
@@ -1202,7 +1233,7 @@ class MainViewModel {
             // pixels where the question actually is. Falls back to the display when there is
             // no sensible foreground window (e.g. only the desktop is showing).
             let ownPID = ProcessInfo.processInfo.processIdentifier
-            let candidate = content.windows.first { w in
+            let candidate = capturingWholeScreen ? nil : content.windows.first { w in
                 guard w.isOnScreen, w.frame.width > 200, w.frame.height > 200 else { return false }
                 guard let app = w.owningApplication else { return false }
                 // Never target ourselves — the user wants what is BEHIND this app.
@@ -1242,7 +1273,16 @@ class MainViewModel {
             // tall narrow window came through far larger than intended).
             let origW = Double(cgImage.width), origH = Double(cgImage.height)
             guard origW > 0, origH > 0 else { return nil }
-            let scale = min(1.0, visionMaxEdge / max(origW, origH))
+            // Never upscale, and cap the SHORT edge too — the short edge is what the model
+            // downscales to, so it is the one that decides whether text survives.
+            let shortEdge = min(origW, origH), longEdge = max(origW, origH)
+            let scale: Double
+            if capturingWholeScreen {
+                scale = min(1.0, visionMaxShortEdgeFullScreen / shortEdge,
+                                 visionMaxLongEdgeFullScreen / longEdge)
+            } else {
+                scale = min(1.0, visionMaxEdge / longEdge)
+            }
             let newW  = max(1, Int((origW * scale).rounded()))
             let newH  = max(1, Int((origH * scale).rounded()))
 
