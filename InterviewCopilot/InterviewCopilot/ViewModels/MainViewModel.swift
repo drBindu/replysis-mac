@@ -1180,6 +1180,14 @@ class MainViewModel {
                 self.appendToSessionLog(q: "[Screen Analysis]", a: final)
                 self.stopThinkingUI()
                 dlog("Screen analysis complete — \(final.count) chars", tag: "SCREEN")
+                // The answer said part of the problem was off-screen. Watch for them to
+                // scroll and read the rest by ourselves, rather than telling them to scroll
+                // and then ignoring them for doing it.
+                if final.contains(Self.scrollMarker) {
+                    self.armScrollWatch(question: currentTranscript.isEmpty
+                                          ? "Analyze what is on my screen" : currentTranscript,
+                                        signature: Self.coarseSignature(imageData))
+                }
             },
             onError: { [weak self] err in
                 guard let self = self, self.answerEpoch == epoch else { return }
@@ -1308,6 +1316,70 @@ class MainViewModel {
     }
 
     /// The prepared id, if it is still fresh enough for the server to honour.
+    // ── Answer again once they have scrolled ──────────────────────────────────
+    //
+    // The first version asked the candidate to scroll and then ignored them for doing it,
+    // so they had to work out for themselves that they should ask the same question twice.
+    // Being told to scroll and then abandoned is worse than not being told.
+    private var scrollWatchUntil: Date?
+    private var scrollWatchSignature: [UInt8] = []
+    private var scrollWatchTimer: Timer?
+    private var scrollWatchQuestion = ""
+    /// The marker the screen prompt emits when the statement is cut off.
+    static let scrollMarker = "━━━ SCROLL ━━━"
+
+    /// Watch for the screen to move, and answer once more when it does.
+    ///
+    /// ONCE ONLY and inside twenty-five seconds. A standing re-answer would fire on every
+    /// scroll for the rest of the interview and spend a credit each time; twenty-five
+    /// seconds is long enough to read and scroll, short enough that it cannot follow them
+    /// into the next question.
+    private func armScrollWatch(question: String, signature: [UInt8]) {
+        guard isWatchMode else { return }
+        scrollWatchUntil = Date().addingTimeInterval(25)
+        scrollWatchSignature = signature
+        scrollWatchQuestion = question
+        scrollWatchTimer?.invalidate()
+        scrollWatchTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in await self?.checkScrollWatch() }
+        }
+        dlog("SCREEN: answer said something was cut off — watching for a scroll", tag: "SCREEN")
+    }
+
+    private func disarmScrollWatch() {
+        scrollWatchTimer?.invalidate(); scrollWatchTimer = nil
+        scrollWatchUntil = nil
+        scrollWatchSignature = []
+        scrollWatchQuestion = ""
+    }
+
+    private func checkScrollWatch() async {
+        guard let until = scrollWatchUntil else { disarmScrollWatch(); return }
+        guard Date() < until else {
+            dlog("SCREEN: nothing scrolled within the window — standing down", tag: "SCREEN")
+            disarmScrollWatch(); return
+        }
+        // Never while an answer is streaming, and never while they are speaking: replacing
+        // an answer mid-read, or mid-sentence, is worse than the gap it fills.
+        guard !isProcessing, !isScreenAnalyzing else { return }
+        guard Date().timeIntervalSince(lastSpeechHeardAt) > 1.5 else { return }
+
+        capturingWholeScreen = true
+        guard let data = await captureScreen(), !data.isEmpty else { return }
+        let now = Self.coarseSignature(data)
+        guard !Self.signaturesMatch(now, scrollWatchSignature) else { return }   // nothing moved
+
+        let question = scrollWatchQuestion
+        disarmScrollWatch()   // once only
+        dlog("SCREEN: they scrolled — answering the same question again", tag: "SCREEN")
+        thinkingText = "You scrolled — reading the rest…"
+        answerEpoch += 1
+        capturingWholeScreen = true
+        isScreenAnalyzing = true; isProcessing = true; updateMicUI()
+        transcript = question
+        Task { await _doScreenCapture(label: "📸 AFTER SCROLL") }
+    }
+
     /// The prepared id, but ONLY if it is still fresh and still shows the same screen.
     ///
     /// Matching the signature is what makes this safe. Sending an id prepared moments ago
@@ -1741,6 +1813,9 @@ class MainViewModel {
     /// Everything between deciding a turn is over and actually answering it. Shared by the
     /// immediate path and the one that waited out an unclear ending.
     private func commitAutomaticTurn(_ text: String) {
+        // A new question supersedes the old one, so the watch must not fire twenty seconds
+        // later and re-answer something nobody is asking about any more.
+        disarmScrollWatch()
         unclearDeadline = nil; unclearPendingText = ""
         guard autoDetector.acceptUtterance(text) else {
             dlog("AUTO: duplicate of the question just answered — ignoring", tag: "AUTO")
@@ -2228,6 +2303,7 @@ class MainViewModel {
     }
 
     private func endSession() {
+        disarmScrollWatch()
         isRecording = false; sessionLogPath = nil
         sessionTimerObj?.invalidate(); sessionTimerVisible = false
         PromptBuilder.shared.clearHistory()
@@ -2819,6 +2895,7 @@ class MainViewModel {
         transcript = ""; aiAnswer = ""; answerIsBehavioral = false
         aiAnswerHint = idleHintForCurrentMode
         PromptBuilder.shared.clearHistory()
+        disarmScrollWatch()
         resetAutoTurnState()
         engine.clearLatestTxt()
         stopThinkingUI()
