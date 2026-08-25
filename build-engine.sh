@@ -10,6 +10,27 @@
 # checked out; the hash says whether what was compiled is actually that revision.
 # The fork lived in exactly that gap: a build from a checked-out commit that was
 # not the code that shipped.
+# ⚠ THE SHARED ENGINE CANNOT CURRENTLY DRIVE THIS APP'S AUTO MODE.
+#
+# Mac decides a turn is over from one line the engine prints:
+#
+#     >>> UTTERANCE END
+#
+# The retired fork emits it from a Speechmatics EndOfUtterance handler, with
+# end_of_utterance_silence_trigger set in the transcription config. The shared engine
+# has NEITHER the handler nor the config, so Speechmatics is never asked to send the
+# event. Building from the shared source therefore produces an engine that connects,
+# transcribes correctly, and never ends a turn — the app listens, the transcript grows,
+# and no answer is ever produced. Verified in a real session: zero UTTERANCE END lines,
+# zero turns, zero answers.
+#
+# Windows does not need it; it decides turn-end client-side from the text. Mac
+# deliberately does not, because the recogniser has the waveform and everything
+# text-based is a guess at what it already knows.
+#
+# Until the shared engine emits it, this script builds an engine that is stamped,
+# reproducible and unable to answer a question. Do not install its output as the app's
+# engine without checking for that line first.
 set -euo pipefail
 MAC_DIR="$(cd "$(dirname "$0")" && pwd)"
 WIN_DIR="${1:-$MAC_DIR/../replysis-windows}"
