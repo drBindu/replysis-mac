@@ -41,7 +41,45 @@ jobs:
 
       - name: Set version
         id: version
-        run: echo "VERSION=1.0.${{ github.run_number }}" >> $GITHUB_OUTPUT
+        run: |
+          set -euo pipefail
+          # NOT github.run_number. Run numbers are per-REPOSITORY and restarted at 1 when
+          # this project changed accounts, so run 41 here would have published "1.0.41"
+          # while every user sits on 1.0.244. Sparkle compares the build number, so that
+          # release would build, sign, notarize, upload and update the feed — entirely
+          # green — and then be offered to nobody, ever, with no error anywhere to explain
+          # why. The project file is the single source of truth for what version this is.
+          PBX=InterviewCopilot/InterviewCopilot.xcodeproj/project.pbxproj
+          VERSION=$(sed -n 's/.*MARKETING_VERSION = \([0-9][0-9.]*\);.*/\1/p' "$PBX" | head -1)
+          BUILD=$(sed -n 's/.*CURRENT_PROJECT_VERSION = \([0-9][0-9]*\);.*/\1/p' "$PBX" | head -1)
+          [ -n "$VERSION" ] && [ -n "$BUILD" ] || {
+            echo "::error::Could not read MARKETING_VERSION/CURRENT_PROJECT_VERSION from $PBX"; exit 1; }
+          # And refuse to publish something the feed would rank at or below what is already
+          # out there. This is the guard that makes the whole class impossible, rather than
+          # just fixing today's instance of it.
+          # Delimiter is #, not : — the pattern contains "sparkle:version", and with :
+          # sed errors out, LATEST comes back empty, and the comparison below waves every
+          # version through while looking like it checked. Caught by running it, not by
+          # reading it; a guard is only worth what its last real execution proved.
+          if curl -fsSL -o /tmp/feed.xml "https://raw.githubusercontent.com/${{ github.repository }}/main/appcast.xml"; then
+            LATEST=$(sed -n 's#.*<sparkle:version>\([0-9][0-9]*\)</sparkle:version>.*#\1#p' /tmp/feed.xml | sort -n | tail -1)
+            [ -n "$LATEST" ] || {
+              echo "::error::Fetched appcast.xml but parsed no <sparkle:version> from it."
+              echo "::error::Refusing to publish blind — the feed's format changed, or it is corrupt."
+              exit 1; }
+          else
+            LATEST=""   # no feed published yet: a genuine first release
+            echo "no appcast published yet — treating this as the first release"
+          fi
+          if [ -n "$LATEST" ] && [ "$BUILD" -le "$LATEST" ]; then
+            echo "::error::Refusing to publish build $BUILD ($VERSION): the feed already offers"
+            echo "::error::build $LATEST. Sparkle would never offer this to anyone. Bump"
+            echo "::error::MARKETING_VERSION and CURRENT_PROJECT_VERSION in the project file."
+            exit 1
+          fi
+          echo "publishing $VERSION (build $BUILD); feed currently at build ${LATEST:-none}"
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "BUILD=$BUILD" >> $GITHUB_OUTPUT
 
       # Rebuild speechmatics_engine from Python source on every build. Previously the
       # repo shipped a stale pre-built binary, so fixes to speechmatics_engine.py never
@@ -91,6 +129,13 @@ jobs:
           pip install pyinstaller speechmatics-python pyaudio numpy certifi
           pyinstaller speechmatics_engine.spec --distpath "$RUNNER_TEMP/enginedist" --workpath "$RUNNER_TEMP/enginebuild" -y
           chmod +x "$RUNNER_TEMP/enginedist/speechmatics_engine/speechmatics_engine"
+          # The Xcode "Install speech engine" phase copies the engine in BEFORE signing,
+          # and looks for it beside the repo. Put it there so CI and a developer's machine
+          # run the same path — special-casing CI would mean the thing we ship is built
+          # differently from the thing anyone can reproduce.
+          mkdir -p "$GITHUB_WORKSPACE/.engine-build/dist"
+          rm -rf "$GITHUB_WORKSPACE/.engine-build/dist/speechmatics_engine"
+          cp -R "$RUNNER_TEMP/enginedist/speechmatics_engine" "$GITHUB_WORKSPACE/.engine-build/dist/"
           # ONEDIR build: dist/speechmatics_engine is a FOLDER (executable + hundreds of
           # dependency files under _internal/), not a single file — this removes the
           # multi-second self-extraction-to-temp delay onefile builds pay on EVERY app
@@ -139,7 +184,7 @@ jobs:
             -configuration Release \
             -archivePath "$RUNNER_TEMP/InterviewCopilot.xcarchive" \
             MARKETING_VERSION="${{ steps.version.outputs.VERSION }}" \
-            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.version.outputs.BUILD }}" \
             CODE_SIGN_STYLE=Manual \
             "CODE_SIGN_IDENTITY=Developer ID Application" \
             PROVISIONING_PROFILE_SPECIFIER="" \
