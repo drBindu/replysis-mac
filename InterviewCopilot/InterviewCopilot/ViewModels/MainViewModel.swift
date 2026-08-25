@@ -2109,6 +2109,19 @@ class MainViewModel {
     /// Three minutes, because in a real interview somebody speaks every few seconds and
     /// even a long thinking pause is well under a minute. Meant to catch an empty room,
     /// never a person deciding what to say.
+    /// How often the listening meter ticks. NAMED, because it is half of an agreement with
+    /// the Windows client and was previously a bare 5.0 inside a Timer call.
+    ///
+    /// THE CONTRACT: the deaf threshold is the promise; this interval is an implementation
+    /// detail; the observable behaviour is a RANGE — a warning appears between the threshold
+    /// and the threshold plus one interval. With 12s and 5s the ticks land at 5, 10, 15, so
+    /// the measured latency is 15s and not 12. Windows measured 15s too, but by both
+    /// happening to use a 5s meter rather than by agreement — which is exactly the kind of
+    /// agreement that stops being true without anyone noticing.
+    ///
+    /// Changing either number changes what a user waits. Change them together, deliberately.
+    static let listeningMeterInterval: TimeInterval = 5
+
     private let idleListeningTimeout: TimeInterval = 180
     /// How long to wait when nothing has been said AT ALL.
     ///
@@ -2191,9 +2204,14 @@ class MainViewModel {
         engine.resetDeafDetection()   // a fresh turn never starts already accused
         listeningNoticeTimer?.invalidate(); listeningNotice = ""   // a new session, not the old one's news
         listeningMeterTimer?.invalidate()
-        listeningMeterTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        listeningMeterTimer = Timer.scheduledTimer(withTimeInterval: Self.listeningMeterInterval,
+                                                   repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.listeningMeterTick() }
         }
+        // Breaks loudly if someone changes one half of the agreement without the other.
+        // The figure the two clients compare is the range, not the threshold alone.
+        assert(Self.listeningMeterInterval == 5 && SpeechmaticsEngine.deafWordSilence == 12,
+               "Deaf-warning latency is a contract with the Windows client: threshold \(SpeechmaticsEngine.deafWordSilence)s + one \(Self.listeningMeterInterval)s poll. Changing either changes what a user waits — update both sides and the documented range.")
         dlog("METER: listening started", tag: "METER")
     }
 

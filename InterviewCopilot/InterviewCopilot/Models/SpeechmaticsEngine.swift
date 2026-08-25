@@ -46,10 +46,16 @@ class SpeechmaticsEngine {
     ///
     /// Twelve because Speechmatics runs about 0.7s behind live speech, so anything under a
     /// few seconds is ordinary and warning on it would train the user to ignore the warning.
+    /// Audio in the last 3s and no words for this long. The THRESHOLD is the contract with
+    /// the Windows client; the caller's poll interval decides the observed latency, which is
+    /// therefore a range: between this and this plus one poll. See listeningMeterInterval.
+    static let deafWordSilence: TimeInterval = 12
+    static let deafAudioRecency: TimeInterval = 3
+
     var looksDeaf: Bool {
         let now = Date()
-        return now.timeIntervalSince(lastAudioActivityAt) < 3
-            && now.timeIntervalSince(lastWordsAt) > 12
+        return now.timeIntervalSince(lastAudioActivityAt) < Self.deafAudioRecency
+            && now.timeIntervalSince(lastWordsAt) > Self.deafWordSilence
     }
 
     /// Called when a listening turn begins, so a fresh session never starts already accused.
