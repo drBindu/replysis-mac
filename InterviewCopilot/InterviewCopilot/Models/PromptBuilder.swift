@@ -158,9 +158,16 @@ class PromptBuilder {
         // The plainest forms were missing: the list had "on my screen" but not "my
         // screen", so "what is there in my screen now, you tell me" matched NOTHING and
         // was answered from speech by a model that then denied having eyes.
-        "my screen", "your screen", "the screen", "this screen", "screen now",
-        "see my", "seeing", "displayed", "what am i looking at", "what do i have open",
+        //
+        // Matched by DETERMINER rather than by listing every preposition, which is the
+        // Windows rule: "screen" preceded by my/your/the/this/that. That keeps out the
+        // screens this app must NOT treat as the desktop — a phone screen, a screening
+        // round, screen sharing as a topic — without needing to enumerate them.
+        "what am i looking at", "what do i have open",
     ]
+
+    /// "screen" with a determiner in front of it. See screenReferencePhrases.
+    private static let screenDeterminers = ["my", "your", "the", "this", "that"]
 
     /// Questions about the PERSON, which no screenshot can help with.
     ///
@@ -185,7 +192,22 @@ class PromptBuilder {
 
     static func refersToScreen(_ question: String) -> Bool {
         let q = question.lowercased()
-        return screenReferencePhrases.contains { q.contains($0) }
+        if screenReferencePhrases.contains(where: { q.contains($0) }) { return true }
+        // "<determiner> screen" in any phrasing — in my screen, on your screen, read the
+        // screen — without enumerating the prepositions that can precede it.
+        //
+        // The trailing boundary is required: plain substring matching turned "tell me
+        // about the screening round" into a screen question, which would photograph the
+        // desktop to answer a question about a phone interview.
+        for det in screenDeterminers {
+            var search = q[q.startIndex...]
+            while let r = search.range(of: "\(det) screen") {
+                let after = r.upperBound
+                if after == q.endIndex || !q[after].isLetter { return true }
+                search = q[after...]
+            }
+        }
+        return false
     }
 
     /// Deliberately NARROW: anything it is unsure about stays on the screen path, because
