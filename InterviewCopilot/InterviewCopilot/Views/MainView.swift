@@ -164,12 +164,12 @@ struct MainView: View {
             if tier == .full || tier == .noStrapline {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Replysis AI")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundColor(.white)
                         .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                     if tier == .full {
                         Text("INTERVIEW INTELLIGENCE")
-                            .font(.system(size: 8, weight: .semibold)).tracking(1.1)
+                            .font(.system(size: 7, weight: .semibold)).tracking(1.0)
                             .foregroundColor(Color(hex: "#5b6b7f"))
                             .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                     }
@@ -196,7 +196,7 @@ struct MainView: View {
                     HStack(spacing: 6) {
                         Circle().fill(vm.micColor).frame(width: 7, height: 7)
                         Text(vm.micStatus)
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.system(size: 11, weight: .bold)).tracking(0.5)
                             .foregroundColor(.white)
                     }
                     // ROOT-CAUSE FIX: the LISTENING hint ("Press SPACE again to get answer")
@@ -208,7 +208,7 @@ struct MainView: View {
                     // word above it ("LISTENING" / "MUTED") still says what is happening.
                     if tier != .minimal {
                         Text(micHintText)
-                            .font(.system(size: 9, weight: .medium))
+                            .font(.system(size: 8.5, weight: .medium))
                             .foregroundColor(micHintColor)
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
@@ -216,7 +216,7 @@ struct MainView: View {
                     }
                 }
             }
-            .padding(.leading, 8).padding(.trailing, 16).padding(.vertical, 6)
+            .padding(.leading, 8).padding(.trailing, 14).padding(.vertical, 7)
             .background(
                 Capsule().fill(Color.white.opacity(0.035))
                     .overlay(Capsule().stroke(
@@ -259,7 +259,9 @@ struct MainView: View {
 
     // ── Right cluster: interview actions + profile + window ────────
     var rightCluster: some View {
-        HStack(spacing: 10) {
+        // Wider gaps between groups than inside them: separation is what makes a toolbar
+        // read as a few considered clusters instead of one crowded row.
+        HStack(spacing: 13) {
             // No Analyze button: it duplicated what F8/F9 already do, and the footer
             // names both. Watch Screen is the control worth toolbar space, because it is
             // the one set once before the call and then never touched — reaching for a
@@ -291,7 +293,7 @@ struct MainView: View {
                         .foregroundColor(Color(hex: "#fcd34d"))
                         .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                 }
-                .padding(.horizontal, 10).padding(.vertical, 7)
+                .padding(.horizontal, 11).padding(.vertical, 8)
                 .background(Capsule().fill(Color(hex: "#2A1F0D")))
                 .overlay(Capsule().stroke(Color(hex: "#7c5e1e"), lineWidth: 1))
                 .help("Press Space to start listening again")
@@ -309,7 +311,7 @@ struct MainView: View {
                         .foregroundColor(Color(hex: "#cbd5e1"))
                         .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                 }
-                .padding(.horizontal, 10).padding(.vertical, 7)
+                .padding(.horizontal, 11).padding(.vertical, 8)
                 .background(Capsule().fill(Color.white.opacity(0.04)))
                 .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
             }
@@ -326,7 +328,7 @@ struct MainView: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(vm.creditsColor)
                         .lineLimit(1).fixedSize(horizontal: true, vertical: false)
-                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
                         .background(Capsule().fill(Color.white.opacity(0.05)))
                         .overlay(Capsule().stroke(vm.creditsColor.opacity(0.35), lineWidth: 1))
                 }
@@ -396,7 +398,7 @@ struct MainView: View {
                     .font(.system(size: 8, weight: .bold))
                     .foregroundColor(Color(hex: "#64748b"))
             }
-            .padding(.horizontal, 13).padding(.vertical, 9)
+            .padding(.horizontal, 11).padding(.vertical, 8)
             .background(Capsule().fill(vm.listeningMode.isAutomatic ? Color(hex: "#102A1D") : Color(hex: "#161b22")))
             .overlay(Capsule().stroke(
                 vm.listeningMode.isAutomatic ? Color(hex: "#2C7B50") : Color.white.opacity(0.12), lineWidth: 1))
@@ -505,16 +507,16 @@ struct MainView: View {
                             .font(.system(size: 12, weight: .semibold))
                     }
                     Text("READ SCREEN")
-                        .font(.system(size: 11, weight: .bold)).tracking(0.5)
+                        .font(.system(size: 10, weight: .bold)).tracking(0.7)
                         .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                     Text("F8")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 8, weight: .bold))
                         .foregroundColor(Color(hex: "#64748b"))
                         .padding(.horizontal, 4).padding(.vertical, 1)
                         .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.06)))
                 }
                 .foregroundColor(vm.isWatchMode ? Color(hex: "#fbbf24") : Color(hex: "#cbd5e1"))
-                .padding(.horizontal, 13).padding(.vertical, 9)
+                .padding(.horizontal, 11).padding(.vertical, 8)
                 .background(vm.isWatchMode ? Color(hex: "#241a06") : Color.clear)
             }
             .buttonStyle(.plain)
@@ -530,11 +532,11 @@ struct MainView: View {
                     Image(systemName: vm.showCameraOverlay ? "eye.fill" : "eye")
                         .font(.system(size: 12, weight: .semibold))
                     Text("COMPACT")
-                        .font(.system(size: 11, weight: .bold)).tracking(0.5)
+                        .font(.system(size: 10, weight: .bold)).tracking(0.7)
                         .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                 }
                 .foregroundColor(vm.showCameraOverlay ? Color(hex: "#38bdf8") : Color(hex: "#cbd5e1"))
-                .padding(.horizontal, 13).padding(.vertical, 9)
+                .padding(.horizontal, 11).padding(.vertical, 8)
                 .background(vm.showCameraOverlay ? Color(hex: "#0c2540") : Color.clear)
             }
             .buttonStyle(.plain)
