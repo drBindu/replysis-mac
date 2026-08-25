@@ -141,11 +141,11 @@ struct MainView: View {
                 Text("Replysis AI")
                     .font(.system(size: 15, weight: .bold))
                     .foregroundColor(.white)
-                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                    .lineLimit(1).minimumScaleFactor(0.75)
                 Text("INTERVIEW INTELLIGENCE")
                     .font(.system(size: 8, weight: .semibold)).tracking(1.1)
                     .foregroundColor(Color(hex: "#5b6b7f"))
-                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                    .lineLimit(1).minimumScaleFactor(0.75)
             }
         }
     }
@@ -257,7 +257,7 @@ struct MainView: View {
                     Text(vm.listeningNotice)
                         .font(.system(size: 10, weight: .bold)).tracking(0.4)
                         .foregroundColor(Color(hex: "#fcd34d"))
-                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                        .lineLimit(1).minimumScaleFactor(0.75)
                 }
                 .padding(.horizontal, 10).padding(.vertical, 7)
                 .background(Capsule().fill(Color(hex: "#2A1F0D")))
@@ -275,7 +275,7 @@ struct MainView: View {
                     Text(vm.sessionTimerText)
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(hex: "#cbd5e1"))
-                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                        .lineLimit(1).minimumScaleFactor(0.75)
                 }
                 .padding(.horizontal, 10).padding(.vertical, 7)
                 .background(Capsule().fill(Color.white.opacity(0.04)))
@@ -293,7 +293,7 @@ struct MainView: View {
                     Text(vm.creditsText)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(vm.creditsColor)
-                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                        .lineLimit(1).minimumScaleFactor(0.75)
                         .padding(.horizontal, 12).padding(.vertical, 7)
                         .background(Capsule().fill(Color.white.opacity(0.05)))
                         .overlay(Capsule().stroke(vm.creditsColor.opacity(0.35), lineWidth: 1))
@@ -358,7 +358,7 @@ struct MainView: View {
                     .frame(width: 7, height: 7)
                 Text(vm.listeningMode.pillLabel)
                     .font(.system(size: 11, weight: .bold)).tracking(0.6)
-                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                    .lineLimit(1).minimumScaleFactor(0.75)
                     .foregroundColor(vm.listeningMode.isAutomatic ? Color(hex: "#B8F5D3") : Color(hex: "#cbd5e1"))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))
@@ -474,7 +474,7 @@ struct MainView: View {
                     }
                     Text("READ SCREEN")
                         .font(.system(size: 11, weight: .bold)).tracking(0.5)
-                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                        .lineLimit(1).minimumScaleFactor(0.75)
                     Text("F8")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundColor(Color(hex: "#64748b"))
@@ -499,7 +499,7 @@ struct MainView: View {
                         .font(.system(size: 12, weight: .semibold))
                     Text("COMPACT")
                         .font(.system(size: 11, weight: .bold)).tracking(0.5)
-                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                        .lineLimit(1).minimumScaleFactor(0.75)
                 }
                 .foregroundColor(vm.showCameraOverlay ? Color(hex: "#38bdf8") : Color(hex: "#cbd5e1"))
                 .padding(.horizontal, 13).padding(.vertical, 9)

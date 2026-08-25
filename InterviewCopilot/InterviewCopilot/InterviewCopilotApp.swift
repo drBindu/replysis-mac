@@ -159,10 +159,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // launch — the window was resizable in the sense that nothing stopped you, and
         // not in the sense that it helped.
         panel.setFrameAutosaveName("ReplysisMainPanel")
-        // A frame remembered from a display that is no longer attached can restore
-        // entirely off-screen, leaving a running app with no reachable window and no
-        // way to tell that is what happened. Fall back to the computed frame.
-        if !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(panel.frame) }) {
+        // Sanity-check what was restored. The first version of this asked only "does the
+        // saved frame intersect any screen?", which is true of a window hanging most of the
+        // way off the left edge — and that is exactly what got saved: -85 140 1525 587 on a
+        // 1440-wide display. It then restored faithfully on every launch, overriding the
+        // computed default and putting the right-hand controls past the edge of the screen.
+        // A remembered frame is only worth honouring if it FITS, so that is what is asked.
+        let vis = NSScreen.screens.first(where: { $0.visibleFrame.intersects(panel.frame) })?.visibleFrame
+        let f = panel.frame
+        let fits = vis.map { f.width <= $0.width && f.height <= $0.height
+                             && $0.contains(CGPoint(x: f.minX, y: f.minY))
+                             && $0.contains(CGPoint(x: f.maxX, y: f.maxY)) } ?? false
+        if !fits {
+            dlog("PANEL: discarding remembered frame \(Int(f.width))x\(Int(f.height)) at "
+                 + "(\(Int(f.minX)),\(Int(f.minY))) — does not fit the display", tag: "BOOT")
             panel.setFrame(NSRect(origin: origin, size: CGSize(width: w, height: h)), display: false)
         }
 
