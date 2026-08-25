@@ -1435,6 +1435,44 @@ class MainViewModel {
 
     /// A 16x16, sixteen-level greyscale fingerprint. Coarse ON PURPOSE: fine enough that
     /// scrolling or a new panel changes it, blunt enough that a ticking counter does not.
+    /// The most bytes a screenshot may occupy BEFORE base64.
+    ///
+    /// Measured against production rather than read from a document: /screen-cache accepts
+    /// a raw 750 KB payload and rejects 1000 KB with a 413, so the ceiling is on the REQUEST
+    /// body at about a megabyte. The backend's documented rule is two megabytes per image —
+    /// that limit is real but never reached, because a smaller request-size cap fires first
+    /// and base64 inflates everything by a third on the way. 700 KB raw is ~930 KB encoded,
+    /// which leaves room for the prompt and the JSON around it.
+    static let screenshotByteBudget = 700_000
+
+    /// Encode a screenshot to fit the budget, giving up as little legibility as possible.
+    ///
+    /// PNG first, because a screenshot is text on flat colour — the exact case JPEG is worst
+    /// at, and its ringing around glyph edges is the difference between the model reading
+    /// "l" and reading "1", which in code is a wrong answer.
+    ///
+    /// When PNG does not fit, quality is given up BEFORE resolution. A high-quality JPEG of
+    /// the whole screen keeps every character where it was; a smaller PNG moves the text
+    /// below the size a vision model reads reliably, which is the failure the larger capture
+    /// was introduced to fix. Shrinking is the last resort, not the first.
+    static func encodeWithinBudget(_ rep: NSBitmapImageRep, width: Int, height: Int) -> Data? {
+        if let png = rep.representation(using: .png, properties: [:]), png.count <= screenshotByteBudget {
+            dlog("Screen capture: \(png.count) bytes PNG \(width)x\(height)", tag: "SCREEN")
+            return png
+        }
+        for quality in [0.92, 0.85, 0.75, 0.6] {
+            guard let jpg = rep.representation(using: .jpeg,
+                                               properties: [.compressionFactor: quality]) else { continue }
+            if jpg.count <= screenshotByteBudget {
+                dlog("Screen capture: \(jpg.count) bytes JPEG q\(quality) \(width)x\(height) — PNG exceeded the budget", tag: "SCREEN")
+                return jpg
+            }
+        }
+        let last = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.5])
+        dlog("Screen capture: \(last?.count ?? 0) bytes JPEG q0.5 \(width)x\(height) — still over budget, sending anyway", tag: "SCREEN")
+        return last
+    }
+
     static func coarseSignature(_ jpeg: Data) -> [UInt8] {
         guard let src = NSBitmapImageRep(data: jpeg)?.cgImage else { return [] }
         let n = 16
@@ -1607,8 +1645,7 @@ class MainViewModel {
             // worst at. Its ringing around glyph edges is the difference between the model
             // reading "l" and reading "1", which in code is a wrong answer.
             let rep  = NSBitmapImageRep(cgImage: scaled)
-            let data = rep.representation(using: .png, properties: [:])
-            dlog("Screen capture: \(data?.count ?? 0) bytes PNG \(newW)x\(newH) source=\(lastCaptureSource)", tag: "SCREEN")
+            let data = Self.encodeWithinBudget(rep, width: newW, height: newH)
             return data
         } catch {
             dlog("Screen capture failed: \(error)", tag: "SCREEN")
