@@ -102,9 +102,19 @@ def speech_fixture(path):
     return w.readframes(w.getnframes())
 
 def speech_key():
-    blob = subprocess.run(["security", "find-generic-password", "-s",
-                           "com.coopilotx.InterviewCopilot.session", "-a", "session", "-w"],
-                          capture_output=True, text=True).stdout.strip()
+    # timeout is NOT belt-and-braces here. If the keychain item's ACL does not already
+    # trust this binary, `security` blocks on a SecurityAgent dialog forever — and that is
+    # the NORMAL state on a fresh machine or after the app is re-signed, which is exactly
+    # when this script is worth running. Observed live: hung 8 minutes with no output, no
+    # engine, and no way to tell it apart from slow work.
+    try:
+        blob = subprocess.run(["security", "find-generic-password", "-s",
+                               "com.coopilotx.InterviewCopilot.session", "-a", "session", "-w"],
+                              capture_output=True, text=True, timeout=20).stdout.strip()
+    except subprocess.TimeoutExpired:
+        print("  keychain read blocked (SecurityAgent prompt) — click Always Allow, or export "
+              "SPEECHMATICS_API_KEY to skip the keychain entirely")
+        return None
     if not blob: return None
     tok = json.loads(blob).get("idToken", "")
     req = urllib.request.Request("https://replysis.com/api/v1/stt/key",
@@ -127,9 +137,9 @@ def main():
     print(f"engine contract — {len(runtime)} runtime + {len(onfail)} failure-path strings, "
           f"extracted from the source that reads them\n")
 
-    key = speech_key()
+    key = os.environ.get("SPEECHMATICS_API_KEY") or speech_key()
     if not key:
-        return fail("no speech key (sign in to the app first)")
+        return fail("no speech key (sign in to the app first, or set SPEECHMATICS_API_KEY)")
 
     tmp = tempfile.mkdtemp()
     fifo = os.path.join(tmp, "sysaudio.pcm")
@@ -141,8 +151,28 @@ def main():
                             stdout=log, stderr=subprocess.STDOUT, env=env)
     try:
         time.sleep(10)
+        # A dead engine is the single most important thing this script can report, and until
+        # now it was the one thing it could not: opening the FIFO for write BLOCKS until a
+        # reader appears, so an engine that exited during startup left this script wedged
+        # forever instead of failing. Check it is alive, and say what it said on the way out.
+        if proc.poll() is not None:
+            log.flush(); log.seek(0)
+            tail = "\n".join(log.read().splitlines()[-15:])
+            return fail(f"engine exited during startup (rc={proc.returncode}) before any audio "
+                        f"was sent. Last output:\n{tail}")
         raw = speech_fixture(os.path.join(tmp, "q"))
-        with open(fifo, "wb") as f:                       # realtime, then silence to end the turn
+        # Non-blocking open with a deadline, for the same reason: never wedge, always report.
+        deadline, fd = time.time() + 20, None
+        while time.time() < deadline:
+            try:
+                fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK); break
+            except OSError:
+                time.sleep(0.25)
+        if fd is None:
+            return fail("engine never opened the system-audio FIFO for reading — it is running "
+                        "but not consuming -sysfifo, so no audio can reach it")
+        os.set_blocking(fd, True)
+        with os.fdopen(fd, "wb") as f:                    # realtime, then silence to end the turn
             for chunk in [b"\0" * 3200] * 8 + [raw[i:i+3200] for i in range(0, len(raw), 3200)] + [b"\0" * 3200] * 35:
                 f.write(chunk); f.flush(); time.sleep(0.1)
         time.sleep(2)

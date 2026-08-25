@@ -10,27 +10,33 @@
 # checked out; the hash says whether what was compiled is actually that revision.
 # The fork lived in exactly that gap: a build from a checked-out commit that was
 # not the code that shipped.
-# ⚠ THE SHARED ENGINE CANNOT CURRENTLY DRIVE THIS APP'S AUTO MODE.
+# TURN-END IS THE LINE THIS BUILD LIVES OR DIES BY.
 #
 # Mac decides a turn is over from one line the engine prints:
 #
 #     >>> UTTERANCE END
 #
-# The retired fork emits it from a Speechmatics EndOfUtterance handler, with
-# end_of_utterance_silence_trigger set in the transcription config. The shared engine
-# has NEITHER the handler nor the config, so Speechmatics is never asked to send the
-# event. Building from the shared source therefore produces an engine that connects,
-# transcribes correctly, and never ends a turn — the app listens, the transcript grows,
-# and no answer is ever produced. Verified in a real session: zero UTTERANCE END lines,
-# zero turns, zero answers.
+# The shared engine now emits it: it registers an EndOfUtterance handler and asks
+# Speechmatics for the event via conversation_config. That nesting is the whole
+# trick — end_of_utterance_silence_trigger is NOT a field on TranscriptionConfig,
+# and passing it flat there is accepted in Python, dropped on the wire, and never
+# reaches Speechmatics. The engine now inspects the serialised config and warns
+# out loud if the field failed to make it, because the silent version of this
+# failure produces an engine that connects, transcribes perfectly, and never ends
+# a turn: the app listens, the transcript grows, and no answer is ever produced.
+# It looks like a hung app and is a healthy one waiting for a signal that never
+# comes. That was the state of the shared engine when this script was written.
 #
-# Windows does not need it; it decides turn-end client-side from the text. Mac
-# deliberately does not, because the recogniser has the waveform and everything
+# Windows does not need the line; it decides turn-end client-side from the text.
+# Mac deliberately does not, because the recogniser has the waveform and everything
 # text-based is a guess at what it already knows.
 #
-# Until the shared engine emits it, this script builds an engine that is stamped,
-# reproducible and unable to answer a question. Do not install its output as the app's
-# engine without checking for that line first.
+# Do not rely on this comment staying true. verify_engine_contract.py asserts
+# UTTERANCE END against a real session, from the CONTRACT:RUNTIME marker on the
+# line in SpeechmaticsEngine.swift that matches it — so the check moves when the
+# code moves. Run it after building; a comment cannot fail, and this one already
+# went stale once, claiming for weeks that the shared engine could not do
+# something it had been doing for days.
 set -euo pipefail
 MAC_DIR="$(cd "$(dirname "$0")" && pwd)"
 WIN_DIR="${1:-$MAC_DIR/../replysis-windows}"

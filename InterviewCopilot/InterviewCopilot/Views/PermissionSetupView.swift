@@ -105,6 +105,22 @@ struct PermissionSetupView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         .padding(.top, 4)
+
+                        // The action the hint asks for, rather than leaving the user to find
+                        // Quit and reopen themselves while a modal sheet is up.
+                        if vm.screenRecordingLooksStuck {
+                            Button(action: { MainViewModel.relaunchApp() }) {
+                                Text("Quit & Reopen")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 9)
+                                    .background(Color(hex: "#1d4ed8"))
+                                    .foregroundColor(.white)
+                                    .cornerRadius(9)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.top, 6)
+                        }
                     }
                 }
                 .padding(.horizontal, 28)

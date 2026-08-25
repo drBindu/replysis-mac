@@ -221,7 +221,11 @@ class MainViewModel {
     /// sees "Replysis ✓" in Settings and an app insisting the permission is missing, and
     /// both are telling the truth about different binaries.
     var permissionStaleEntryHint: String {
-        "If Replysis is already listed and switched on, remove it with the − button and add it again. macOS identifies an app by its signature, so an updated build is a new app to it — the old entry stays behind and does nothing."
+        if screenRecordingLooksStuck {
+            // The overwhelmingly common case, and the one the app used to handle worst.
+            return "Already switched it on? macOS only applies Screen Recording when the app restarts — this window cannot see the change until then. Quit and reopen below.\n\nIf it is still missing afterwards, remove Replysis from the list with − and add it again: macOS identifies an app by its signature, so an updated build is a new app to it."
+        }
+        return "If Replysis is already listed and switched on, remove it with the − button and add it again. macOS identifies an app by its signature, so an updated build is a new app to it — the old entry stays behind and does nothing."
     }
 
     /// Eagerly request Screen Recording from the permissions setup screen, instead of
@@ -576,6 +580,13 @@ class MainViewModel {
                 // Both are checked into ONE combined relaunch call — triggering it twice in
                 // the same tick (if both flip true together) would race two new instances
                 // against each other, so `newlyGranted` collapses them into a single call.
+                // NOTE: for Screen Recording this transition CANNOT be observed.
+                // CGPreflightScreenCaptureAccess() answers for the life of the process, so a
+                // grant made while the app is running is invisible to it and this auto-relaunch
+                // never fires — a recovery conditioned on a signal that cannot arrive. That is
+                // why the setup screen offers an explicit Quit & Reopen once a request has been
+                // made and not landed: the user knows they granted it, and the app cannot.
+                // Accessibility does flip live, so this still does its job for that one.
                 let newlyGranted = (!prevAX && self.permAccessibility) || (!prevScreenRec && self.permScreenRecording)
                 if newlyGranted {
                     dlog("Accessibility=\(self.permAccessibility) ScreenRecording=\(self.permScreenRecording) newly granted — relaunching so both take effect", tag: "PERM")
