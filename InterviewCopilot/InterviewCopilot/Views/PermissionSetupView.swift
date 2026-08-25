@@ -54,6 +54,11 @@ struct PermissionSetupView: View {
                 .padding(.bottom, 24)
 
                 // ── Cards ────────────────────────────────────────────
+                // SCROLLS. This was a fixed-height sheet with a fixed-height stack inside,
+                // so adding one explanatory line pushed Continue past the bottom edge and
+                // out of reach — the sheet is modal, so a clipped Continue is a trapped
+                // user. Content that can grow now scrolls; the button below never moves.
+                ScrollView {
                 VStack(spacing: 10) {
                     PermCard(
                         icon: "mic.fill",
@@ -103,8 +108,10 @@ struct PermissionSetupView: View {
                     }
                 }
                 .padding(.horizontal, 28)
+                }
+                .frame(maxHeight: .infinity)
 
-                Spacer(minLength: 20)
+                Spacer(minLength: 8)
 
                 // ── Continue ─────────────────────────────────────────
                 // Only the microphone gates Continue — it's the one the app's core function
@@ -134,7 +141,9 @@ struct PermissionSetupView: View {
                 .padding(.bottom, 28)
             }
         }
-        .frame(width: 480, height: 470)
+        // Taller as well as scrollable: the scroll view stops it clipping, and the extra
+        // height stops it needing to scroll in the ordinary case.
+        .frame(width: 480, height: 560)
         .animation(.easeInOut(duration: 0.2), value: vm.permAccessibility)
         .animation(.easeInOut(duration: 0.2), value: vm.permMicrophone)
         .animation(.easeInOut(duration: 0.2), value: vm.micDenied)
