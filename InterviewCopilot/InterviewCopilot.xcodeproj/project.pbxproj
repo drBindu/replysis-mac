@@ -64,6 +64,7 @@
 				4E4B03902FF071C300D7CE89 /* Sources */,
 				4E4B03912FF071C300D7CE89 /* Frameworks */,
 				4E4B03922FF071C300D7CE89 /* Resources */,
+				B6973EEF3F8E4F85B931B2C7 /* Install speech engine */,
 			);
 			buildRules = (
 			);
@@ -128,6 +129,24 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		B6973EEF3F8E4F85B931B2C7 /* Install speech engine */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Install speech engine";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "#!/bin/sh\n# Place the shared speech engine into the app bundle BEFORE Xcode signs it.\n#\n# Two earlier approaches failed and are recorded so they are not retried:\n#   - Adding the engine to the source tree makes Xcode treat the directory as a\n#     GROUP and flatten every file into Contents/Resources, colliding on\n#     __init__.py, client.py and the rest.\n#   - Copying it into an already-built bundle gets the binary SIGKILLed on exec,\n#     because it lands after signing. The byte-identical copy runs fine outside\n#     a bundle, which is what makes that failure so confusing.\n# A build phase copies the tree intact and runs before signing, which is both.\nset -e\nSRC=\"${SRCROOT}/../.engine-build/dist/speechmatics_engine\"\nDST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\n\nif [ ! -x \"${SRC}/speechmatics_engine\" ]; then\n  echo \"error: speech engine not built. It is NOT vendored in this repo on purpose —\"\n  echo \"note: one engine is built from one shared source. Run ./build-engine.sh first\"\n  echo \"note: (expects replysis-windows checked out beside this repo).\"\n  exit 1\nfi\n\nmkdir -p \"${DST}\"\nrm -rf \"${DST}/speechmatics_engine\"\ncp -R \"${SRC}\" \"${DST}/\"\necho \"engine installed: $(\"${SRC}/speechmatics_engine\" --help 2>&1 | head -1)\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		4E4B03902FF071C300D7CE89 /* Sources */ = {
