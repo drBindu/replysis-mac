@@ -3201,6 +3201,18 @@ class MainViewModel {
     /// Called on launch (so the default-ON state takes effect immediately) and whenever a
     /// window is freshly created or the Settings toggle changes.
     private func applyStealthMode() {
+        // TWO WINDOWS IS THE WHOLE LIST, and sheets are covered by the first of them.
+        //
+        // Settings, Past Sessions, Login, the permission setup and the DEBUG LOG — which
+        // shows live transcripts — are all .sheet on the main panel. A sheet is its own
+        // NSWindow and sharingType is per-window, so whether they inherit stealth is a real
+        // question rather than an obvious yes. Measured with CGWindowListCopyWindowInfo
+        // against the running app: every window this process owns reports sharing=0,
+        // including a 480x560 sheet while the 1326x740 panel was open. They inherit.
+        //
+        // Worth keeping measured rather than assumed. A debug window showing transcripts
+        // while visible in a screen share defeats the feature the product is bought for,
+        // and it is invisible to the person it exposes. Windows had exactly that leak.
         let type: NSWindow.SharingType = stealthModeEnabled ? .none : .readOnly
         mainPanel?.sharingType = type
         AnswerOverlayWindow.shared?.sharingType = type
