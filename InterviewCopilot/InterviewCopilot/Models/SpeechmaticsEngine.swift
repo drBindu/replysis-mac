@@ -30,6 +30,15 @@ class SpeechmaticsEngine {
     // Two signals the engine already prints, neither useful alone. Audio arriving says
     // nothing — silence is normal. Words not arriving says nothing — a lull is normal. The
     // PAIR is decisive: audio going in and nothing coming out is the engine being deaf.
+    /// What the engine says it was built from — commit, source hash and build time.
+    ///
+    /// The Mac shipped a 1,074-line fork of the shared engine for months while every build
+    /// succeeded. The commit alone would not have caught it: a commit id says which
+    /// revision was checked out, and the SOURCE HASH says whether what was compiled is
+    /// actually that revision. The fork lived in exactly that gap. Recorded here so a
+    /// support log can answer "which engine is this user running?" instead of guessing.
+    private(set) var engineBuildId = "unknown"
+
     private(set) var lastAudioActivityAt = Date.distantPast
     private(set) var lastWordsAt = Date.distantPast
 
@@ -389,6 +398,13 @@ class SpeechmaticsEngine {
             }
             // The engine prints "STATUS: ONLINE" once the websocket is connected and it's
             // pulling audio — the moment speaking will really be transcribed.
+            if let r = line.range(of: "ENGINE BUILD: ") {
+                let id = line[r.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+                Task { @MainActor [weak self] in
+                    self?.engineBuildId = id
+                    dlog("Engine build: \(id)", tag: "SM")
+                }
+            }
             // Audio is reaching the engine (any non-zero amplitude).
             if line.contains("AUDIO live") {
                 Task { @MainActor [weak self] in self?.lastAudioActivityAt = Date() }

@@ -28,3 +28,8 @@ SystemAudioCaptureSrc/SystemAudioCapture
 # `pyinstaller speechmatics_engine.spec` and copy the output into the BUILT app's
 # Contents/Resources/speechmatics_engine (not this source folder).
 InterviewCopilot/InterviewCopilot/Resources/speechmatics_engine/
+
+# Engine build workspace — the engine is built from the SHARED source in
+# replysis-windows (see build-engine.sh), not vendored here.
+.engine-build/
+InterviewCopilot/InterviewCopilot/Resources/speechmatics_engine/
