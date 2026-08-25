@@ -58,6 +58,16 @@ class SpeechmaticsEngine {
             && now.timeIntervalSince(lastWordsAt) > Self.deafWordSilence
     }
 
+    /// The number out of ">>> FINAL received (N chars)" — or nil if this is not that line.
+    ///
+    /// Reads the value rather than the sentence around it. Only "received (" and the digits
+    /// are load-bearing; the words either side may change without breaking this.
+    nonisolated static func charCount(in line: String) -> Int? {
+        guard let r = line.range(of: "received (") else { return nil }
+        let digits = line[r.upperBound...].prefix { $0.isNumber }
+        return digits.isEmpty ? nil : Int(digits)
+    }
+
     /// Called when a listening turn begins, so a fresh session never starts already accused.
     func resetDeafDetection() {
         lastWordsAt = Date()
@@ -412,24 +422,45 @@ class SpeechmaticsEngine {
                 }
             }
             // Audio is reaching the engine (any non-zero amplitude).
+            // CONTRACT:RUNTIME — see ENGINE_CONTRACT.md and verify_engine_contract.py
             if line.contains("AUDIO live") {
                 Task { @MainActor [weak self] in self?.lastAudioActivityAt = Date() }
             }
-            // Words are coming back out. "(0 chars)" is an empty result and does NOT count —
-            // that is precisely what a deaf engine emits.
-            if line.contains("received (") && !line.contains("(0 chars)") {
+            // Words are coming back out. An EMPTY result does not count — that is precisely
+            // what a deaf engine emits.
+            //
+            // The count is PARSED, not matched as the literal "(0 chars)". That string
+            // appears nowhere in the engine: it is produced by
+            // print(f">>> FINAL received ({len(display)} chars)"), so matching it coupled
+            // this detector to the phrasing of a sentence. Reword the log line and the
+            // detector silently stops telling an empty result from a real one — which
+            // disables half of it without changing a single line here.
+            // CONTRACT:RUNTIME("received (") — declared inline because the dependency lives
+            // in charCount(), which reads the NUMBER out of the line rather than matching
+            // the sentence, so there is no literal at this call site to extract.
+            if let n = Self.charCount(in: line), n > 0 {
                 Task { @MainActor [weak self] in self?.lastWordsAt = Date() }
             }
+            // CONTRACT:RUNTIME — see ENGINE_CONTRACT.md and verify_engine_contract.py
             if line.contains("STATUS: ONLINE") || line.contains("ENGINE: READY") {
                 Task { @MainActor [weak self] in self?.isReady = true }
             }
             // A dropped session is NOT the same event as a crashed process, and handling
             // only one leaves the app believing transcription still works. This is the
             // drop; watchForExit() below is the crash.
+            // CONTRACT:RUNTIME — see ENGINE_CONTRACT.md and verify_engine_contract.py
             if line.contains("UTTERANCE END") {
                 Task { @MainActor [weak self] in self?.onUtteranceEnd?() }
             }
-            if line.contains("STATUS: OFFLINE") || line.contains("EndOfTranscript") {
+            // CONTRACT:ONFAIL — see ENGINE_CONTRACT.md and verify_engine_contract.py
+            //
+            // "EndOfTranscript" used to be matched here too and never once fired. The
+            // engine registers an EndOfTranscript event handler, but what that handler
+            // PRINTS is ">>> STATUS: OFFLINE" — the literal string was never on stdout, on
+            // either engine. A second condition that can never be true reads as redundancy
+            // and is really a dependency on something that does not exist; the contract
+            // test found it by asking the engine for a line no engine ever emitted.
+            if line.contains("STATUS: OFFLINE") {
                 Task { @MainActor [weak self] in
                     self?.isReady = false
                     dlog("SM: session dropped — transcription is no longer live", tag: "SM")
