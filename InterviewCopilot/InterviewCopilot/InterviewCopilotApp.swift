@@ -23,6 +23,13 @@ final class FloatingPanel: NSPanel {
 
 extension NSView {
     func clearLayerBackgrounds() {
+        // Never touch the frosted material or anything inside it. This walks every subview
+        // forcing wantsLayer and a clear backing colour, which is right for SwiftUI's hosting
+        // views and fatal for an NSVisualEffectView: the blur IS that view's backing, so
+        // clearing it leaves a pane of nothing where the glass should be. It currently runs
+        // before SwiftUI builds the effect view, so the damage is latent rather than visible
+        // — the kind that surfaces later after an unrelated change and looks inexplicable.
+        if self is NSVisualEffectView { return }
         wantsLayer = true
         layer?.backgroundColor = CGColor.clear
         subviews.forEach { $0.clearLayerBackgrounds() }

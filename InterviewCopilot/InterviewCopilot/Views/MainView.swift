@@ -26,16 +26,39 @@ struct MainView: View {
     var body: some View {
         // ── Outer glass container — matches original #B3080C14 border with CornerRadius 14
         ZStack {
+            // Real material, not a translucent rectangle. What made this look flat was that
+            // "glass" was a dark fill at 40% — you could see THROUGH it, but nothing was
+            // ever blurred, so whatever sat behind the window stayed legible and the panel
+            // read as a sheet of tinted plastic. NSVisualEffectView blurs what is behind the
+            // window, which is the entire difference between transparent and frosted.
+            GlassBackground(material: .hudWindow)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+
+            // Tint OVER the blur rather than instead of it, so the user's opacity preference
+            // still darkens the panel while the frost underneath is never given up.
             RoundedRectangle(cornerRadius: 14)
-                .fill(Color(red: 9/255, green: 13/255, blue: 21/255).opacity(vm.mainWindowOpacity))
+                .fill(Color(red: 9/255, green: 13/255, blue: 21/255)
+                    .opacity(0.30 + vm.mainWindowOpacity * 0.45))
+
+            // Two strokes, not one. A single flat border is the giveaway of a drawn box; real
+            // glass catches light on its top edge and goes dark at the bottom.
             RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.white.opacity(0.13), lineWidth: 1)
+                .stroke(LinearGradient(
+                    colors: [Color.white.opacity(0.22), Color.white.opacity(0.06)],
+                    startPoint: .top, endPoint: .bottom), lineWidth: 1)
 
             VStack(spacing: 0) {
                 headerBar
-                    .background(Color(red: 13/255, green: 17/255, blue: 23/255).opacity(0.85))
+                    // Was an almost-opaque slab across the top, which cut the glass in half.
+                    // A whisper of light over the same material separates it instead.
+                    .background(Color.white.opacity(0.05))
+                    .overlay(alignment: .top) {
+                        LinearGradient(colors: [Color.white.opacity(0.10), .clear],
+                                       startPoint: .top, endPoint: .bottom)
+                            .frame(height: 1)
+                    }
                     .clipShape(UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
-                Divider().background(Color.white.opacity(0.1))
+                Divider().background(Color.white.opacity(0.08))
                 bodyArea
             }
         }
@@ -1721,5 +1744,30 @@ struct MenuRowButtonStyle: ButtonStyle {
             )
             .onHover { hovering = $0 }
             .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
+
+
+/// The window's frosted material. `.behindWindow` blends with what is on screen BEHIND the
+/// app, which is what makes it glass rather than a tinted overlay; `.withinWindow` would
+/// only blur the app's own content and look like nothing at all over a plain background.
+/// State is pinned `.active` so the frost does not flatten out the moment the user clicks
+/// into the meeting window they are reading from — which is most of the time this app is
+/// on screen, and exactly when it should still look like part of the desktop.
+struct GlassBackground: NSViewRepresentable {
+    var material: NSVisualEffectView.Material = .hudWindow
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = .behindWindow
+        view.state = .active
+        view.isEmphasized = false
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        view.material = material
+        view.state = .active
     }
 }
