@@ -196,16 +196,18 @@ class PromptBuilder {
         // "<determiner> screen" in any phrasing — in my screen, on your screen, read the
         // screen — without enumerating the prepositions that can precede it.
         //
-        // The trailing boundary is required: plain substring matching turned "tell me
-        // about the screening round" into a screen question, which would photograph the
-        // desktop to answer a question about a phone interview.
-        for det in screenDeterminers {
-            var search = q[q.startIndex...]
-            while let r = search.range(of: "\(det) screen") {
-                let after = r.upperBound
-                if after == q.endIndex || !q[after].isLetter { return true }
-                search = q[after...]
-            }
+        // A REGEX, not a substring scan with a next-character check.
+        //
+        // The trailing \b is the rule actually meant. Substring matching turned "tell me
+        // about the screening round" into a screen question — photographing the desktop to
+        // answer a question about a phone interview — and patching that with a
+        // next-character test is a special case of the boundary that would need extending
+        // again the first time somebody says "screen-share". Same result today; the regex
+        // is the version that stays correct.
+        let pattern = "\\b(?:my|your|the|this|that)\\s+screens?\\b"
+        if let re = try? NSRegularExpression(pattern: pattern),
+           re.firstMatch(in: q, range: NSRange(q.startIndex..., in: q)) != nil {
+            return true
         }
         return false
     }
