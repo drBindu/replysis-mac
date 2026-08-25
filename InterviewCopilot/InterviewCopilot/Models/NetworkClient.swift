@@ -614,8 +614,10 @@ If the Replysis app is visible, mention the current transcript and any question 
         guard !raw.isEmpty else { return raw }
         var text = raw
         // Strip markdown (bold/italic/headings/code fences) but keep ━━━ headers & code
-        text = text.replacingOccurrences(of: "\\*{2}([^*\\n]+)\\*{2}", with: "$1", options: .regularExpression)
-        text = text.replacingOccurrences(of: "\\*([^*\\n]+)\\*", with: "$1", options: .regularExpression)
+        // These two lines were the worst instance of the bug: this is the path EVERY screen
+        // answer takes, and the comment above claimed it kept code while stripping every
+        // paired asterisk out of it.
+        text = PromptBuilder.stripMarkdownPreservingCode(text)
         text = text.replacingOccurrences(of: "(?m)^#{1,6}\\s+", with: "", options: .regularExpression)
         text = text.replacingOccurrences(of: "```[a-zA-Z]*\\r?\\n?", with: "", options: .regularExpression)
         text = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")

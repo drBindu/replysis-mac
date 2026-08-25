@@ -147,6 +147,14 @@ class PromptBuilder {
         "this code", "this error", "this problem", "this question",
         "this diagram", "this snippet", "this function", "this output",
         "what is this", "what's this", "read this", "walk me through this",
+        // Added to match the Windows list exactly — these are the ones that make the
+        // difference between "what website is open?" being answered from a screenshot and
+        // being answered from nothing at all.
+        "website is open", "website open", "what website", "which website",
+        "what tab", "which tab", "what app", "which app", "what application",
+        "what program", "what's open", "what is open", "currently open",
+        "currently on your screen", "in your browser", "in your editor",
+        "in your ide", "what ide", "which ide",
     ]
 
     /// Questions about the PERSON, which no screenshot can help with.
@@ -183,6 +191,78 @@ class PromptBuilder {
         if refersToScreen(trimmed) { return false }   // "this code" always wins
         let q = trimmed.lowercased()
         return personalQuestionPhrases.contains { q.contains($0) }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // MARKDOWN STRIPPING THAT DOES NOT DESTROY CODE
+    //
+    // The old rule was `\*([^*\n]+)\*` -> `$1`: any paired asterisk, anywhere. Code is
+    // full of paired asterisks, so it shredded every code answer the app produced:
+    //
+    //   ListNode* insertionSortList(ListNode* head)  ->  ListNode insertionSortList(ListNode head)
+    //   int *a, *b;                                  ->  int a, b;
+    //   def f(*args, **kwargs):                      ->  def f(args, *kwargs):
+    //   area = w * h * depth;                        ->  area = w  h  depth;
+    //   /* copy */                                   ->  / copy /
+    //
+    // Not a C++ bug — a paired-delimiter bug. It hit Python, arithmetic and C comments
+    // alike, and the candidate was handed code that would not compile with nothing on
+    // screen saying it had been altered.
+    //
+    // Two layers, matching the Windows implementation exactly so the two apps cannot
+    // drift on something this expensive:
+    //
+    //   1. Code regions are lifted out first — fenced blocks AND the ━━━ SOLUTION ━━━
+    //      style sections this app actually uses. UNFENCED is the case that bites,
+    //      because the prompt asks for section headers rather than fences, so masking
+    //      fences alone protects only the answers that happen to arrive fenced.
+    //   2. Emphasis is then stripped with delimiters that require real markdown context.
+    //
+    // Requiring only whitespace around the delimiter is NOT enough — `\S` matches `*`
+    // itself, so `**kwargs` survives the whitespace test and is still eaten. The
+    // character classes must exclude the delimiter, which is what `[^*\s]` does here.
+    //
+    // KNOWN ACCEPTED GAP: `__init__` in bare prose still strips, because it is
+    // indistinguishable in shape from `__strong__`. Inside a code region it survives.
+
+    private static let mdBold   = "\\*\\*([^*\\s](?:[^*\\n]*[^*\\s])?)\\*\\*"
+    private static let mdItalic = "(?<![*\\w])\\*([^*\\s](?:[^*\\n]*[^*\\s])?)\\*(?![*\\w])"
+    private static let mdUnder2 = "(?<![A-Za-z0-9_])__([^_\\s](?:[^_\\n]*[^_\\s])?)__(?![A-Za-z0-9_])"
+    private static let mdUnder1 = "(?<![A-Za-z0-9_])_([^_\\s](?:[^_\\n]*[^_\\s])?)_(?![A-Za-z0-9_])"
+
+    private static func stripEmphasis(_ line: String) -> String {
+        var t = line
+        // Order matters: UNDER2 before UNDER1, or __strong__ loses one underscore.
+        for p in [mdBold, mdItalic, mdUnder2, mdUnder1] {
+            guard let re = try? NSRegularExpression(pattern: p) else { continue }
+            t = re.stringByReplacingMatches(in: t, range: NSRange(t.startIndex..., in: t),
+                                            withTemplate: "$1")
+        }
+        return t
+    }
+
+    /// Strip markdown emphasis from prose, leaving every code region byte-identical.
+    static func stripMarkdownPreservingCode(_ text: String) -> String {
+        var out: [String] = []
+        var inFence = false
+        var inCodeSection = false
+        for line in text.components(separatedBy: "\n") {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("```") {
+                inFence.toggle()
+                out.append(line)          // the fence line itself is not prose
+                continue
+            }
+            if !inFence, t.hasPrefix("━━━"), t.hasSuffix("━━━"), t.count > 6 {
+                let title = t.replacingOccurrences(of: "━", with: "")
+                    .trimmingCharacters(in: .whitespaces).uppercased()
+                inCodeSection = codeSectionTitles.contains(title)
+                out.append(line)
+                continue
+            }
+            out.append(inFence || inCodeSection ? line : stripEmphasis(line))
+        }
+        return out.joined(separator: "\n")
     }
 
     func addToHistory(question: String, answer: String) {

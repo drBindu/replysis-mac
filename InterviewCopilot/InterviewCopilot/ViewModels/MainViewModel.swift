@@ -277,6 +277,11 @@ class MainViewModel {
         // THE turn signal. The recogniser has the waveform and tells us when the speaker
         // actually stopped; we no longer infer it from how the text is punctuated.
         engine.onUtteranceEnd = { [weak self] in self?.handleUtteranceEnd() }
+        // Sweep any transcript left behind by a crash or a Force Quit. Deleting on quit
+        // covers the graceful path; a process that is killed never runs that handler, and
+        // the file it leaves is the last thing an interviewer said. It has no value across
+        // launches either way — the engine rewrites it from scratch.
+        engine.deleteLatestTxt()
         // Start MUTED so the engine opens the mic idle (start=False) and the macOS orange
         // mic indicator stays OFF until the user actually presses Space to listen. The
         // unmute path deletes this flag; the mute path re-writes it.
@@ -922,12 +927,24 @@ class MainViewModel {
         // interviewer that something is reading their screen. isPersonalQuestion is narrow
         // on purpose: anything uncertain stays on the screen path, and "solve this" or
         // "this code" always wins, so "do you prefer this code or that one" still counts.
-        // Armed BY DEFAULT now, so the first question from a brand-new user must not walk
-        // into a Screen Recording wall. Without the permission we simply answer from what
-        // was said — the same answer the app gave before screen answers existed — rather
-        // than failing the question to advertise a feature they have not enabled.
+        // THE SCREEN IS USED WHEN THE QUESTION IS ABOUT THE SCREEN — not whenever the app
+        // can see one. This was written the wrong way round: everything except a short list
+        // of personal questions went down the screen path, so "tell me what is Java?" was
+        // answered by sending a photograph of the desktop. Three times the tokens, a worse
+        // answer, and the minute's allowance spent on a question that never needed a
+        // picture. Watching became a tax on every question rather than a feature for some.
+        //
+        // Trigger phrase FIRST, then continuation — the order matters, and isPersonalQuestion
+        // short-circuits on a screen reference so "this code" beats "do you prefer".
+        //
+        // Armed by default, so a brand-new user without Screen Recording must not walk into
+        // a permission wall on their first question: without it we answer from what was
+        // said, which is the answer the app gave before screen answers existed.
         let canReadScreen = CGPreflightScreenCaptureAccess()
-        let aboutTheScreen = isWatchMode && canReadScreen && !PromptBuilder.isPersonalQuestion(q)
+        let aboutTheScreen = isWatchMode && canReadScreen
+            && (PromptBuilder.refersToScreen(q)
+                || (lastAnswerUsedScreen && !PromptBuilder.isPersonalQuestion(q)))
+        lastAnswerUsedScreen = aboutTheScreen
         if aboutTheScreen, !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !isScreenAnalyzing {
             // Watching means the SCREEN. "Frontmost window" in a mode nobody is touching is
             // whichever window was clicked last, which is how an answer ends up confidently
@@ -2118,6 +2135,16 @@ class MainViewModel {
     private var lastRawTranscript = ""
     /// -1 = unlimited, or not yet known. Never a count.
     var audioMinutesRemaining = -1
+    /// Did the PREVIOUS answer come from the screen?
+    ///
+    /// This is what lets "and what is the time complexity?" follow "solve this" without
+    /// naming the screen again. Sticky with no timeout, matching Windows deliberately so the
+    /// two apps cannot drift — but it IS a weakness, not a design: a question asked four
+    /// minutes later about something else entirely still counts as a continuation, as long
+    /// as it is not on the personal list. A time bound or a turn count is probably right,
+    /// and that is a decision to take on both platforms at once rather than diverge on.
+    private var lastAnswerUsedScreen = false
+
     /// Last time the user was told transcription looked deaf. At most once a minute — a
     /// warning that repeats buries the answer it is warning about.
     private var lastDeafWarningAt = Date.distantPast
@@ -3080,7 +3107,9 @@ class MainViewModel {
         var s = text
         s = s.replacingOccurrences(of: "```[a-zA-Z]*\n?", with: "", options: .regularExpression)
         s = s.replacingOccurrences(of: "```", with: "")
-        s = s.replacingOccurrences(of: "\\*{1,3}([^*\n]+)\\*{1,3}", with: "$1", options: .regularExpression)
+        // Was `\*{1,3}([^*\n]+)\*{1,3}` — any paired asterisk, which shredded every line
+        // of code that reached this path. See stripMarkdownPreservingCode.
+        s = PromptBuilder.stripMarkdownPreservingCode(s)
         s = s.replacingOccurrences(of: " — ", with: ", ").replacingOccurrences(of: " – ", with: ", ")
              .replacingOccurrences(of: "—", with: ", ").replacingOccurrences(of: "–", with: ", ")
         for f in ["Certainly! ","Absolutely! ","Of course! ","Great question! ","Sure! ",
@@ -3099,7 +3128,7 @@ class MainViewModel {
         var out: [String] = []
         for raw in text.components(separatedBy: "\n") {
             var line = raw.trimmingCharacters(in: .whitespaces)
-            line = line.replacingOccurrences(of: "\\*{1,3}([^*\n]+)\\*{1,3}", with: "$1", options: .regularExpression)
+            line = PromptBuilder.stripMarkdownPreservingCode(line)
             if line.isEmpty { continue }
             for marker in ["- ", "* ", "• ", "•", "- ", "– "] where line.hasPrefix(marker) {
                 line = String(line.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)

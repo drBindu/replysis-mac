@@ -213,6 +213,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
             SpeechmaticsEngine.shared.stop()
+            // The live transcript is the ONE thing this app leaves on disk unencrypted —
+            // the engine writes it directly and cannot decrypt what everything else is
+            // protected with. It is a scratch file for the turn in progress and has no
+            // value once the app closes, but it held the last thing an interviewer said
+            // until the next launch happened to overwrite it.
+            SpeechmaticsEngine.shared.deleteLatestTxt()
         }
     }
 }

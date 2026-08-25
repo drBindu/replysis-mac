@@ -593,6 +593,8 @@ class SpeechmaticsEngine {
     func deletePauseFlag() { try? FileManager.default.removeItem(at: pauseFlagPath) }
     func writeResetFlag()  { try? "1".write(to: resetFlagPath,  atomically: true, encoding: .utf8) }
     func clearLatestTxt()  { try? "".write(to:  latestTxtPath,  atomically: true, encoding: .utf8) }
+    /// Remove it entirely, rather than blanking it. On quit there is nothing to keep.
+    func deleteLatestTxt() { try? FileManager.default.removeItem(at: latestTxtPath) }
 
     func readLatestTxt() -> String {
         (try? String(contentsOf: latestTxtPath, encoding: .utf8)) ?? ""
