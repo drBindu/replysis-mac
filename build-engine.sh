@@ -69,15 +69,24 @@ python3 -m PyInstaller --clean --noconfirm --distpath ./dist --workpath ./build 
 # _internal/websockets/speedups.c inside Resources and tries to COMPILE it, failing the app
 # build on a missing Python.h. They are build artifacts of the wheel and nothing at runtime
 # reads them, so they are removed rather than worked around in the Xcode project.
-find ./dist/speechmatics_engine \( -name '*.c' -o -name '*.h' -o -name '*.pyx' \) -delete
-
-# And the .dist-info directories. Every wheel ships METADATA, RECORD, LICENSE.txt,
-# INSTALLER and REQUESTED under the same names, and Xcode adds this tree as a GROUP —
-# flattening it into Contents/Resources, where five packages' worth of identically named
-# metadata collide: "Multiple commands produce .../Resources/METADATA". None of it is read
-# at runtime.
-find ./dist/speechmatics_engine -name '*.dist-info' -type d -exec rm -rf {} + 2>/dev/null || true
-echo "stripped wheel source and .dist-info metadata (Xcode compiles the first and collides on the second)"
+# NOTHING IS STRIPPED HERE ANY MORE, and it must stay that way.
+#
+# An earlier version removed wheel sources (.c/.h/.pyx) and .dist-info directories,
+# because the engine was being placed in the SOURCE tree — where Xcode treats the
+# directory as a group, tries to compile the .c files, and collides on the identically
+# named METADATA and RECORD that every wheel ships.
+#
+# Removing .dist-info broke transcription completely. The speechmatics SDK resolves its
+# own version through importlib.metadata, and with the metadata gone it falls back to
+# reading a VERSION file that does not exist in the package at all — so every websocket
+# connect threw FileNotFoundError, the engine retried forever, and the app sat on
+# "connecting" with no explanation. The engine was running and healthy in every other
+# respect, which is exactly the shape the deaf detector was built for.
+#
+# The Xcode problem is solved properly by the Install-speech-engine build phase, which
+# copies the tree with cp -R so Xcode never enumerates its contents as build inputs.
+# Stripping was working around a problem that no longer exists, at the cost of one that
+# does.
 echo
 echo "built: $COMMIT src:$SRCHASH built:$BUILT"
 echo "install with:"
