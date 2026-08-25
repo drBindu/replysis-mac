@@ -941,9 +941,17 @@ class MainViewModel {
         // a permission wall on their first question: without it we answer from what was
         // said, which is the answer the app gave before screen answers existed.
         let canReadScreen = CGPreflightScreenCaptureAccess()
-        let aboutTheScreen = isWatchMode && canReadScreen
-            && (PromptBuilder.refersToScreen(q)
-                || (lastAnswerUsedScreen && !PromptBuilder.isPersonalQuestion(q)))
+        let namesTheScreen = PromptBuilder.refersToScreen(q)
+        let inheritsScreen = lastAnswerUsedScreen && screenFollowUpBudget > 0
+            && !PromptBuilder.isPersonalQuestion(q)
+        let aboutTheScreen = isWatchMode && canReadScreen && (namesTheScreen || inheritsScreen)
+        if namesTheScreen && isWatchMode && canReadScreen {
+            screenFollowUpBudget = maxScreenFollowUps       // refilled by an explicit ask
+        } else if inheritsScreen {
+            screenFollowUpBudget -= 1                       // drawn down per follow-up
+        } else {
+            screenFollowUpBudget = 0                        // zeroed by anything else
+        }
         lastAnswerUsedScreen = aboutTheScreen
         if aboutTheScreen, !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !isScreenAnalyzing {
             // Watching means the SCREEN. "Frontmost window" in a mode nobody is touching is
@@ -2144,6 +2152,19 @@ class MainViewModel {
     /// as it is not on the personal list. A time bound or a turn count is probably right,
     /// and that is a decision to take on both platforms at once rather than diverge on.
     private var lastAnswerUsedScreen = false
+    /// How many more follow-ups may inherit the screen without naming it.
+    ///
+    /// A sticky flag with no bound let a question four minutes later still count as a
+    /// continuation. The failure is topic DRIFT, not elapsed time — "what's the complexity?"
+    /// three minutes on is still about the screen, while "tell me about yourself" ten
+    /// seconds on is not. A time bound cuts the legitimate slow case and still allows the
+    /// illegitimate fast one, so this counts turns instead.
+    ///
+    /// Three: the complexity, the edge case, the alternative — the run that actually
+    /// follows "solve this". Refilled by an explicit screen question, drawn down per
+    /// follow-up, zeroed by anything else. Same number as Windows, deliberately.
+    private var screenFollowUpBudget = 0
+    private let maxScreenFollowUps = 3
 
     /// Last time the user was told transcription looked deaf. At most once a minute — a
     /// warning that repeats buries the answer it is warning about.

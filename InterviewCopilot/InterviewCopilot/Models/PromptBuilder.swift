@@ -230,13 +230,35 @@ class PromptBuilder {
     private static let mdUnder2 = "(?<![A-Za-z0-9_])__([^_\\s](?:[^_\\n]*[^_\\s])?)__(?![A-Za-z0-9_])"
     private static let mdUnder1 = "(?<![A-Za-z0-9_])_([^_\\s](?:[^_\\n]*[^_\\s])?)_(?![A-Za-z0-9_])"
 
+    /// Dunders that are indistinguishable in SHAPE from __strong__, so the underscore
+    /// rules cannot tell them apart. Masked before those rules run and restored after.
+    /// An allowlist can never misfire on __strong__, because __strong__ is not in it.
+    /// Kept identical to the Windows list (ScreenAnalyzer.cs, PythonDunder).
+    private static let pythonDunders = [
+        "__init__", "__repr__", "__str__", "__len__", "__main__", "__name__",
+        "__doc__", "__dict__", "__file__", "__all__", "__enter__", "__exit__",
+        "__new__", "__call__", "__iter__", "__next__", "__eq__", "__hash__",
+        "__getitem__", "__setitem__", "__contains__", "__slots__",
+    ]
+
     private static func stripEmphasis(_ line: String) -> String {
         var t = line
+        // Mask dunders first. U+FFFC is Object Replacement Character — it cannot appear in
+        // an answer and carries no markdown meaning, so it survives the rules untouched.
+        var masked: [String] = []
+        for d in pythonDunders where t.contains(d) {
+            t = t.replacingOccurrences(of: d, with: "\u{FFFC}\(masked.count)\u{FFFC}")
+            masked.append(d)
+        }
+        defer { }
         // Order matters: UNDER2 before UNDER1, or __strong__ loses one underscore.
         for p in [mdBold, mdItalic, mdUnder2, mdUnder1] {
             guard let re = try? NSRegularExpression(pattern: p) else { continue }
             t = re.stringByReplacingMatches(in: t, range: NSRange(t.startIndex..., in: t),
                                             withTemplate: "$1")
+        }
+        for (i, d) in masked.enumerated() {
+            t = t.replacingOccurrences(of: "\u{FFFC}\(i)\u{FFFC}", with: d)
         }
         return t
     }
