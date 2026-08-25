@@ -143,7 +143,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // width and 82% of the height: 64% of the whole screen, for a tool whose job is
         // to sit beside a video call rather than bury it. Measured, after the owner said
         // the window was too large.
-        let w = min(880, round(screen.width  * 0.55))
+        let w = min(1020, round(screen.width  * 0.72))
         let h = min(620, round(screen.height * 0.64))
         let origin = NSPoint(x: screen.midX - w / 2, y: screen.midY - h / 2)
 

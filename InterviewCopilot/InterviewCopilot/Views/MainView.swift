@@ -102,11 +102,34 @@ struct MainView: View {
         // HStack with guaranteed minimum gaps can never overlap, regardless of how many
         // optional buttons are showing — trading perfect mathematical centering (which was
         // never guaranteed to hold anyway) for a layout that's simply never broken.
+        // Priorities alone could not solve this. At full detail the header wants more width
+        // than a 13" display has, and when something must give, SwiftUI takes it from
+        // whatever is flexible — which turned out to be the control labels, truncating them
+        // to "PRACTICE…", "2…", "0:…". Labels are the one thing in here a user must read to
+        // operate the app, so they are never what gets sacrificed.
+        //
+        // Instead the header drops DETAIL, in a deliberate order, and only as much as it has
+        // to: the brand strapline first, then the brand wordmark, then the mic hint. Each
+        // rung is a complete layout; ViewThatFits picks the first that fits honestly rather
+        // than squeezing one that does not.
+        ViewThatFits(in: .horizontal) {
+            headerRow(.full)
+            headerRow(.noStrapline)
+            headerRow(.iconBrand)
+            headerRow(.minimal)
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 64)
+    }
+
+    enum HeaderTier { case full, noStrapline, iconBrand, minimal }
+
+    func headerRow(_ tier: HeaderTier) -> some View {
         HStack(spacing: 0) {
-            brandView
+            brandView(tier)
                 .layoutPriority(2)
             Spacer(minLength: 12)
-            micControl
+            micControl(tier)
                 .layoutPriority(1)
             Spacer(minLength: 12)
             rightCluster
@@ -121,12 +144,10 @@ struct MainView: View {
                 // seen switching MUTED → LISTENING. Giving both edges priority means only the
                 // (already width-capped, see micControl) center pill ever absorbs the squeeze.
         }
-        .padding(.horizontal, 18)
-        .frame(height: 64)
     }
 
     // ── Brand (left) ───────────────────────────────────────────────
-    var brandView: some View {
+    func brandView(_ tier: HeaderTier) -> some View {
         HStack(spacing: 9) {
             ZStack {
                 RoundedRectangle(cornerRadius: 9)
@@ -137,21 +158,28 @@ struct MainView: View {
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundColor(Color(hex: "#38bdf8"))
             }
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Replysis AI")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundColor(.white)
-                    .lineLimit(1).minimumScaleFactor(0.92)
-                Text("INTERVIEW INTELLIGENCE")
-                    .font(.system(size: 8, weight: .semibold)).tracking(1.1)
-                    .foregroundColor(Color(hex: "#5b6b7f"))
-                    .lineLimit(1).minimumScaleFactor(0.92)
+            // The strapline is the first thing to go: it is decoration, and it costs more
+            // width than the wordmark it sits under. The wordmark goes next; the mark itself
+            // always stays, so the window is still identifiably the app.
+            if tier == .full || tier == .noStrapline {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Replysis AI")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundColor(.white)
+                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                    if tier == .full {
+                        Text("INTERVIEW INTELLIGENCE")
+                            .font(.system(size: 8, weight: .semibold)).tracking(1.1)
+                            .foregroundColor(Color(hex: "#5b6b7f"))
+                            .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                    }
+                }
             }
         }
     }
 
     // ── Mic hero (center) ──────────────────────────────────────────
-    var micControl: some View {
+    func micControl(_ tier: HeaderTier) -> some View {
         let listening = vm.isListening
         return Button(action: micAction) {
             HStack(spacing: 11) {
@@ -176,12 +204,16 @@ struct MainView: View {
                     // used to grow wider the instant you started listening — squeezing the
                     // header's right side into an overlapping mess. lineLimit + a fixed frame
                     // keep this pill's footprint constant across every state.
-                    Text(micHintText)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(micHintColor)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                        .frame(maxWidth: 172, alignment: .leading)
+                    // Last detail to be dropped, and only at the tightest rung: the status
+                    // word above it ("LISTENING" / "MUTED") still says what is happening.
+                    if tier != .minimal {
+                        Text(micHintText)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(micHintColor)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                            .frame(maxWidth: 172, alignment: .leading)
+                    }
                 }
             }
             .padding(.leading, 8).padding(.trailing, 16).padding(.vertical, 6)
@@ -257,7 +289,7 @@ struct MainView: View {
                     Text(vm.listeningNotice)
                         .font(.system(size: 10, weight: .bold)).tracking(0.4)
                         .foregroundColor(Color(hex: "#fcd34d"))
-                        .lineLimit(1).minimumScaleFactor(0.92)
+                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                 }
                 .padding(.horizontal, 10).padding(.vertical, 7)
                 .background(Capsule().fill(Color(hex: "#2A1F0D")))
@@ -275,7 +307,7 @@ struct MainView: View {
                     Text(vm.sessionTimerText)
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(hex: "#cbd5e1"))
-                        .lineLimit(1).minimumScaleFactor(0.92)
+                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                 }
                 .padding(.horizontal, 10).padding(.vertical, 7)
                 .background(Capsule().fill(Color.white.opacity(0.04)))
@@ -293,7 +325,7 @@ struct MainView: View {
                     Text(vm.creditsText)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(vm.creditsColor)
-                        .lineLimit(1).minimumScaleFactor(0.92)
+                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                         .padding(.horizontal, 12).padding(.vertical, 7)
                         .background(Capsule().fill(Color.white.opacity(0.05)))
                         .overlay(Capsule().stroke(vm.creditsColor.opacity(0.35), lineWidth: 1))
@@ -358,7 +390,7 @@ struct MainView: View {
                     .frame(width: 7, height: 7)
                 Text(vm.listeningMode.pillLabel)
                     .font(.system(size: 11, weight: .bold)).tracking(0.6)
-                    .lineLimit(1).minimumScaleFactor(0.92)
+                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                     .foregroundColor(vm.listeningMode.isAutomatic ? Color(hex: "#B8F5D3") : Color(hex: "#cbd5e1"))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))
@@ -474,7 +506,7 @@ struct MainView: View {
                     }
                     Text("READ SCREEN")
                         .font(.system(size: 11, weight: .bold)).tracking(0.5)
-                        .lineLimit(1).minimumScaleFactor(0.92)
+                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                     Text("F8")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundColor(Color(hex: "#64748b"))
@@ -499,7 +531,7 @@ struct MainView: View {
                         .font(.system(size: 12, weight: .semibold))
                     Text("COMPACT")
                         .font(.system(size: 11, weight: .bold)).tracking(0.5)
-                        .lineLimit(1).minimumScaleFactor(0.92)
+                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                 }
                 .foregroundColor(vm.showCameraOverlay ? Color(hex: "#38bdf8") : Color(hex: "#cbd5e1"))
                 .padding(.horizontal, 13).padding(.vertical, 9)
