@@ -52,6 +52,36 @@ jobs:
         with:
           python-version: "3.12"
 
+      # The engine source is SHARED — one file, both platforms, living in the Windows
+      # repo. It is deliberately NOT vendored here: two copies is precisely how the
+      # retired fork drifted out of sync and shipped a build nobody could account for.
+      # This step never existed, which is why this workflow has never once completed on
+      # this repo — the spec's own comment documents the copy, and CI never did it.
+      - name: Fetch shared speechmatics_engine.py
+        run: |
+          set -euo pipefail
+          curl -fsSL -o speechmatics_engine.py \
+            "https://raw.githubusercontent.com/drBindu/replysis-windows/main/speechmatics_engine.py"
+          test -s speechmatics_engine.py
+          # Turn-end is the line this app lives by, and both halves have to be present.
+          # Match the CALL, not the string: four lines mention UTTERANCE END and only one
+          # emits it, so a plain grep would still pass with the emit deleted — a check
+          # answering a narrower question than the one being asked.
+          grep -q 'print(">>> UTTERANCE END"' speechmatics_engine.py || {
+            echo "::error::Shared engine no longer EMITS UTTERANCE END. Mac decides a turn is"
+            echo "::error::over from that line; without it the app listens, transcribes, and"
+            echo "::error::never answers — healthy-looking and mute. Refusing to build."
+            exit 1
+          }
+          # The emit is useless unless Speechmatics is asked to send the event, and the
+          # field only serialises under conversation_config; flat on TranscriptionConfig
+          # it is accepted in Python and dropped on the wire.
+          grep -q "conversation_config" speechmatics_engine.py || {
+            echo "::error::Shared engine never requests EndOfUtterance (no conversation_config)."
+            exit 1
+          }
+          echo "engine source blob: $(git hash-object speechmatics_engine.py)"
+
       - name: Build speechmatics_engine from source
         run: |
           brew install portaudio
