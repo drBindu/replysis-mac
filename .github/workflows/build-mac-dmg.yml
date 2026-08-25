@@ -307,14 +307,27 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           # Submit and grab the submission ID immediately (no --wait, avoids infinite hang)
+          # `|| true` is load-bearing. This step runs under bash -e, so when notarytool
+          # fails the ASSIGNMENT fails, -e aborts the script on that line, and the echo
+          # below never runs — Apple's explanation is captured into a variable and then
+          # discarded by the very failure it describes. The log jumped from endgroup
+          # straight to "exit code 1" with nothing in between, which reads like the tool
+          # said nothing when in fact we threw away everything it said.
           SUBMIT=$(xcrun notarytool submit "InterviewCopilot-mac.dmg" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" 2>&1)
+            --team-id "$APPLE_TEAM_ID" 2>&1) || true
           echo "$SUBMIT"
           SUB_ID=$(echo "$SUBMIT" | grep -E "^\s+id: " | head -1 | awk '{print $2}')
           echo "Submission ID: $SUB_ID"
-          [ -z "$SUB_ID" ] && { echo "Failed to get submission ID"; exit 1; }
+          if [ -z "$SUB_ID" ]; then
+            echo "::error::notarytool did not return a submission ID. Apple's response is"
+            echo "::error::printed directly above this line — read that, not this."
+            echo "::error::Common causes: the app-specific password is wrong or was revoked;"
+            echo "::error::the Apple ID is not on team $APPLE_TEAM_ID; or the Developer"
+            echo "::error::Program membership has lapsed."
+            exit 1
+          fi
 
           # Poll for up to 15 minutes (30 x 30s)
           for i in $(seq 1 30); do
