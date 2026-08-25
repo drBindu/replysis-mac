@@ -86,6 +86,21 @@ struct PermissionSetupView: View {
                         primaryLabel: "Allow screen recording",
                         action: { vm.requestScreenRecordingPermission() }
                     )
+                    // Says the thing the user cannot see: the entry in Settings that looks
+                    // correct belongs to a different build. Only shown once a grant has been
+                    // asked for and has not landed, so it never appears speculatively.
+                    if vm.accessibilityLooksStuck || vm.screenRecordingLooksStuck {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "info.circle.fill")
+                                .font(.system(size: 12))
+                                .foregroundColor(Color(hex: "#f59e0b"))
+                            Text(vm.permissionStaleEntryHint)
+                                .font(.system(size: 11))
+                                .foregroundColor(Color(hex: "#8b9bb0"))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.top, 4)
+                    }
                 }
                 .padding(.horizontal, 28)
 

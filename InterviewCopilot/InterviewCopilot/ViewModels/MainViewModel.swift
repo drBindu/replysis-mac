@@ -185,10 +185,43 @@ class MainViewModel {
     // BUG-21 FIX: only prompt once per launch — subsequent calls on repeated sheet open/close
     // cycles are no-ops (macOS suppresses the dialog anyway, but we skip the call entirely).
     func requestAccessibilityPrompt() {
-        guard !hasPromptedAccessibility else { return }
+        // A SECOND PRESS MUST DO SOMETHING. macOS shows the Accessibility dialog once per
+        // launch and silently ignores every later request, so this button did nothing at
+        // all on the second press — no dialog, no error, no movement. The user is left
+        // pressing a button that looks live and is not, which reads as a broken app.
+        //
+        // It is also the common case rather than an edge one: anybody who granted, came
+        // back, and found the card still unticked presses it again. Send them to the pane
+        // instead, where the toggle actually is.
+        guard !hasPromptedAccessibility else {
+            dlog("PERM: accessibility already prompted this launch — opening the pane", tag: "PERM")
+            openAccessibilitySettings()
+            return
+        }
         hasPromptedAccessibility = true
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(opts)
+    }
+
+    func openAccessibilitySettings() {
+        NSWorkspace.shared.open(URL(string:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+    }
+
+    func openScreenRecordingSettings() {
+        NSWorkspace.shared.open(URL(string:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
+    }
+
+    /// Shown on the setup screen once a grant has been asked for and still has not landed.
+    ///
+    /// The situation it explains is invisible otherwise: macOS identifies an app by its
+    /// SIGNATURE, not its name, so a rebuilt or re-signed build is a different app to the
+    /// system even though the entry in the list looks right and is switched on. The user
+    /// sees "Replysis ✓" in Settings and an app insisting the permission is missing, and
+    /// both are telling the truth about different binaries.
+    var permissionStaleEntryHint: String {
+        "If Replysis is already listed and switched on, remove it with the − button and add it again. macOS identifies an app by its signature, so an updated build is a new app to it — the old entry stays behind and does nothing."
     }
 
     /// Eagerly request Screen Recording from the permissions setup screen, instead of
@@ -199,7 +232,19 @@ class MainViewModel {
     /// the other permission calls). Screen Recording — like Accessibility — needs the app to
     /// be relaunched for a NEW grant to actually take effect; startPermissionPolling()'s
     /// existing timer already watches for exactly this transition and relaunches.
+    /// Has a grant been asked for and still not landed? Then the entry the user is looking
+    /// at in Settings belongs to a different build, and no amount of pressing will help.
+    var accessibilityLooksStuck: Bool { hasPromptedAccessibility && !permAccessibility }
+    private(set) var screenRecordingAsked = false
+    var screenRecordingLooksStuck: Bool { screenRecordingAsked && !permScreenRecording }
+
     func requestScreenRecordingPermission() {
+        guard !screenRecordingAsked else {
+            dlog("PERM: screen recording already requested — opening the pane", tag: "PERM")
+            openScreenRecordingSettings()
+            return
+        }
+        screenRecordingAsked = true
         // BUG FIX: this used to call CGRequestScreenCaptureAccess() — a DIFFERENT Apple API
         // than the one Analyze actually uses (ScreenCaptureKit's SCShareableContent, in
         // captureScreen() below). Confirmed live: real capture succeeded via
