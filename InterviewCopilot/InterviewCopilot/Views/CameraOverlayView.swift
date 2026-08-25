@@ -152,11 +152,15 @@ struct AnswerOverlayView: View {
             Spacer()
             // Manual screen-analysis trigger — eye mode had no way to fire F9 other than
             // the physical key, unlike the main window's visible Analyze button.
+            // Labelled "Read screen", matching Windows (AnswerWindow.xaml). "Analyze" is
+            // the old name and says what the code does rather than what the user gets;
+            // in compact mode this is the only button on the bar, so its label is the
+            // entire explanation of what it will do.
             Button(action: { vm.runScreenAnalysis() }) {
                 HStack(spacing: 4) {
                     Image(systemName: "viewfinder")
                         .font(.system(size: 10, weight: .semibold))
-                    Text("Analyze")
+                    Text("Read screen")
                         .font(.system(size: 10, weight: .semibold))
                 }
                 .foregroundColor(Color(hex: "#38bdf8"))

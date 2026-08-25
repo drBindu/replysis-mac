@@ -138,10 +138,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildPanel() {
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        // Desired size, clamped so it always fits the display — never taller than the
-        // screen, which also prevents the "window is too long" overshoot on smaller Macs.
-        let w = min(1120, screen.width  - 40)
-        let h = min(740,  screen.height - 40)
+        // Sized as a FRACTION of the display, then capped — not a fixed 1120x740 clamped
+        // only by the screen. On a 1440x900 laptop that fixed size covered 78% of the
+        // width and 82% of the height: 64% of the whole screen, for a tool whose job is
+        // to sit beside a video call rather than bury it. Measured, after the owner said
+        // the window was too large.
+        let w = min(980, round(screen.width  * 0.62))
+        let h = min(680, round(screen.height * 0.70))
         let origin = NSPoint(x: screen.midX - w / 2, y: screen.midY - h / 2)
 
         // Borderless → no native traffic-light buttons (custom ✕ lives in the header).
@@ -150,6 +153,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             styleMask: [.borderless, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
+
+        // Remember size and position across launches. Without this the panel reopened at
+        // the default every single time, so resizing it was work the user redid on every
+        // launch — the window was resizable in the sense that nothing stopped you, and
+        // not in the sense that it helped.
+        panel.setFrameAutosaveName("ReplysisMainPanel")
+        // A frame remembered from a display that is no longer attached can restore
+        // entirely off-screen, leaving a running app with no reachable window and no
+        // way to tell that is what happened. Fall back to the computed frame.
+        if !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(panel.frame) }) {
+            panel.setFrame(NSRect(origin: origin, size: CGSize(width: w, height: h)), display: false)
+        }
 
         // Transparency comes from the SwiftUI content opacity, not the window.
         panel.isOpaque = false
