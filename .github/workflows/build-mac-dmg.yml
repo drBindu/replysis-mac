@@ -310,8 +310,14 @@ jobs:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
           if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
-            echo "SPARKLE_PRIVATE_KEY secret not set — skipping appcast update. Auto-update stays inert until this secret is added."
-            exit 0
+            # This used to exit 0. The result was a green release that no installed copy
+            # could ever receive: binaries published, feed untouched, nothing to tell
+            # anyone an update existed. A release users cannot get is not a release, and
+            # a green check over it is worse than a red one, because nobody goes looking.
+            echo "::error::SPARKLE_PRIVATE_KEY is not set. The build is signed and uploaded, but"
+            echo "::error::the appcast was NOT regenerated, so no installed copy will ever see"
+            echo "::error::this version. Add the secret and re-run before calling this released."
+            exit 1
           fi
           curl -sL -o "$RUNNER_TEMP/sparkle-tools.tar.xz" "https://github.com/sparkle-project/Sparkle/releases/download/2.9.4/Sparkle-2.9.4.tar.xz"
           mkdir -p "$RUNNER_TEMP/sparkle-tools"
@@ -322,12 +328,15 @@ jobs:
           mkdir -p "$APPCAST_DIR"
           cp InterviewCopilot-update.zip "$APPCAST_DIR/"
           # Reuse the existing appcast if one is already published, so old entries aren't lost.
-          curl -sL -o "$APPCAST_DIR/appcast.xml" "https://raw.githubusercontent.com/moto123a/interview-copilot-mac/main/appcast.xml" || true
+          # Seed from THIS repo's own feed, not a hardcoded one. The account moved once
+          # already and these two URLs did not move with it, which is how every published
+          # download URL ended up pointing at a repo the project no longer releases from.
+          curl -sL -o "$APPCAST_DIR/appcast.xml" "https://raw.githubusercontent.com/${{ github.repository }}/main/appcast.xml" || true
           grep -q "<rss" "$APPCAST_DIR/appcast.xml" 2>/dev/null || rm -f "$APPCAST_DIR/appcast.xml"
 
           echo "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle-tools/bin/generate_appcast" \
             --ed-key-file - \
-            --download-url-prefix "https://github.com/moto123a/interview-copilot-mac/releases/download/v${{ steps.version.outputs.VERSION }}/" \
+            --download-url-prefix "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}/" \
             "$APPCAST_DIR"
 
           cp "$APPCAST_DIR/appcast.xml" appcast.xml
