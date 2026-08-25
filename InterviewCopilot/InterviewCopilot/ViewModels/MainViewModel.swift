@@ -2109,6 +2109,54 @@ class MainViewModel {
     /// Three minutes, because in a real interview somebody speaks every few seconds and
     /// even a long thinking pause is well under a minute. Meant to catch an empty room,
     /// never a person deciding what to say.
+    // ══════════════════════════════════════════════════════════════════════════
+    // WHAT A CUSTOMER IS CHARGED
+    //
+    // The arithmetic is here, unaltered and in one place, because it decides somebody's
+    // bill and was previously two inequalities at two call sites that nobody had compared.
+    //
+    // Two roundings run in OPPOSITE directions and compound. The tick FLOORS whole minutes
+    // and carries the remainder; the stop path ROUNDS that remainder — up at 30s or more,
+    // away entirely below it. And a turn is not a sitting: both Manual and Auto stop the
+    // meter at the end of every exchange, so whichever rounding applies, it applies once
+    // PER TURN. The error therefore scales with the NUMBER of turns rather than their
+    // length, which is worst in the shape a real interview actually takes.
+    //
+    // Measured against this app's own arithmetic:
+    //
+    //     one 90s turn         1.5 min listened →   2 min billed    +33%
+    //     ten 40s turns        6.7 min listened →  10 min billed    +50%
+    //     20 turns of 45s     15.0 min listened →  20 min billed    +33%
+    //     one 600s turn       10.0 min listened →  10 min billed      0%
+    //     45 min, 40 turns    45.0 min listened →  40 min billed    -11%
+    //     30 turns of 25s     12.5 min listened →   0 min billed   -100%
+    //
+    // THE LAST ROW MATTERS MOST, and it inverts the comment that defends the floor. The
+    // thirty-second floor exists so that "rounding every short turn to nothing would make
+    // an interview of brief exchanges free". It does that for turns of thirty seconds or
+    // more. BELOW thirty seconds it causes precisely the outcome it was written to prevent:
+    // every turn is discarded and a twelve-minute interview bills nothing at all.
+    //
+    // NOTHING HERE HAS BEEN CHANGED. The floor was a deliberate decision and remains one.
+    // What was never decided is what happens when it is applied per turn to a remainder
+    // that has already had its whole minutes removed — nobody chose that, the arithmetic
+    // chose it. Which direction to correct is the owner's call, because it is his revenue
+    // and his promise to customers, and it has to land on both platforms at once: a Mac
+    // user and a Windows user billed differently for the same interview is its own problem.
+    enum ListeningBilling {
+        /// Mid-turn: whole minutes only, remainder carried forward.
+        static func minutesFromTick(unreported: Double) -> (report: Int, carry: Double) {
+            guard unreported >= 60 else { return (0, unreported) }
+            let m = Int(unreported / 60)
+            return (m, unreported - Double(m) * 60)
+        }
+        /// End of turn: the remainder, rounded — and discarded below the floor.
+        static func minutesFromStop(unreported: Double) -> Int {
+            guard unreported >= 30 else { return 0 }
+            return max(1, Int((unreported / 60.0).rounded()))
+        }
+    }
+
     /// How often the listening meter ticks. NAMED, because it is half of an agreement with
     /// the Windows client and was previously a bare 5.0 inside a Timer call.
     ///
@@ -2224,8 +2272,8 @@ class MainViewModel {
         // Anything past half a minute still counts. Rounding every short turn down to
         // nothing would make an interview of brief exchanges free, which is the opposite
         // of what the meter is for.
-        if unreportedListeningSeconds >= 30 {
-            let minutes = max(1, Int((unreportedListeningSeconds / 60.0).rounded()))
+        let minutes = ListeningBilling.minutesFromStop(unreported: unreportedListeningSeconds)
+        if minutes > 0 {
             unreportedListeningSeconds = 0
             reportListeningMinutes(minutes)
         }
@@ -2268,9 +2316,9 @@ class MainViewModel {
             unreportedListeningSeconds += now.timeIntervalSince(since)
             listeningSince = now
         }
-        if unreportedListeningSeconds >= listeningReportInterval {
-            let minutes = Int(unreportedListeningSeconds / 60)
-            unreportedListeningSeconds -= Double(minutes) * 60.0
+        let (minutes, carry) = ListeningBilling.minutesFromTick(unreported: unreportedListeningSeconds)
+        if minutes > 0 {
+            unreportedListeningSeconds = carry
             reportListeningMinutes(minutes)
         }
     }
