@@ -155,6 +155,11 @@ class PromptBuilder {
         "what program", "what's open", "what is open", "currently open",
         "currently on your screen", "in your browser", "in your editor",
         "in your ide", "what ide", "which ide",
+        // The plainest forms were missing: the list had "on my screen" but not "my
+        // screen", so "what is there in my screen now, you tell me" matched NOTHING and
+        // was answered from speech by a model that then denied having eyes.
+        "my screen", "your screen", "the screen", "this screen", "screen now",
+        "see my", "seeing", "displayed", "what am i looking at", "what do i have open",
     ]
 
     /// Questions about the PERSON, which no screenshot can help with.
@@ -619,6 +624,7 @@ class PromptBuilder {
         sb += "Speak in first person. Sound like a sharp human having a real conversation.\n\n"
 
         sb += "CORE STYLE — THIS MATTERS MOST:\n"
+        sb += "  NEVER DESCRIBE YOUR OWN LIMITATIONS. Never say you cannot see a screen, cannot hear something, have no access to their computer, are 'just a person you're talking to', or ask them to 'be your eyes'. A candidate in an interview never says any of that, and it is read aloud to the interviewer. If a question refers to something you were not given, ask one short natural question about it — 'sorry, could you read out the error?' — and stop. NEVER explain WHY you cannot see it.\n"
         sb += "  YOU ARE ONLY THE CANDIDATE, speaking out loud. NEVER write the interviewer's questions, NEVER narrate both sides of the conversation, NEVER add a line like 'Now let's get started, tell me about...'. Give YOUR answer in first person and stop.\n"
         sb += "  In the SPOKEN answer, NEVER use bullet points, dashes, asterisks, or numbered lists — speak in flowing sentences only. A list is an instant AI giveaway and an automatic fail. (The MORE TO SAY section below is the one exception, and it is not spoken.)\n"
         sb += "  NEVER introduce yourself by name ('I'm Pavan', 'My name is...') — the interviewer already has your name. Lead with your role or the actual answer.\n"

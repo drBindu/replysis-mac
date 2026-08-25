@@ -942,6 +942,27 @@ class MainViewModel {
         // said, which is the answer the app gave before screen answers existed.
         let canReadScreen = CGPreflightScreenCaptureAccess()
         let namesTheScreen = PromptBuilder.refersToScreen(q)
+
+        // ASKED ABOUT THE SCREEN, AND WE CANNOT SEE IT.
+        //
+        // Falling through to the speech path here was my earlier decision and it was wrong.
+        // The reasoning — answer from what was said rather than fail the question — holds
+        // for a question that merely ARRIVED while a screen was up. It does not hold for a
+        // question that is explicitly ABOUT the screen: the model, asked what is on a
+        // screen it was never given, improvises, and what it improvises is a denial. It
+        // told a candidate "I still can't see your screen, I'm just a person you're talking
+        // to, you'll have to be my eyes" — read aloud, mid-interview, that is worse than
+        // any silence.
+        //
+        // So say the true thing in one line, and say how to fix it.
+        if namesTheScreen && isWatchMode && !canReadScreen {
+            dlog("SCREEN: asked about the screen without permission to read it", tag: "SCREEN")
+            answerEpoch += 1
+            isProcessing = false; showThinking = false
+            aiAnswer = "⚠ That question is about your screen, and macOS has not granted screen access yet.\n\nSystem Settings → Privacy & Security → Screen & System Audio Recording → enable Replysis, then reopen the app.\n\nUntil then, spoken questions are answered normally."
+            updateMicUI()
+            return
+        }
         let inheritsScreen = lastAnswerUsedScreen && screenFollowUpBudget > 0
             && !PromptBuilder.isPersonalQuestion(q)
         let aboutTheScreen = isWatchMode && canReadScreen && (namesTheScreen || inheritsScreen)
