@@ -143,8 +143,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // width and 82% of the height: 64% of the whole screen, for a tool whose job is
         // to sit beside a video call rather than bury it. Measured, after the owner said
         // the window was too large.
-        let w = min(980, round(screen.width  * 0.62))
-        let h = min(680, round(screen.height * 0.70))
+        let w = min(880, round(screen.width  * 0.55))
+        let h = min(620, round(screen.height * 0.64))
         let origin = NSPoint(x: screen.midX - w / 2, y: screen.midY - h / 2)
 
         // Borderless → no native traffic-light buttons (custom ✕ lives in the header).
@@ -166,6 +166,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             panel.setFrame(NSRect(origin: origin, size: CGSize(width: w, height: h)), display: false)
         }
 
+        // Report the frame actually adopted. The default was changed once already without
+        // any way to tell from outside whether it took effect, an autosaved frame overrode
+        // it, or a content minimum was holding it open.
+        dlog("PANEL: opened \(Int(panel.frame.width))x\(Int(panel.frame.height)) on a "
+             + "\(Int(screen.width))x\(Int(screen.height)) screen", tag: "BOOT")
+
         // Transparency comes from the SwiftUI content opacity, not the window.
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -184,7 +190,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Bound the window so nothing (a tall SwiftUI layout or a sheet appearing) can blow
         // it up or shrink it away — keeps a sane, fixed-feel size.
-        panel.contentMinSize = CGSize(width: 820, height: 560)
+        // 820x560 was a floor no user could get under, so "make the window smaller" had a
+        // hard limit well above what was being asked for. Lowered so the default can shrink
+        // and so someone on a small display can shrink it further still.
+        panel.contentMinSize = CGSize(width: 660, height: 460)
         panel.contentMaxSize = CGSize(width: screen.width, height: screen.height)
 
         // Plain NSHostingView — DO NOT override hitTest, it breaks SwiftUI event routing.

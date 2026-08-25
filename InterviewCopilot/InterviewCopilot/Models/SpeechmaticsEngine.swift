@@ -289,6 +289,29 @@ class SpeechmaticsEngine {
         var env = ProcessInfo.processInfo.environment
         env["SPEECHMATICS_API_KEY"] = smKey
         env["APP_DATA_DIR"] = appDataFolder.path
+        // Point OpenSSL at the CA bundle we SHIP, instead of whatever path happened to be
+        // compiled into the Python that froze the engine.
+        //
+        // This shipped broken in 1.0.245. The engine never mentions certifi or SSL_CERT_FILE,
+        // so it relied entirely on OpenSSL's built-in default cert path. Built locally with
+        // Apple's Python 3.9 that path is /private/etc/ssl/cert.pem, which exists on every
+        // Mac, so it worked by luck for years. CI builds with python 3.12 from
+        // actions/setup-python, whose default path exists on the RUNNER and nowhere else —
+        // so every connection failed with CERTIFICATE_VERIFY_FAILED and transcription was
+        // dead on arrival. Nothing in the build changed; only which machine ran it.
+        // certifi is already inside the bundle, it simply was never pointed at.
+        if let cacert = Bundle.main.url(forResource: "speechmatics_engine", withExtension: nil)?
+            .appendingPathComponent("_internal/certifi/cacert.pem"),
+           FileManager.default.fileExists(atPath: cacert.path) {
+            env["SSL_CERT_FILE"] = cacert.path
+            env["REQUESTS_CA_BUNDLE"] = cacert.path
+            dlog("SSL: engine will verify against bundled CA store", tag: "SM")
+        } else {
+            // Never fail silently here: without this the app connects to nothing at all,
+            // and the symptom ("Connecting…" forever) looks like a network problem.
+            dlog("SSL: bundled CA store MISSING — connections will fail cert verification",
+                 tag: "SM")
+        }
 
         dlog("SM launching with args: \(args.joined(separator: " "))", tag: "SM")
         dlog("SM API key length: \(smKey.count) chars", tag: "SM")
