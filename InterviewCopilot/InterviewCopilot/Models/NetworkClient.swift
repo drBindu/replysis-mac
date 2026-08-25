@@ -305,6 +305,29 @@ class NetworkClient {
         } catch { return nil }
     }
 
+    /// The same report, but blocking, for use on app termination.
+    ///
+    /// applicationWillTerminate is the last moment the session's banked remainder can be
+    /// billed, and an async Task started there is killed with the process before it reaches
+    /// the wire — so the minutes the user actually listened to would be lost precisely at
+    /// the point they are supposed to be counted. Bounded at three seconds: macOS will not
+    /// wait indefinitely for a terminating app, and a lost minute is better than a hang.
+    func reportListeningMinutesBlocking(_ minutes: Int) {
+        guard minutes > 0,
+              let url = URL(string: "\(AppConfig.backendUrl)/api/v1/usage/listening") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 3
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(UserSession.shared.idToken)", forHTTPHeaderField: "Authorization")
+        req.setValue(DeviceIdentity.current, forHTTPHeaderField: "X-Device-Id")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["minutes": minutes])
+
+        let done = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: req) { _, _, _ in done.signal() }.resume()
+        _ = done.wait(timeout: .now() + 3)
+    }
+
     /// Current listening allowance, without reporting anything. Used at sign-in so the badge
     /// is honest before the first minute of the session has been spent.
     func fetchListeningTime() async -> Int? {

@@ -2131,6 +2131,26 @@ class MainViewModel {
     //     45 min, 40 turns    45.0 min listened →  40 min billed    -11%
     //     30 turns of 25s     12.5 min listened →   0 min billed   -100%
     //
+    // DECIDED — the owner chose the session as the billing unit, and this is that rule.
+    // Turns BANK their seconds and report only whole minutes, carrying the remainder into
+    // the next turn. Nothing is rounded up until the sitting ends. The thirty-second floor
+    // survives, so a genuinely brief interview is still not free — but it applies ONCE, at
+    // the end, instead of once per turn.
+    //
+    //     ten 40s turns        6.7 min listened →   7 min billed   (was 10)
+    //     thirty 25s turns    12.5 min listened →  13 min billed   (was  0)
+    //     one 600s turn       10.0 min listened →  10 min billed   (unchanged)
+    //
+    // THE INVARIANT, which is the thing worth testing rather than the figures: the same
+    // wall time costs the same however it was broken up. Six minutes bills as six whether
+    // it arrived as one answer, twelve 30-second turns, ninety four-second turns or a
+    // ragged mixture — verified on all five shapes. The old arithmetic was CORRECT for one
+    // long turn and wrong for every other shape, so a single-shape test would have passed
+    // it, which is presumably part of why it survived so long.
+    //
+    // Identical to the Windows rule by agreement: a Mac user and a Windows user billed
+    // differently for the same interview is its own problem.
+    //
     // THE LAST ROW MATTERS MOST, and it inverts the comment that defends the floor. The
     // thirty-second floor exists so that "rounding every short turn to nothing would make
     // an interview of brief exchanges free". It does that for turns of thirty seconds or
@@ -2150,8 +2170,13 @@ class MainViewModel {
             let m = Int(unreported / 60)
             return (m, unreported - Double(m) * 60)
         }
-        /// End of turn: the remainder, rounded — and discarded below the floor.
-        static func minutesFromStop(unreported: Double) -> Int {
+        /// END OF SITTING — the only place anything is rounded up. Called once per
+        /// session, by the exit flush and nowhere else.
+        ///
+        /// The thirty-second floor survives: a genuinely brief interview is still not free.
+        /// What changed is that it applies ONCE, at the end, rather than once per turn to a
+        /// remainder that had already had its whole minutes removed.
+        static func minutesAtSessionEnd(unreported: Double) -> Int {
             guard unreported >= 30 else { return 0 }
             return max(1, Int((unreported / 60.0).rounded()))
         }
@@ -2272,11 +2297,13 @@ class MainViewModel {
         // Anything past half a minute still counts. Rounding every short turn down to
         // nothing would make an interview of brief exchanges free, which is the opposite
         // of what the meter is for.
-        let minutes = ListeningBilling.minutesFromStop(unreported: unreportedListeningSeconds)
-        if minutes > 0 {
-            unreportedListeningSeconds = 0
-            reportListeningMinutes(minutes)
-        }
+        // A TURN IS NOT A SITTING. Whole minutes are reported and the remainder is BANKED
+        // into the next turn — nothing is rounded up here. Rounding per turn charged every
+        // exchange for its final partial minute, which overcharged short exchanges by half
+        // and, below the thirty-second floor, discarded them entirely.
+        let (minutes, carry) = ListeningBilling.minutesFromTick(unreported: unreportedListeningSeconds)
+        unreportedListeningSeconds = carry
+        if minutes > 0 { reportListeningMinutes(minutes) }
     }
 
     private func listeningMeterTick() {
@@ -2343,6 +2370,31 @@ class MainViewModel {
             ? "MIC OFF AFTER \(Int(idleListeningTimeout / 60)) MIN QUIET — SPACE TO RESUME"
             : "MIC OFF — NOTHING HEARD")
         updateMicUI()
+    }
+
+    /// End of the sitting. THE ONLY PLACE the banked remainder is ever billed.
+    ///
+    /// Under per-turn billing a missing flush cost a fraction of a minute. Under
+    /// per-session billing it is the whole thing: without this, every session silently
+    /// discards up to fifty-nine seconds, and any sitting under a minute of total
+    /// listening bills nothing at all, ever.
+    ///
+    /// - Parameter synchronously: block briefly for the send. Used on app termination,
+    ///   where an async Task would be killed with the process before it reached the wire.
+    func flushListeningMeterOnExit(synchronously: Bool = false) {
+        if let since = listeningSince {
+            unreportedListeningSeconds += Date().timeIntervalSince(since)
+            listeningSince = nil
+        }
+        let minutes = ListeningBilling.minutesAtSessionEnd(unreported: unreportedListeningSeconds)
+        unreportedListeningSeconds = 0
+        guard minutes > 0, session.isLoggedIn else { return }
+        dlog("METER: session ended — flushing \(minutes) min", tag: "METER")
+        if synchronously {
+            NetworkClient.shared.reportListeningMinutesBlocking(minutes)
+        } else {
+            reportListeningMinutes(minutes)
+        }
     }
 
     /// Never fail an interview over accounting: a failed report loses a minute, never the
@@ -2471,6 +2523,9 @@ class MainViewModel {
     }
 
     private func endSession() {
+        // A new session, or signing out, ends the sitting — so the bank is settled here.
+        stopListeningMeter()
+        flushListeningMeterOnExit()
         disarmScrollWatch()
         isRecording = false; sessionLogPath = nil
         sessionTimerObj?.invalidate(); sessionTimerVisible = false

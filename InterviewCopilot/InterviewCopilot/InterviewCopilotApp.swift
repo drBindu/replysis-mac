@@ -212,6 +212,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // before the app exits, so the SIGTERM is actually delivered.
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
+            // The sitting ends here, so the banked listening remainder is billed here —
+            // this is the only place it ever is. Blocking, because a Task started during
+            // termination dies with the process.
+            vm.flushListeningMeterOnExit(synchronously: true)
             SpeechmaticsEngine.shared.stop()
             // The live transcript is the ONE thing this app leaves on disk unencrypted —
             // the engine writes it directly and cannot decrypt what everything else is
