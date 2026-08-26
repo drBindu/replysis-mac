@@ -221,6 +221,12 @@ struct MainView: View {
                         Text(vm.micStatus)
                             .font(.system(size: 11, weight: .bold)).tracking(0.5)
                             .foregroundColor(.white)
+                            // The one label in the header with no line limit, so it was the
+                            // one that broke: LISTENING wrapped to "LIST / ENIN / G". A
+                            // status word that wraps also reports a tiny ideal width, which
+                            // told ViewThatFits the full layout fitted when it did not — so
+                            // it kept the widest tier and then mangled it. Never wraps now.
+                            .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                     }
                     // ROOT-CAUSE FIX: the LISTENING hint ("Press SPACE again to get answer")
                     // is much longer than the idle one ("Press SPACE to listen"), so the pill
