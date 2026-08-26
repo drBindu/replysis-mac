@@ -34,7 +34,21 @@ struct ResumeParser {
         proc.standardOutput = pipe
         proc.standardError = Pipe()
         do { try proc.run() } catch { return "" }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        // Bounded on both axes, because this is a file the user chose and neither the app
+        // nor the user knows what is really inside a .docx. readDataToEndOfFile() with an
+        // unbounded waitUntilExit() will happily grow until the process is killed for
+        // memory — a nested-zip document does that on purpose, and an ordinary corrupt one
+        // can do it by accident. A resume that will not fit in 8 MB of XML is not a resume.
+        let cap = 8 * 1024 * 1024
+        let handle = pipe.fileHandleForReading
+        var data = Data()
+        let deadline = Date().addingTimeInterval(10)
+        while data.count < cap, Date() < deadline {
+            let chunk = handle.availableData
+            if chunk.isEmpty { break }          // EOF
+            data.append(chunk)
+        }
+        if proc.isRunning { proc.terminate() }  // hit a limit, or unzip wedged
         proc.waitUntilExit()
         guard let xml = String(data: data, encoding: .utf8) else { return "" }
         return stripWordXML(xml)
