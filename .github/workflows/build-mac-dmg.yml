@@ -361,7 +361,17 @@ jobs:
         run: |
           xcrun stapler staple "InterviewCopilot-mac.dmg"
           xcrun stapler validate "InterviewCopilot-mac.dmg"
-          echo "Notarization stapled OK"
+          # Staple the .app as well, NOT just the disk image. The zip below is built from
+          # this .app, and only the dmg was ever stapled — so every auto-update delivered
+          # an app carrying no ticket of its own. Gatekeeper still accepts it, by asking
+          # Apple over the network; stapling is what makes that answer available offline.
+          # A user who updates and then opens the app without a connection is the case
+          # that breaks, and it breaks after the update rather than during it, which is
+          # the hardest kind of failure to attribute. Verified against the published
+          # 1.0.245 zip: "does not have a ticket stapled to it".
+          xcrun stapler staple "$RUNNER_TEMP/export/InterviewCopilot.app"
+          xcrun stapler validate "$RUNNER_TEMP/export/InterviewCopilot.app"
+          echo "Notarization stapled OK (dmg and app)"
 
       - name: Create update .zip
         run: |
