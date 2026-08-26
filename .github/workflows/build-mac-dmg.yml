@@ -403,7 +403,14 @@ jobs:
       # polling — picks it up. Requires the SPARKLE_PRIVATE_KEY repo secret (paste the key
       # from `generate_keys -x` there); until that secret exists this step no-ops and
       # existing installs simply keep finding nothing new, same as today.
+      # A release can now be BUILT and PUBLISHED without being OFFERED. 1.0.245 was signed,
+      # notarized, uploaded and fed to every user in one unbroken run, and it could not
+      # connect to Speechmatics at all — there was no point at which a working artifact
+      # existed and had not yet been handed out. Putting [no-feed] in the commit message
+      # stops at the release, so the build can be installed and actually used before the
+      # feed is updated by hand.
       - name: Update Sparkle appcast
+        if: ${{ !contains(github.event.head_commit.message, '[no-feed]') }}
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
