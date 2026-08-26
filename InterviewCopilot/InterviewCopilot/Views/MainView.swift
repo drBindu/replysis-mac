@@ -1700,7 +1700,11 @@ struct CodeBlockView: View {
             .padding(.horizontal, 11).padding(.vertical, 7)
             .background(Color.white.opacity(0.03))
 
-            ScrollView(.horizontal, showsIndicators: false) {
+            // Indicators ON. Code does not wrap here — long lines run off the right edge —
+            // so with the scrollbar hidden there was nothing on screen saying more code
+            // existed. In a coding round the line that runs off is as likely as not the one
+            // with the return statement in it.
+            ScrollView(.horizontal, showsIndicators: true) {
                 Text(SyntaxHighlighter.highlight(code, size: fontSize))
                     .textSelection(.enabled)
                     .padding(.horizontal, 12).padding(.vertical, 10)

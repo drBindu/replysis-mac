@@ -274,7 +274,6 @@ class MainViewModel {
     private var thinkingTimer: Timer?
     private var sessionTimerObj: Timer?
     private var creditsTimer: Timer?
-    private var watchModeTimer: Timer?
     private var thinkingStep = 0
 
     // MARK: - State
@@ -1211,7 +1210,8 @@ class MainViewModel {
         Task { await _doScreenCapture(label: wholeScreen ? "📸 MAIN SCREEN" : "📸 THIS SCREEN") }
     }
 
-    // Toggle continuous watch mode — auto-captures every 8 seconds
+    // Arms screen answers. Despite what this comment used to say, nothing is captured on a
+    // timer — see toggleWatchMode() for the arithmetic behind that decision.
     /// Settings toggle. Kept separate from the toolbar, which now performs an action.
     func setScreenAnswers(_ enabled: Bool) {
         guard isWatchMode != enabled else { return }
@@ -1224,12 +1224,14 @@ class MainViewModel {
         guard session.isLoggedIn else { aiAnswer = "⚠ Please sign in first."; return }
         if isWatchMode {
             isWatchMode = false
-            watchModeTimer?.invalidate(); watchModeTimer = nil
             dlog("Watch mode OFF", tag: "SCREEN")
             aiAnswer = "Screen watch mode stopped."
         } else {
             isWatchMode = true
-            dlog("Watch mode ON — capturing every 8s", tag: "SCREEN")
+            // Said "capturing every 8s" while the code deliberately captures on question
+            // detection instead. A debug log that asserts behaviour the app does not have
+            // sends the next person debugging this to look for a timer that is not there.
+            dlog("Watch mode ON — captures on question detection, not on a timer", tag: "SCREEN")
             aiAnswer = "👁 WATCH MODE ON — for when the interviewer is sharing their screen.\n\nEvery question is now answered from what is on screen, with nothing to press.\n\nPress Watch again to go back to answering from what was said."
             // NOTE: no timer. Capturing every N seconds is the obvious reading of "watch
             // the screen" and it does not survive arithmetic: a capture every 8s for a
@@ -1259,7 +1261,6 @@ class MainViewModel {
             let wasWatching = isWatchMode
             if wasWatching {
                 isWatchMode = false
-                watchModeTimer?.invalidate(); watchModeTimer = nil
             }
             aiAnswer = """
             ⚠ Screen Recording permission is needed to read your screen.
@@ -2853,7 +2854,6 @@ class MainViewModel {
         // timer keeps firing _doScreenCapture() with an expired idToken after sign-out.
         if isWatchMode {
             isWatchMode = false
-            watchModeTimer?.invalidate(); watchModeTimer = nil
         }
         engine.stop(); session.clear(); setLoggedOutUI()
 
