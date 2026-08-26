@@ -1598,19 +1598,33 @@ func parseAnswerBlocks(_ raw: String) -> [AnswerBlock] {
     let codeTitles = PromptBuilder.codeSectionTitles
     var blocks: [AnswerBlock] = []
     var buffer: [String] = []
-    var inCode = false
+    var inCodeSection = false   // inside ━━━ SOLUTION ━━━ and friends
+    var inFence = false         // inside a ``` block
     func flush() {
         let joined = buffer.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        if !joined.isEmpty { blocks.append(inCode ? .code(joined) : .text(joined)) }
+        if !joined.isEmpty {
+            blocks.append((inCodeSection || inFence) ? .code(joined) : .text(joined))
+        }
         buffer.removeAll()
     }
     for line in raw.components(separatedBy: "\n") {
         let t = line.trimmingCharacters(in: .whitespaces)
-        if t.hasPrefix("━━━") && t.hasSuffix("━━━") && t.count > 6 {
+        // Fenced code. The prompt asks for ━━━ headers and forbids backticks, but a model
+        // under instruction is not a model under control: when one arrives fenced anyway,
+        // this used to be the path where it silently became prose — proportional font,
+        // wrapped, no copy button — which is exactly the state the code panel exists to
+        // prevent. An unclosed fence is normal while streaming, so the final flush treats
+        // whatever is still open as code rather than dropping it.
+        if t.hasPrefix("```") {
+            flush()
+            inFence.toggle()
+            continue
+        }
+        if !inFence, t.hasPrefix("━━━"), t.hasSuffix("━━━"), t.count > 6 {
             flush()
             let title = t.replacingOccurrences(of: "━", with: "").trimmingCharacters(in: .whitespaces)
             blocks.append(.header(title))
-            inCode = codeTitles.contains(title.uppercased())
+            inCodeSection = codeTitles.contains(title.uppercased())
         } else {
             buffer.append(line)
         }

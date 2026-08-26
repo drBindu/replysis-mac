@@ -642,7 +642,11 @@ If the Replysis app is visible, mention the current transcript and any question 
         // paired asterisk out of it.
         text = PromptBuilder.stripMarkdownPreservingCode(text)
         text = text.replacingOccurrences(of: "(?m)^#{1,6}\\s+", with: "", options: .regularExpression)
-        text = text.replacingOccurrences(of: "```[a-zA-Z]*\\r?\\n?", with: "", options: .regularExpression)
+        // The fence line is NOT deleted any more. Deleting it removed the only marker saying
+        // where code began, and the renderer keys on ━━━ headers alone — so a model that
+        // answered with a fence instead of a header had its code rendered as prose:
+        // proportional, wrapped, uncopyable. Stripping the marker for a panel that needs the
+        // marker is a fix and its own undoing in one line. parseAnswerBlocks reads fences now.
         text = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
 
         let lines = text.components(separatedBy: "\n")
