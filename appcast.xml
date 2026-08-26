@@ -3,6 +3,14 @@
     <channel>
         <title>InterviewCopilot</title>
         <item>
+            <title>1.0.246</title>
+            <pubDate>Wed, 26 Aug 2026 04:50:02 +0000</pubDate>
+            <sparkle:version>246</sparkle:version>
+            <sparkle:shortVersionString>1.0.246</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/drBindu/replysis-mac/releases/download/v1.0.246/InterviewCopilot-update.zip" length="20364022" type="application/octet-stream" sparkle:edSignature="KkFcp9KG8aCUO7pSYJUoq2ZpNA7l9oXk6CCCfwIqkdF8n1emFJ/BBAyFATr/1mzCdA+2RVDgF2ZYnJxRbV9pAA=="/>
+        </item>
+        <item>
             <title>1.0.244</title>
             <pubDate>Fri, 07 Aug 2026 06:35:10 +0000</pubDate>
             <sparkle:version>244</sparkle:version>
