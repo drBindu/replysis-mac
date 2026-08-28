@@ -431,7 +431,9 @@ class SpeechmaticsEngine {
             if !trimmed.isEmpty {
                 Task { @MainActor in dlog("SM \(source): \(trimmed)", tag: "SM") }
             }
-            if Self.isAuthFailure(line) {
+            if Self.isConcurrencyLimit(line) {
+                Task { @MainActor [weak self] in self?.handleConcurrencyLimit() }
+            } else if Self.isAuthFailure(line) {
                 let exhausted = Self.isBalanceExhausted(line)
                 Task { @MainActor [weak self] in self?.handleAuthError(balanceExhausted: exhausted) }
             }
@@ -503,6 +505,20 @@ class SpeechmaticsEngine {
         return low.contains("contract blocked") || low.contains("credit balance exhausted")
     }
 
+    /// Speechmatics refusing because the ACCOUNT already has its allowed number of live
+    /// sessions. Distinct from an auth failure: the key is fine and it clears by itself once
+    /// the other sessions end. It is kept apart from the ordinary transient errors because
+    /// retrying fast makes it strictly worse — every attempt opens another session, so the
+    /// loop sustains the exact condition it is retrying against, while the UI sits on
+    /// "connecting" with nothing to explain why. Seen live: a session killed with SIGKILL
+    /// never closes its socket, so the server holds the slot until it times out, and the
+    /// next launch is refused by a ghost of the previous one.
+    nonisolated static func isConcurrencyLimit(_ line: String) -> Bool {
+        let low = line.lowercased()
+        return low.contains("quota_exceeded") || low.contains("concurrent quota")
+            || low.contains("limit of sessions")
+    }
+
     nonisolated static func isAuthFailure(_ line: String) -> Bool {
         let low = line.lowercased()
         // A blocked contract is an AUTH failure, not a transient one. Speechmatics answers
@@ -523,6 +539,24 @@ class SpeechmaticsEngine {
     /// Speechmatics rejected the key. Stop the futile fast-retry loop, tell the UI, and
     /// switch to a slow 60s re-fetch so we auto-recover the moment the server key is fixed.
     private(set) var balanceExhausted = false
+
+    var onConcurrencyLimit: (() -> Void)?
+    private var concurrencyHandled = false
+
+    /// Stop hammering, and say what is actually wrong.
+    private func handleConcurrencyLimit() {
+        guard !concurrencyHandled else { return }
+        concurrencyHandled = true
+        dlog("SM: account is at its concurrent-session limit — pausing retries for 60s", tag: "SM")
+        statusText = "SESSION IN USE"
+        engineCancelled = true
+        monitorTimer?.invalidate(); monitorTimer = nil
+        killAndDispose()
+        onConcurrencyLimit?()
+        // 60s, not the usual fast backoff. The slot is held by another session and clears on
+        // its own; retrying sooner only opens more attempts against a full account.
+        startRetryTimer(interval: 60)
+    }
 
     private func handleAuthError(balanceExhausted: Bool = false) {
         guard !authErrorHandled else { return }   // report once per engine start

@@ -225,6 +225,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.contentView?.clearLayerBackgrounds()
 
         panel.makeKeyAndOrderFront(nil)
+
+        // Say out loud whether the frosted material is actually IN the view tree, and how
+        // big it is. Adding NSVisualEffectView and then judging the result by eye cannot
+        // distinguish "no material" from "material buried under opaque layers" — they look
+        // identical, and the fix for each is the opposite of the fix for the other.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak panel] in
+            guard let root = panel?.contentView else { return }
+            func findEffect(_ v: NSView) -> NSVisualEffectView? {
+                if let e = v as? NSVisualEffectView { return e }
+                for sub in v.subviews { if let e = findEffect(sub) { return e } }
+                return nil
+            }
+            if let e = findEffect(root) {
+                dlog("GLASS: NSVisualEffectView present \(Int(e.frame.width))x\(Int(e.frame.height)) "
+                     + "material=\(e.material.rawValue) blending=\(e.blendingMode.rawValue) "
+                     + "state=\(e.state.rawValue) hidden=\(e.isHidden) alpha=\(e.alphaValue)", tag: "BOOT")
+            } else {
+                dlog("GLASS: NO NSVisualEffectView in the view tree — the window is not glass at all",
+                     tag: "BOOT")
+            }
+        }
         // Activate the app so its panel is the KEY window immediately. Without this, an
         // .accessory app can show a visible panel that is NOT the active window, so the
         // in-app (local) Space/F8/F9 monitor receives nothing until the user clicks the

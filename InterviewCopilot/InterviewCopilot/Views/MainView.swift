@@ -31,14 +31,26 @@ struct MainView: View {
             // ever blurred, so whatever sat behind the window stayed legible and the panel
             // read as a sheet of tinted plastic. NSVisualEffectView blurs what is behind the
             // window, which is the entire difference between transparent and frosted.
+            // The frost obeys the opacity slider. It did not before, and that was the whole
+            // complaint: frosted glass OBSCURES what is behind it — that is what frosting
+            // is — so a permanently milky pane defeats a user who has set opacity near zero
+            // precisely because they want to read the page underneath. At 0 this is clear
+            // glass and you see through it; at 1 it is a solid frosted panel. One slider,
+            // one meaning, instead of a material that ignored it.
             GlassBackground(material: .hudWindow)
+                .opacity(vm.mainWindowOpacity)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
 
             // Tint OVER the blur rather than instead of it, so the user's opacity preference
             // still darkens the panel while the frost underneath is never given up.
+            // Thin. The frost was real but buried: this tint sat at 0.48 and the answer
+            // panel added another 0.40 on top of it, so roughly 69% of the glass was
+            // painted over and the result was a grey smear that looked like a blur bug.
+            // Adding a material does not make a window glass if the layers above it are
+            // still opaque — the material was never the thing that was wrong.
             RoundedRectangle(cornerRadius: 14)
                 .fill(Color(red: 9/255, green: 13/255, blue: 21/255)
-                    .opacity(0.30 + vm.mainWindowOpacity * 0.45))
+                    .opacity(0.08 + vm.mainWindowOpacity * 0.22))
 
             // Two strokes, not one. A single flat border is the giveaway of a drawn box; real
             // glass catches light on its top edge and goes dark at the bottom.
@@ -1316,7 +1328,9 @@ struct MainView: View {
             .frame(maxHeight: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 14)
-                    .fill(Color(red: 11/255, green: 17/255, blue: 30/255).opacity(vm.mainWindowOpacity))
+                    // Half what it was: this panel covers most of the window, so it decides
+                    // whether any glass is visible at all.
+                    .fill(Color(red: 11/255, green: 17/255, blue: 30/255).opacity(vm.mainWindowOpacity * 0.5))
                     .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(hex: "#38bdf8").opacity(0.22), lineWidth: 1))
             )
 

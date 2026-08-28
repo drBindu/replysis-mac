@@ -315,6 +315,14 @@ class MainViewModel {
         // Surface a clear message if the speech service rejects the key, instead of
         // silently showing an empty transcript forever.
         engine.onKeyError = { [weak self] in self?.handleSpeechKeyError() }
+        // Tell the user the one thing they can act on. Before this it showed "connecting"
+        // forever, because a concurrency refusal matched none of the failure tests.
+        engine.onConcurrencyLimit = { [weak self] in
+            guard let self else { return }
+            self.listeningNotice = "Another session is already running"
+            self.aiAnswer = "⚠ Speechmatics says this account already has the maximum number of live sessions.\n\nClose any other copy of Replysis (including one on another machine), then wait about a minute — a session that was force-quit keeps its slot until the server times it out.\n\nListening will resume by itself once a slot frees up."
+            self.updateMicUI()
+        }
         // No audio source is permitted — say so loudly rather than capturing something the
         // active mode promised not to.
         engine.onCaptureUnavailable = { [weak self] in self?.handleCaptureUnavailable() }
