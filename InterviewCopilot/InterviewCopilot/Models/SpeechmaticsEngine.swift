@@ -310,7 +310,18 @@ class SpeechmaticsEngine {
         //
         // 0.55 / 0.60 removes ~0.35s of the ~1.5s. The remaining budget is the model's, and
         // the PERF lines now say which half is which.
-        args += ["-max-delay", "0.55", "-utterance-silence", "0.60"]
+        // NOT -utterance-silence. The flag exists in the shared SOURCE but not in the engine
+        // BINARY this app ships (build 9be432f, frozen 2026-08-25, before Windows added it).
+        // Passing it makes argparse reject the whole command line and the engine exits at
+        // once, so the app sits on "Connecting" forever with no error — which is exactly what
+        // it did for twenty minutes after I added it.
+        //
+        // The lesson is the one this codebase keeps relearning: the source and the shipped
+        // artifact are different things. `speechmatics_engine --help` lists what the BINARY
+        // accepts — --device --sysdevice --max-delay --mode --sysfifo — and that list, not
+        // the .py, is the contract. Restore the 0.80s saving by rebuilding the engine from
+        // current shared source, then adding the flag back and checking --help again.
+        args += ["-max-delay", "0.55"]
 
         // Key ONLY via env var (matches the working .NET app); APP_DATA_DIR points the
         // engine at the same folder the UI polls.
