@@ -42,6 +42,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let vm = MainViewModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Do not let a closed pipe kill the app. This is the first thing that happens,
+        // before anything can open one.
+        //
+        // The app writes captured system audio into a FIFO the engine reads. When the engine
+        // dies — quota refusal, crash, being killed, any reason at all — the reader is gone,
+        // and the very next write raises SIGPIPE, whose default action is to terminate the
+        // process. The app vanished in about a second with no crash report, because a signal
+        // death is not a crash. Exit code 141 is 128 + 13, and that number was the only
+        // evidence there was.
+        //
+        // The write loop in SystemAudioTapper ALREADY handles this: `if w <= 0 { break }`
+        // then reopens the FIFO. That recovery was correct and permanently unreachable,
+        // because the process was killed before write() could return -1. Ignoring the signal
+        // is what turns an unreachable branch into the one that runs.
+        signal(SIGPIPE, SIG_IGN)
+
         // Start crash reporting FIRST — before any other launch work — so if something
         // below crashes on a user's Mac, the report still gets captured. No-op in debug.
         CrashReporter.start()
