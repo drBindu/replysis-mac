@@ -160,6 +160,17 @@ struct AutoTurnDetector {
     /// Compared against the answer's OPENING only. The whole answer is several hundred
     /// words and would match almost any follow-up question by chance.
     static func isEchoOfPrevious(_ text: String, lastQuestion: String, lastAnswer: String) -> Bool {
+        // The same question again, at any length. This is checked FIRST and without the
+        // word-count floor below, because the floor is what let the plainest case through:
+        // "What is Java" answered, then "So what is Java" answered again, in full, seconds
+        // later. Stripped of filler the two are identical; the floor never looked, because
+        // dropping short words left only [what, java] and it abstained at two.
+        //
+        // A floor that exists to prevent misjudging short input must not also excuse the one
+        // short input we can judge with certainty: a verbatim repeat.
+        let a = strippedForRepeat(text), b = strippedForRepeat(lastQuestion)
+        if !a.isEmpty, a == b { return true }
+
         let t = normWords(text)
         guard t.count >= 5 else { return false }        // too short to judge safely
         var vocab = Set(normWords(lastQuestion))
@@ -167,6 +178,20 @@ struct AutoTurnDetector {
         guard !vocab.isEmpty else { return false }
         let shared = t.filter { vocab.contains($0) }.count
         return Double(shared) / Double(t.count) >= 0.75
+    }
+
+    /// Normalised for repeat-detection: every word kept, leading filler removed. Unlike
+    /// normWords this keeps short words — "is" and "of" are exactly what distinguishes
+    /// "what is java" from "what of java", and dropping them is how a repeat became invisible.
+    private static func strippedForRepeat(_ s: String) -> String {
+        var w = s.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+        let filler: Set<String> = ["so", "okay", "ok", "and", "um", "uh", "well", "now",
+                                   "alright", "right", "yeah", "hmm", "like", "just", "then",
+                                   "also", "actually", "again", "sorry"]
+        while let f = w.first, filler.contains(f), w.count > 1 { w.removeFirst() }
+        return w.joined(separator: " ")
     }
 
     private static func normWords(_ s: String) -> [String] {
