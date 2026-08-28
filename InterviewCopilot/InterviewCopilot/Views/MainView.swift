@@ -26,29 +26,22 @@ struct MainView: View {
     var body: some View {
         // ── Outer glass container — matches original #B3080C14 border with CornerRadius 14
         ZStack {
-            // Frosted material: NSVisualEffectView blurs what is behind the WINDOW, which is
-            // the whole difference between transparent and frosted.
-            //
-            // Deliberately NOT tied to the opacity slider. That slider sits near zero, and
-            // driving the frost from it produced a window with almost nothing to it — white
-            // text on the desktop. The material is a fixed property of the window; the
-            // slider tints what sits on top of it.
-            GlassBackground(material: .hudWindow)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
-
-            // Tint OVER the blur, never instead of it, and thin enough that the frost is
-            // still the thing you see. Two earlier attempts stacked ~69% of paint on top and
-            // the result read as a grey smear that looked like a broken blur.
+            // Painted exactly like the compact overlay (CameraOverlayView:118-127), because
+            // that one is right and this one was not. Compact is ONE gradient layer at the
+            // slider's opacity with a single white hairline and no blur. The main window had
+            // a tint, a second panel under the answer, and at one point a frosted material —
+            // which is why the same slider produced a readable overlay and an unreadable
+            // window. Same paint, same result.
             RoundedRectangle(cornerRadius: 14)
-                .fill(Color(red: 9/255, green: 13/255, blue: 21/255)
-                    .opacity(0.26 + vm.mainWindowOpacity * 0.30))
+                .fill(LinearGradient(
+                    colors: [
+                        Color(red: 3/255,  green: 7/255,  blue: 18/255).opacity(vm.mainWindowOpacity),
+                        Color(red: 5/255,  green: 15/255, blue: 30/255).opacity(vm.mainWindowOpacity)
+                    ],
+                    startPoint: .topLeading, endPoint: .bottomTrailing))
 
-            // Two strokes, not one. A single flat border is the giveaway of a drawn box; real
-            // glass catches light on its top edge and goes dark at the bottom.
             RoundedRectangle(cornerRadius: 14)
-                .stroke(LinearGradient(
-                    colors: [Color.white.opacity(0.22), Color.white.opacity(0.06)],
-                    startPoint: .top, endPoint: .bottom), lineWidth: 1)
+                .stroke(Color.white.opacity(0.18), lineWidth: 1)
 
             VStack(spacing: 0) {
                 headerBar
@@ -1323,8 +1316,9 @@ struct MainView: View {
                     // whether any glass is visible at all.
                     // Also floored: this panel is what the answer text sits on, so it decides
                     // whether the answer can be read at all.
-                    .fill(Color(red: 11/255, green: 17/255, blue: 30/255)
-                        .opacity(0.20 + vm.mainWindowOpacity * 0.25))
+                    // Barely there. Compact puts no second layer under its answer and stays
+                    // readable on text shadows alone; this matches that.
+                    .fill(Color.white.opacity(0.04))
                     .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(hex: "#38bdf8").opacity(0.22), lineWidth: 1))
             )
 
@@ -1782,23 +1776,3 @@ struct MenuRowButtonStyle: ButtonStyle {
 
 
 
-/// The window's frosted material. `.behindWindow` blends with what is on screen behind the
-/// app — that blur is what makes it glass rather than a tinted overlay. Pinned `.active` so
-/// the frost does not flatten the moment the user clicks into the window they are reading.
-struct GlassBackground: NSViewRepresentable {
-    var material: NSVisualEffectView.Material = .hudWindow
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = .behindWindow
-        view.state = .active
-        view.isEmphasized = false
-        return view
-    }
-
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {
-        view.material = material
-        view.state = .active
-    }
-}

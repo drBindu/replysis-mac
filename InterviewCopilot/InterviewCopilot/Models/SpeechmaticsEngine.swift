@@ -144,7 +144,22 @@ class SpeechmaticsEngine {
 
     // MARK: - Start Engine
 
+    /// Set when Speechmatics refuses on concurrency. Until it passes, starting is refused.
+    private var concurrencyBlockedUntil: Date?
+
     func start(smKey: String) {
+        // The gate lives HERE because six places in MainViewModel call start() directly and
+        // none of them consult engineCancelled. After a concurrency refusal each of those
+        // paths spawned another engine, and every engine opened another session against an
+        // account that was already full — so the app did not merely fail to connect, it kept
+        // the account from ever draining. Guarding the callers would mean six correct call
+        // sites forever; guarding the entry means none of them can get it wrong.
+        if let until = concurrencyBlockedUntil, Date() < until {
+            dlog("SM start refused: account is at its concurrent-session limit for another "
+                 + "\(Int(until.timeIntervalSinceNow))s. Starting now would take another slot.",
+                 tag: "SM")
+            return
+        }
         guard !smKey.isEmpty else {
             statusText = "NO MIC"
             dlog("SM start: smKey is empty — cannot start", tag: "SM")
@@ -547,7 +562,8 @@ class SpeechmaticsEngine {
     private func handleConcurrencyLimit() {
         guard !concurrencyHandled else { return }
         concurrencyHandled = true
-        dlog("SM: account is at its concurrent-session limit — pausing retries for 60s", tag: "SM")
+        concurrencyBlockedUntil = Date().addingTimeInterval(60)
+        dlog("SM: account is at its concurrent-session limit — refusing starts for 60s", tag: "SM")
         statusText = "SESSION IN USE"
         engineCancelled = true
         monitorTimer?.invalidate(); monitorTimer = nil
@@ -649,6 +665,15 @@ class SpeechmaticsEngine {
         exitSource?.cancel(); exitSource = nil
         if enginePid > 0 {
             let pid = enginePid
+            // Ask it to close the Speechmatics socket FIRST. A killed engine never closes its
+            // websocket, so the server keeps that session slot reserved until it times out —
+            // and with one shared account those ghosts are charged against every customer on
+            // both platforms, not just this machine. Windows found the same thing and fixed it
+            // the same way (RELAY.md, 2349f80).
+            try? "1".write(to: shutdownFlagPath, atomically: true, encoding: .utf8)
+            let deadline = Date().addingTimeInterval(1.5)
+            while Date() < deadline, kill(pid, 0) == 0 { usleep(50_000) }
+            try? FileManager.default.removeItem(at: shutdownFlagPath)
             kill(pid, SIGTERM)
             // Reap off main. WNOHANG loop with a SIGKILL fallback after 2s so a hung
             // engine never blocks this GCD thread indefinitely.

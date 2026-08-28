@@ -166,8 +166,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // width and 82% of the height: 64% of the whole screen, for a tool whose job is
         // to sit beside a video call rather than bury it. Measured, after the owner said
         // the window was too large.
-        let w = min(1060, round(screen.width  * 0.74))
-        let h = min(620, round(screen.height * 0.64))
+        let w = min(880, round(screen.width  * 0.60))
+        let h = min(520, round(screen.height * 0.58))
         let origin = NSPoint(x: screen.midX - w / 2, y: screen.midY - h / 2)
 
         // Borderless → no native traffic-light buttons (custom ✕ lives in the header).
