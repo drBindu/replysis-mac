@@ -297,7 +297,20 @@ class SpeechmaticsEngine {
         // waits this full duration before being committed as FINAL, so this is now the
         // fastest finalization Speechmatics permits. There is no further safe room on this
         // specific lever — 0.7 is the enforced minimum, not just a suggestion.
-        args += ["-max-delay", "0.7"]
+        // Latency budget, measured rather than assumed. Before this the app waited 0.70s
+        // (max_delay) + 0.80s (the engine's default silence trigger, which Mac never
+        // overrode) = ~1.5s after someone stopped talking before the request even left,
+        // and the product is sold on answering instantly.
+        //
+        // max_delay is how long Speechmatics holds a word back to improve it with what
+        // comes after; utterance-silence is how long a pause must last to count as the end
+        // of a turn. Both trade accuracy for speed and neither is free: too low a silence
+        // trigger cuts people off mid-thought, which costs a whole extra round trip and is
+        // far worse than the 200ms it saved.
+        //
+        // 0.55 / 0.60 removes ~0.35s of the ~1.5s. The remaining budget is the model's, and
+        // the PERF lines now say which half is which.
+        args += ["-max-delay", "0.55", "-utterance-silence", "0.60"]
 
         // Key ONLY via env var (matches the working .NET app); APP_DATA_DIR points the
         // engine at the same folder the UI polls.

@@ -1099,18 +1099,38 @@ class MainViewModel {
         // mid-stream, answerEpoch changes and these stale callbacks are ignored.
         let epoch = answerEpoch
 
+        // Time the answer. This app is sold on being fast and has never measured itself, so
+        // "it feels slow" had no number attached and no way to tell WHERE the time goes:
+        // the recogniser deciding the turn ended, the network, or the model generating. The
+        // three have completely different fixes and look identical from the outside.
+        let askedAt = Date()
+        let heardEndAt = lastUtteranceEndAt
+
         NetworkClient.shared.streamAnswer(
             question: q, resume: resumeText, provider: provider, messages: msgArr,
             onToken: { [weak self] token in
                 guard let self = self, self.answerEpoch == epoch else { return }
                 accumulated += token; tokenCount += 1
-                if tokenCount == 1 { self.showThinking = false }
+                if tokenCount == 1 {
+                    self.showThinking = false
+                    let toFirst = Date().timeIntervalSince(askedAt)
+                    // Time from the speaker stopping, which is what the user actually feels —
+                    // the request is only the second half of their wait.
+                    let sinceSpeech = heardEndAt == .distantPast
+                        ? -1 : Date().timeIntervalSince(heardEndAt)
+                    dlog(String(format: "LATENCY: first token %.2fs after request%@",
+                                toFirst,
+                                sinceSpeech < 0 ? "" : String(format: ", %.2fs after they stopped speaking", sinceSpeech)),
+                         tag: "PERF")
+                }
                 if tokenCount % 3 == 0 || token.contains("\n") {
                     self.aiAnswer = "Q: \(q)\n\n\(lowBanner)\(accumulated)"
                 }
             },
             onDone: { [weak self] in
                 guard let self = self, self.answerEpoch == epoch else { return }
+                dlog(String(format: "LATENCY: complete in %.2fs (%d tokens)",
+                            Date().timeIntervalSince(askedAt), tokenCount), tag: "PERF")
                 let final = self.cleanAIOutput(accumulated)
                 self.finishAI(question: q, answer: final, prefix: "Q: \(q)\n\n\(lowBanner)",
                               historyAnswer: accumulated)
@@ -1797,6 +1817,10 @@ class MainViewModel {
     private let unclearSilence: TimeInterval = 0.82
     private let maxUnclearSilence: TimeInterval = 1.25
 
+    /// When the recogniser last said the speaker stopped. The user's wait starts here, not
+    /// when the request goes out — everything before it is time they are already spending.
+    var lastUtteranceEndAt = Date.distantPast
+
     private var continuationChainStartedAt = Date.distantPast
     private var continuationCount = 0
     /// A question that has genuinely been split by a pause takes one or two more pieces to
@@ -1850,6 +1874,9 @@ class MainViewModel {
 
     private func handleUtteranceEnd() {
         guard autoModeEnabled, isListening, !isScreenAnalyzing, engine.isReady else { return }
+        // Stamped here, before any of the deciding, because this is the moment the user
+        // stopped talking and started waiting.
+        lastUtteranceEndAt = Date()
         var text = remainingSpeech(engine.readLatestTxt())
         guard !text.isEmpty else { return }
 
