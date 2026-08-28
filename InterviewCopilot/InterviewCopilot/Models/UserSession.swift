@@ -310,7 +310,22 @@ class UserSession {
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
         let type = obj["account_type"] as? String ?? "?"
-        let quota = obj["connection_quota"] as? Int
+        // Accept whatever shape the claim arrives in. The first version read it as Int only
+        // and logged "connection_quota=?" against a token that carries it — so the warning
+        // at two or below could never fire, and the instrumentation added to answer this
+        // exact question quietly answered nothing. JSON numbers decode as NSNumber, String
+        // or Double depending on how the minting service wrote them.
+        let raw = obj["connection_quota"] ?? obj["connectionQuota"] ?? obj["concurrency"]
+        let quota = (raw as? Int)
+            ?? (raw as? NSNumber)?.intValue
+            ?? (raw as? Double).map(Int.init)
+            ?? (raw as? String).flatMap(Int.init)
+        if quota == nil {
+            // Names only, never values — enough to find the right claim next time without
+            // putting any of the token in the log.
+            dlog("SM plan: no recognised quota claim. Claims present: \(obj.keys.sorted().joined(separator: ", "))",
+                 tag: "AUTH")
+        }
         dlog("SM plan: account_type=\(type) connection_quota=\(quota.map(String.init) ?? "?")",
              tag: "AUTH")
         if let q = quota, q <= 2 {
@@ -349,6 +364,11 @@ class UserSession {
         if forceRefresh { discardCachedSpeechKey() }
         if let cached = loadCachedSpeechKey() {
             speechmaticsKey = cached
+            // Also on the cached path. Reporting the plan only when a token is freshly
+            // minted means it is silent for the whole hour a cached one is reused — which
+            // is most of a session, and exactly when someone is wondering why a second
+            // device cannot connect.
+            logSpeechKeyLimits(cached)
             dlog("SM key: reusing the cached token — no new one spent", tag: "AUTH")
             return true
         }
