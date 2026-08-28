@@ -1917,6 +1917,17 @@ class MainViewModel {
            continuationCount < maxContinuations,
            mergedWords <= maxContinuationWords,
            !AutoTurnDetector.isFragmentedNoise(mergedCandidate),
+           // Not if the "continuation" is the user rehearsing the answer we just gave.
+           // This test existed further down and was unreachable from here: the merge runs
+           // first, so speech that was plainly an echo got merged and re-answered before
+           // anything looked at it. Observed three times in one session — the question, then
+           // the question plus "Yeah. So my day to day activities is my usually kicks off",
+           // then that plus "Kick kicks in", each answered in full.
+           //
+           // A check placed after the branch that bypasses it is not a check.
+           !AutoTurnDetector.isEchoOfPrevious(text,
+                                              lastQuestion: lastAnsweredQuestion,
+                                              lastAnswer: lastAnsweredAnswer),
            Self.looksLikeContinuation(previous: lastAnsweredQuestion, next: text) {
             continuationCount += 1
             let merged = mergedCandidate
