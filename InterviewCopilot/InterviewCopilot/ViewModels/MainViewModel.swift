@@ -1974,6 +1974,16 @@ class MainViewModel {
         // Practice Auto demands a real question form — see requireInterrogative. Alone with
         // the app, the user asks in questions and rehearses in statements, and answering the
         // rehearsal is what turned the mode into a loop answering its own answers.
+        // Drop an opening pleasantry so the question behind it survives. "Hello How are you
+        // What is Java" was answered "Doing really well, thanks!" — the greeting answered,
+        // the question discarded — and the owner then asked twice more. Those repeats read
+        // as the bug and were the symptom.
+        let stripped = AutoTurnDetector.stripLeadingPleasantries(text)
+        if stripped != text {
+            dlog("AUTO: dropped an opening greeting — asking '\(stripped.prefix(60))'", tag: "AUTO")
+            text = stripped
+        }
+
         // Reading the app's own answer back is not a new question. See isEchoOfPrevious —
         // from a real session, where the owner rehearsed aloud and was answered again,
         // identically, at the cost of another credit.

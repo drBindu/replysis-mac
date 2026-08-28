@@ -183,6 +183,43 @@ struct AutoTurnDetector {
     /// Normalised for repeat-detection: every word kept, leading filler removed. Unlike
     /// normWords this keeps short words — "is" and "of" are exactly what distinguishes
     /// "what is java" from "what of java", and dropping them is how a repeat became invisible.
+    /// Remove an opening pleasantry, keeping whatever real question follows it.
+    ///
+    /// From SESSION 64: "Hello How are you What is Java" was answered "Doing really well,
+    /// thanks! Excited to be here" — the greeting was answered and the question thrown
+    /// away. The owner then asked twice more, and those repeats look like the bug but are
+    /// the symptom: he was reacting to an answer that ignored him.
+    ///
+    /// A greeting alone is still a greeting and still gets a warm reply — this only strips
+    /// when something substantial remains after it, so "Hello, how are you?" is untouched
+    /// while "Hello, how are you, what is Java?" becomes "what is Java".
+    static func stripLeadingPleasantries(_ text: String) -> String {
+        // Longest first: "how are you doing" must be tried before "how are you".
+        let openers = ["good morning", "good afternoon", "good evening",
+                       "nice to meet you", "how are you doing", "how are you",
+                       "how is it going", "hows it going", "thanks", "thank you",
+                       "hello", "hi", "hey", "yeah", "okay", "ok", "so"]
+        var out = text
+        var changed = true
+        while changed {
+            changed = false
+            let lead = out.trimmingCharacters(in: CharacterSet(charactersIn: " .,!?-–—")).lowercased()
+            for o in openers where lead.hasPrefix(o) {
+                // Only a word boundary counts: "hi" must not eat the front of "history".
+                let after = lead.dropFirst(o.count)
+                guard after.isEmpty || after.first == " " || after.first == "," ||
+                      after.first == "." || after.first == "?" || after.first == "!" else { continue }
+                let candidate = String(after).trimmingCharacters(in: CharacterSet(charactersIn: " .,!?-–—"))
+                // Never strip everything: a pure greeting is a real thing to answer.
+                guard candidate.split(separator: " ").count >= 2 else { continue }
+                out = candidate
+                changed = true
+                break
+            }
+        }
+        return out.isEmpty ? text : out
+    }
+
     private static func strippedForRepeat(_ s: String) -> String {
         var w = s.lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
