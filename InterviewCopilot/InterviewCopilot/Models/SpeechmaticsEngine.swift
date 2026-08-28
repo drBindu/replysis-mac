@@ -563,6 +563,14 @@ class SpeechmaticsEngine {
         guard !concurrencyHandled else { return }
         concurrencyHandled = true
         concurrencyBlockedUntil = Date().addingTimeInterval(60)
+        // Throw away the cached token. A refusal is the one moment a cached token has proved
+        // itself wrong, and this is the trap that cost the owner hours: the backend's account
+        // key was swapped server-side and nothing changed, because both apps kept presenting a
+        // token they had already saved, minted against the old exhausted account. Mac caches
+        // in the Keychain rather than a file, and discards it when the USER changes but not
+        // when the ACCOUNT BEHIND the user changes — which is the case that actually happened
+        // and made a correct server-side fix look inert. Windows does the same on refusal.
+        UserSession.shared.discardCachedSpeechKey()
         dlog("SM: account is at its concurrent-session limit — refusing starts for 60s", tag: "SM")
         statusText = "SESSION IN USE"
         engineCancelled = true

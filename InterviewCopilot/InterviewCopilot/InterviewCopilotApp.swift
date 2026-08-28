@@ -177,27 +177,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered, defer: false
         )
 
-        // Remember size and position across launches. Without this the panel reopened at
-        // the default every single time, so resizing it was work the user redid on every
-        // launch — the window was resizable in the sense that nothing stopped you, and
-        // not in the sense that it helped.
-        panel.setFrameAutosaveName("ReplysisMainPanel")
-        // Sanity-check what was restored. The first version of this asked only "does the
-        // saved frame intersect any screen?", which is true of a window hanging most of the
-        // way off the left edge — and that is exactly what got saved: -85 140 1525 587 on a
-        // 1440-wide display. It then restored faithfully on every launch, overriding the
-        // computed default and putting the right-hand controls past the edge of the screen.
-        // A remembered frame is only worth honouring if it FITS, so that is what is asked.
-        let vis = NSScreen.screens.first(where: { $0.visibleFrame.intersects(panel.frame) })?.visibleFrame
-        let f = panel.frame
-        let fits = vis.map { f.width <= $0.width && f.height <= $0.height
-                             && $0.contains(CGPoint(x: f.minX, y: f.minY))
-                             && $0.contains(CGPoint(x: f.maxX, y: f.maxY)) } ?? false
-        if !fits {
-            dlog("PANEL: discarding remembered frame \(Int(f.width))x\(Int(f.height)) at "
-                 + "(\(Int(f.minX)),\(Int(f.minY))) — does not fit the display", tag: "BOOT")
-            panel.setFrame(NSRect(origin: origin, size: CGSize(width: w, height: h)), display: false)
-        }
+        // NO frame autosave, deliberately.
+        //
+        // It remembered the wrong thing. SwiftUI's content minimum grows this window after
+        // layout — measured 864x474 at creation, 1097x587 two seconds later — and the frame
+        // that got saved was the GROWN one. Next launch restored 1097, content grew that,
+        // and it saved larger still: 864, 1097, 1323, 1525. The autosave was not remembering
+        // a size the user chose, it was remembering one the content chose, and compounding it
+        // every launch. That is the "why is it big again" the owner reported four times.
+        //
+        // Without it the window opens at the computed size every time and settles wherever
+        // the content needs — the same place each launch, which is the actual requirement.
+        // Restoring a user-chosen size is worth having, but not at the cost of a window that
+        // grows without bound, and not before the content stops driving the size at all.
 
         // Report the frame actually adopted. The default was changed once already without
         // any way to tell from outside whether it took effect, an autosaved frame overrode
@@ -241,6 +233,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.contentView?.clearLayerBackgrounds()
 
         panel.makeKeyAndOrderFront(nil)
+
+
+        // Measure again AFTER SwiftUI has attached and laid out. The line above records the
+        // frame we asked for; if the content's minimum width is larger, AppKit grows the
+        // window to fit and THAT size is what gets autosaved — so every launch restores a
+        // window bigger than the default, and the default looks like it is being ignored.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak panel] in
+            guard let p = panel else { return }
+            dlog("PANEL: after layout \(Int(p.frame.width))x\(Int(p.frame.height))", tag: "BOOT")
+        }
 
         // Activate the app so its panel is the KEY window immediately. Without this, an
         // .accessory app can show a visible panel that is NOT the active window, so the

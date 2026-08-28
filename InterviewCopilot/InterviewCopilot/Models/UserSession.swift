@@ -293,6 +293,33 @@ class UserSession {
         return cached.key
     }
 
+    /// Report the plan limits the token itself carries.
+    ///
+    /// The account's ceiling was found this way and not from the portal — the server key
+    /// belonged to an account nobody here could sign into, so the token was the only source
+    /// of truth available. It costs nothing to read, needs no dependency, and answers the
+    /// question that otherwise gets answered by a customer discovering it mid-interview.
+    /// Ported from Windows (e21902b).
+    private func logSpeechKeyLimits(_ token: String) {
+        let parts = token.split(separator: ".")
+        guard parts.count >= 2 else { return }
+        var b64 = String(parts[1]).replacingOccurrences(of: "-", with: "+")
+                                  .replacingOccurrences(of: "_", with: "/")
+        while b64.count % 4 != 0 { b64 += "=" }        // JWT strips base64 padding
+        guard let data = Data(base64Encoded: b64),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return }
+        let type = obj["account_type"] as? String ?? "?"
+        let quota = obj["connection_quota"] as? Int
+        dlog("SM plan: account_type=\(type) connection_quota=\(quota.map(String.init) ?? "?")",
+             tag: "AUTH")
+        if let q = quota, q <= 2 {
+            dlog("SM plan: WARNING — only \(q) simultaneous session\(q == 1 ? "" : "s") allowed "
+                 + "on this account. A second person transcribing at the same moment gets "
+                 + "silence, and one leaked session is half the capacity.", tag: "AUTH")
+        }
+    }
+
     private func cacheSpeechKey(_ key: String, ttl: TimeInterval) {
         let cached = CachedSpeechKey(key: key,
                                      expiresAt: Date().addingTimeInterval(ttl),
@@ -339,6 +366,7 @@ class UserSession {
             if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let key = obj["key"] as? String, !key.isEmpty {
                 self.speechmaticsKey = key
+                self.logSpeechKeyLimits(key)
                 // The server says how long it is good for; Windows clamps the same way.
                 let ttl = TimeInterval(min(max(obj["expiresIn"] as? Int ?? 3600, 60), 86_400))
                 self.cacheSpeechKey(key, ttl: ttl)

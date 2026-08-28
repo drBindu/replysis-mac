@@ -316,7 +316,14 @@ struct MainView: View {
                     Text(vm.listeningNotice)
                         .font(.system(size: 10, weight: .bold)).tracking(0.4)
                         .foregroundColor(Color(hex: "#fcd34d"))
-                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                        // Capped, not fixed. This pill only appears when something is wrong,
+                        // and with fixedSize its text set the header's minimum width — so a
+                        // longer message made the whole WINDOW wider. "Another session is
+                        // already running" grew it by ~230pt, that size was autosaved, and
+                        // the next launch restored it and grew again: 864, 1097, 1323. An
+                        // error message should not be able to resize the app.
+                        .lineLimit(1).minimumScaleFactor(0.8)
+                        .frame(maxWidth: 210, alignment: .leading)
                 }
                 .padding(.horizontal, 11).padding(.vertical, 8)
                 .background(Capsule().fill(Color(hex: "#2A1F0D")))
