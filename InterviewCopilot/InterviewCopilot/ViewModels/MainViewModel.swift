@@ -1747,14 +1747,24 @@ class MainViewModel {
             // More arrived, so the ending was not the end. The new speech forms its own
             // turn and will be classified on its own utterance-end.
             if unclearDeadline != nil {
-                dlog("AUTO: more speech arrived — the unclear ending was a pause", tag: "AUTO")
-                unclearDeadline = nil; unclearPendingText = ""
+                // Past the ceiling, more speech is no longer evidence of a pause — it is
+                // someone repeating themselves because nothing has answered them. Commit
+                // what we have rather than resetting the wait again.
+                if Date().timeIntervalSince(unclearChainStartedAt) >= maxUnclearChain {
+                    let pending = unclearPendingText.isEmpty ? raw : unclearPendingText
+                    dlog("AUTO: waited \(Int(maxUnclearChain))s without a clear ending — answering anyway", tag: "AUTO")
+                    unclearDeadline = nil; unclearPendingText = ""; unclearChainStartedAt = .distantPast; unclearChainStartedAt = .distantPast
+                    if !pending.isEmpty { commitAutomaticTurn(pending) }
+                } else {
+                    dlog("AUTO: more speech arrived — the unclear ending was a pause", tag: "AUTO")
+                    unclearDeadline = nil; unclearPendingText = ""; unclearChainStartedAt = .distantPast
+                }
             }
         }
         // Nothing more came, so the unclear ending really was the end.
         if let deadline = unclearDeadline, Date() >= deadline {
             let pending = unclearPendingText
-            unclearDeadline = nil; unclearPendingText = ""
+            unclearDeadline = nil; unclearPendingText = ""; unclearChainStartedAt = .distantPast
             if !pending.isEmpty { commitAutomaticTurn(pending) }
         }
         let text = remainingSpeech(raw)
@@ -1816,6 +1826,10 @@ class MainViewModel {
     /// An ending that could go either way, waiting to see if more arrives.
     private var unclearPendingText = ""
     private var unclearDeadline: Date?
+    /// When the current run of unclear endings began. Anchors the ceiling below.
+    private var unclearChainStartedAt = Date.distantPast
+    /// The longest anyone waits without an answer, however the endings are classified.
+    private let maxUnclearChain: TimeInterval = 4.0
     /// The longest gap this speaker leaves MID-question, so the wait can follow their pace
     /// rather than a number tuned on somebody else. Capped while collecting: a gap longer
     /// than two seconds is a turn boundary, not a pause inside one.
@@ -1874,7 +1888,7 @@ class MainViewModel {
         consumedPrefix = ""
         continuationChainStartedAt = .distantPast
         continuationCount = 0
-        unclearDeadline = nil; unclearPendingText = ""
+        unclearDeadline = nil; unclearPendingText = ""; unclearChainStartedAt = .distantPast
         longestMidTurnGap = 0
     }
 
@@ -2031,6 +2045,15 @@ class MainViewModel {
             let wait = min(max(unclearSilence, paceFloor), maxUnclearSilence)
             unclearPendingText = text
             unclearDeadline = Date().addingTimeInterval(wait)
+            // When this run of waiting BEGAN. The per-fragment deadline above is reset every
+            // time more speech arrives, which is correct for a speaker pausing mid-sentence
+            // and fatal when they repeat themselves: each repeat cleared the deadline, so the
+            // turn never committed, so nothing was answered, so they repeated again. Observed
+            // live — "So what is JPA ? What is JPA ? What is JPA ?" never answered, with
+            // "the unclear ending was a pause" logged on every cycle.
+            //
+            // A bound reset by the thing it is bounding is not a bound. This one is anchored.
+            if unclearChainStartedAt == .distantPast { unclearChainStartedAt = Date() }
             // An unclear ending buys 820ms or more — enough to have the picture up before
             // the turn even commits.
             if isWatchMode { Task { [weak self] in await self?.prepareScreenshotAhead() } }
@@ -2060,7 +2083,7 @@ class MainViewModel {
         // A new question supersedes the old one, so the watch must not fire twenty seconds
         // later and re-answer something nobody is asking about any more.
         disarmScrollWatch()
-        unclearDeadline = nil; unclearPendingText = ""
+        unclearDeadline = nil; unclearPendingText = ""; unclearChainStartedAt = .distantPast
         guard autoDetector.acceptUtterance(text) else {
             dlog("AUTO: duplicate of the question just answered — ignoring", tag: "AUTO")
             return
