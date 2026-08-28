@@ -1,4 +1,5 @@
 import Foundation
+import AppKit      // NSSpellChecker — the system dictionary
 
 // ══════════════════════════════════════════════════════════════════════════
 // AutoTurnDetector — decides whether what was just heard is worth answering,
@@ -95,6 +96,48 @@ struct AutoTurnDetector {
     ///
     /// Real speech, however badly punctuated, still runs several words between full stops.
     /// Counting that ratio catches the noise without needing to know which language it was.
+    /// Speech that is not English, transcribed as English anyway.
+    ///
+    /// The recogniser is configured for English and maps whatever it hears onto English
+    /// words, so a Telugu conversation across the room arrives as confident nonsense with
+    /// ordinary punctuation. Every structural test passes it: it has words, a verb-ish
+    /// shape, a full stop. isFragmentedNoise only catches the confetti case — twelve words
+    /// and five full stops — so a six-word burst went straight through and was answered,
+    /// at a credit each time.
+    ///
+    /// This asks a different question: are these English WORDS at all? Foreign speech
+    /// forced through an English recogniser produces tokens no dictionary contains, while a
+    /// technical question is made of real words even when the jargon is unusual.
+    ///
+    /// Measured before choosing 0.40, on real phrasings rather than invented ones:
+    ///
+    ///     worst legitimate     0.22   "Tell me about your work at Zomato and Swiggy"
+    ///                          0.11   "How does OAuth2 PKCE differ from the implicit flow"
+    ///                          0.10   "Explain gRPC protobuf serialization ..."
+    ///     best foreign         0.56   "cara na the me la vata cheppu ela unnav"
+    ///                          1.00   "ela unnaru meeru cheppandi konchem"
+    ///
+    /// Proper nouns and jargon are what would make a dictionary test misfire, so they are
+    /// what it was tuned against. An earlier attempt using function-word ratio was discarded
+    /// because it could not separate them: "Explain TCP three way handshake" scored 0.20
+    /// and the worst nonsense 0.22, so any threshold rejected real questions.
+    ///
+    /// Below five words this abstains. A short burst has too few tokens for a ratio to mean
+    /// anything, and a wrongly discarded question mid-interview is worse than a wasted credit.
+    static func looksLikeForeignSpeech(_ text: String) -> Bool {
+        let words = text.components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count > 1 }
+        guard words.count >= 5 else { return false }
+        let checker = NSSpellChecker.shared
+        var unknown = 0
+        for w in words {
+            let r = checker.checkSpelling(of: w, startingAt: 0, language: "en",
+                                          wrap: false, inSpellDocumentWithTag: 0, wordCount: nil)
+            if r.location != NSNotFound { unknown += 1 }
+        }
+        return Double(unknown) / Double(words.count) >= 0.40
+    }
+
     static func isFragmentedNoise(_ text: String) -> Bool {
         let q = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let words = q.lowercased()

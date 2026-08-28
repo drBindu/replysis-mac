@@ -1928,8 +1928,8 @@ class MainViewModel {
         // Telugu (or a phone call nearby) arrives as confident nonsense that passes every
         // question test and costs a credit each time. Drop it, and step past it so it cannot
         // glue itself to a real question later.
-        if AutoTurnDetector.isFragmentedNoise(text) {
-            dlog("AUTO: transcript is fragmented noise, not speech we can answer — discarding: '\(text.prefix(60))'", tag: "AUTO")
+        if AutoTurnDetector.isFragmentedNoise(text) || AutoTurnDetector.looksLikeForeignSpeech(text) {
+            dlog("AUTO: transcript is not answerable speech — discarding: '\(text.prefix(60))'", tag: "AUTO")
             consumedPrefix = engine.readLatestTxt()
             transcript = ""
             return
