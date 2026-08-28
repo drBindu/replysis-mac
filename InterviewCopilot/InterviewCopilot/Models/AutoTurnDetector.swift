@@ -138,6 +138,42 @@ struct AutoTurnDetector {
         return Double(unknown) / Double(words.count) >= 0.40
     }
 
+    /// The user reading the app's own answer back, rather than asking something.
+    ///
+    /// From a real session (SESSION 62): the answer to "what is your day by day activities"
+    /// was on screen, the owner read it aloud to rehearse, and the recogniser heard
+    ///
+    ///   "Okay. What is your day by day activities? In your office? Yeah. So , my day by
+    ///    day activities. Usually starts by checking ."
+    ///
+    /// — the question repeated, then the opening words of the answer. Every test passed it:
+    /// real English, interrogative, complete. It was answered again, identically, at the
+    /// cost of another credit. In Practice Auto, where rehearsing out loud IS the feature,
+    /// this fires on every single answer the user reads.
+    ///
+    /// The previous turn is judged AS A WHOLE — question and answer opening together.
+    /// Separately neither is decisive: that transcript scored 0.67 against the question and
+    /// 0.53 against the answer, under any sane threshold for either, while being obviously
+    /// an echo. Someone reading back mixes the two, so splitting the evidence in half is
+    /// exactly what let it through.
+    ///
+    /// Compared against the answer's OPENING only. The whole answer is several hundred
+    /// words and would match almost any follow-up question by chance.
+    static func isEchoOfPrevious(_ text: String, lastQuestion: String, lastAnswer: String) -> Bool {
+        let t = normWords(text)
+        guard t.count >= 5 else { return false }        // too short to judge safely
+        var vocab = Set(normWords(lastQuestion))
+        vocab.formUnion(normWords(lastAnswer).prefix(60))
+        guard !vocab.isEmpty else { return false }
+        let shared = t.filter { vocab.contains($0) }.count
+        return Double(shared) / Double(t.count) >= 0.75
+    }
+
+    private static func normWords(_ s: String) -> [String] {
+        s.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
+         .filter { $0.count > 2 }
+    }
+
     static func isFragmentedNoise(_ text: String) -> Bool {
         let q = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let words = q.lowercased()
@@ -314,6 +350,14 @@ struct AutoTurnDetector {
         if questionStarters.contains(first) {
             // "tell me" alone is the start of "tell me about..." — still incoming.
             if first == "tell" && words.count <= 2 { return false }
+            // "what I do" is not a question, "what is" and "what do you" are. In Practice
+            // Auto the same wh-word opens both the question and the rehearsal of its answer,
+            // so the word AFTER it is what separates them: a question is about the listener
+            // or a subject, a rehearsal is about the speaker.
+            if requireInterrogative, words.count >= 2,
+               ["i", "we", "my", "our", "id", "ive", "im"].contains(words[1]) {
+                return false
+            }
             return words.count >= 2
         }
 
@@ -324,9 +368,33 @@ struct AutoTurnDetector {
         // A question starter or command ANYWHERE in the opening still counts. Recognisers
         // punctuate mid-sentence ("So . Can you tell me what is difference between . C two")
         // so the interrogative often is not at index 0 even after filler is stripped.
+        // The user answering, not asking. In Practice Auto they speak BOTH sides — they ask,
+        // read the answer, then rehearse it in their own words — and a rehearsal that happens
+        // to contain "what" or "how" in its first six words was being answered as a question.
+        // "So what I usually do is check the dashboards" is not a question, and answering it
+        // costs a credit and replaces the answer the user was in the middle of practising.
+        //
+        // First person after the filler is the tell. Real questions are about the listener
+        // ("what do YOU do") or about a subject ("what is Spring Boot"); a rehearsal is about
+        // the speaker. "I want to ask..." opens first-person and IS a question, which is why
+        // those phrasings are stripped as restarts before this point.
+        if requireInterrogative {
+            let selfReferential: Set<String> = ["i", "my", "we", "our", "me", "mine",
+                                                "basically", "usually", "generally"]
+            if selfReferential.contains(first) { return false }
+        }
+
         let opening = Set(words.prefix(6))
         let interrogative = whWords.union(commands).union(["difference", "between"])
-        if !opening.isDisjoint(with: interrogative) { return words.count >= 4 }
+        // In Practice Auto an interrogative buried mid-sentence is not enough — that is the
+        // rule that let rehearsals through. Demand it at the front, where a question puts it.
+        if !opening.isDisjoint(with: interrogative) {
+            if requireInterrogative {
+                let front = Set(words.prefix(2))
+                return !front.isDisjoint(with: interrogative) && words.count >= 4
+            }
+            return words.count >= 4
+        }
 
         // Only NOW treat several finished sentences as background talk. This rule exists to
         // skip the interviewer introducing themselves, but recognisers sprinkle periods, so

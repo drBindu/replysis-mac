@@ -1203,6 +1203,10 @@ class MainViewModel {
     private func finishAI(question: String, answer: String, prefix: String = "",
                           historyAnswer: String? = nil) {
         aiAnswer = "\(prefix)\(answer)"
+        // Remembered so the next utterance can be checked against it. In Practice Auto the
+        // user reads this aloud to rehearse, and without this the app hears its own answer
+        // coming back and treats it as a fresh question.
+        lastAnsweredAnswer = answer
         PromptBuilder.shared.addToHistory(question: question, answer: historyAnswer ?? answer)
         appendToSessionLog(q: question, a: answer)
         stopThinkingUI()
@@ -1796,6 +1800,8 @@ class MainViewModel {
     /// The question we last answered, and when — so a slow speaker who pauses mid-sentence
     /// gets their FULL question answered rather than the first half of it.
     private var lastAnsweredQuestion = ""
+    /// The answer we last put on screen, so speech that echoes it can be recognised.
+    private var lastAnsweredAnswer = ""
     private var lastAnsweredAt = Date.distantPast
     /// How long after an answer a further utterance still counts as the same question.
     private let continuationWindow: TimeInterval = 20
@@ -1968,6 +1974,19 @@ class MainViewModel {
         // Practice Auto demands a real question form — see requireInterrogative. Alone with
         // the app, the user asks in questions and rehearses in statements, and answering the
         // rehearsal is what turned the mode into a loop answering its own answers.
+        // Reading the app's own answer back is not a new question. See isEchoOfPrevious —
+        // from a real session, where the owner rehearsed aloud and was answered again,
+        // identically, at the cost of another credit.
+        if AutoTurnDetector.isEchoOfPrevious(text,
+                                             lastQuestion: lastAnsweredQuestion,
+                                             lastAnswer: lastAnsweredAnswer) {
+            dlog("AUTO: that is our own previous turn being read back — not answering again",
+                 tag: "AUTO")
+            consumedPrefix = engine.readLatestTxt()
+            transcript = ""
+            return
+        }
+
         guard AutoTurnDetector.isLikelyCompleteQuestion(AutoTurnDetector.normalize(text),
                                                         requireInterrogative: listeningMode == .practiceAuto) else {
             // IGNORING IS NOT ENOUGH. Rejected speech stays in the file and gets glued to the

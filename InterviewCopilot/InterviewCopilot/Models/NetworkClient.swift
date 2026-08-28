@@ -40,8 +40,17 @@ class NetworkClient {
             "provider": provider,
             "messages": messages
         ]
+        // Measure what we are actually asking the server to read. Time-to-first-token is
+        // dominated by prefill, and prefill is proportional to prompt size — so "the model is
+        // slow" and "we are sending it too much" are indistinguishable without this number.
+        let body = try? JSONSerialization.data(withJSONObject: payload)
+        let resumeKB = Double(resume.utf8.count) / 1024
+        let histKB = Double(messages.reduce(0) { $0 + ($1["content"]?.utf8.count ?? 0) }) / 1024
+        dlog(String(format: "PAYLOAD: %.1fKB total — resume %.1fKB, %d history messages %.1fKB, question %d chars",
+                    Double(body?.count ?? 0) / 1024, resumeKB, messages.count, histKB, question.count),
+             tag: "PERF")
         // Real-time SSE streaming with mid-interview resilience (see streamSSE).
-        streamSSE(url: url, body: try? JSONSerialization.data(withJSONObject: payload),
+        streamSSE(url: url, body: body,
                   onToken: onToken, onDone: onDone, onError: onError)
     }
 
