@@ -1756,8 +1756,24 @@ class MainViewModel {
                     unclearDeadline = nil; unclearPendingText = ""; unclearChainStartedAt = .distantPast; unclearChainStartedAt = .distantPast
                     if !pending.isEmpty { commitAutomaticTurn(pending) }
                 } else {
-                    dlog("AUTO: more speech arrived — the unclear ending was a pause", tag: "AUTO")
-                    unclearDeadline = nil; unclearPendingText = ""; unclearChainStartedAt = .distantPast
+                    // RE-ARM, never abandon. Clearing the pending text here threw the
+                    // question away: "Okay. What is a JPA" was held, the "?" landed 20ms
+                    // later and counted as "more speech", the pending text was deleted —
+                    // and no further utterance-end came, because the speaker had finished.
+                    // The question was destroyed while waiting to be asked, and the app sat
+                    // polling that same line forever while the owner waited.
+                    //
+                    // More speech means the answer is not ready YET. It never means there is
+                    // no question. Keep the latest text, restart the short wait, and leave
+                    // the chain anchor alone so the ceiling above still guarantees a commit.
+                    let latest = remainingSpeech(raw)
+                    if latest.isEmpty {
+                        unclearDeadline = nil; unclearPendingText = ""; unclearChainStartedAt = .distantPast
+                    } else {
+                        unclearPendingText = latest
+                        unclearDeadline = Date().addingTimeInterval(unclearSilence)
+                        dlog("AUTO: more speech arrived — still holding '\(latest.suffix(40))'", tag: "AUTO")
+                    }
                 }
             }
         }
