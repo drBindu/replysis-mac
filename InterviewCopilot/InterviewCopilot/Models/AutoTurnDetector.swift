@@ -236,6 +236,30 @@ struct AutoTurnDetector {
          .filter { $0.count > 2 }
     }
 
+    /// A "continuation" that is really chopped-up room audio.
+    ///
+    /// From the owner's log, merged onto a real question and answered at full price:
+    ///
+    ///   "Big boss . Because . Why ? What's wrong? On. Season two."
+    ///   "Now . Which was. Agni. Pariksha . Season two. REST . Elimination. NE ."
+    ///
+    /// A television, not a person asking anything. isFragmentedNoise refuses to judge below
+    /// twelve words and five stops — deliberately, so a real "Okay. Sure." is never caught —
+    /// and both of these are nine words. They passed every test and cost a credit each.
+    ///
+    /// The bar can be stricter on the merge path than on the answer path, because refusing a
+    /// merge discards nothing: the fragment is still judged on its own as a possible
+    /// question. That asymmetry is what makes a tighter rule safe here and unsafe there.
+    static func isChoppyFragment(_ text: String) -> Bool {
+        let q = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = q.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted.subtracting(CharacterSet(charactersIn: "'")))
+            .filter { !$0.isEmpty }
+        let stops = q.filter { $0 == "." || $0 == "!" || $0 == "?" }.count
+        guard stops >= 3, words.count >= 4 else { return false }
+        return Double(words.count) / Double(stops) < 2.5
+    }
+
     static func isFragmentedNoise(_ text: String) -> Bool {
         let q = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let words = q.lowercased()

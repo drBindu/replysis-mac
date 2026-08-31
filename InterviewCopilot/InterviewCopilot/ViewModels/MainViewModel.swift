@@ -1873,6 +1873,9 @@ class MainViewModel {
     /// all and the user sat in silence in front of the interviewer. Subtracting a remembered
     /// prefix keeps every word instead, and still gives each turn a clean slate.
     private var consumedPrefix = ""
+    /// Consecutive utterance-ends that yielded no new speech. Two means the consumed prefix
+    /// has drifted out of step with the engine's file, not that nobody is talking.
+    private var emptyTurnStreak = 0
 
     /// What has been said that we have NOT already answered.
     ///
@@ -1913,8 +1916,36 @@ class MainViewModel {
         // Stamped here, before any of the deciding, because this is the moment the user
         // stopped talking and started waiting.
         lastUtteranceEndAt = Date()
-        var text = remainingSpeech(engine.readLatestTxt())
-        guard !text.isEmpty else { return }
+        let rawNow = engine.readLatestTxt()
+        var text = remainingSpeech(rawNow)
+        // A speaker finished, the recogniser has text, and we can see nothing new in it.
+        //
+        // remainingSpeech subtracts a stored prefix from a file the engine keeps appending
+        // to, and that arithmetic only holds while the file grows cleanly. Recognisers
+        // REVISE — a final transcript is not always the partial with words added — and the
+        // file is only reset after a turn when nothing was left over. Once the prefix covers
+        // everything, every later question subtracts to nothing and is dropped HERE, with no
+        // log line and no answer: the app looks alive, the mic is open, and it has quietly
+        // stopped listening. That is the "it stops answering after a few questions".
+        //
+        // Two in a row is not a coincidence, it is a desync. Resynchronise instead of
+        // returning a third time: drop the prefix, clear the engine's file, and let the next
+        // sentence be heard whole.
+        if text.isEmpty {
+            emptyTurnStreak += 1
+            if emptyTurnStreak >= 2, !rawNow.isEmpty {
+                dlog("AUTO: \(emptyTurnStreak) turns produced no new speech from a \(rawNow.count)-char transcript — resynchronising", tag: "AUTO")
+                emptyTurnStreak = 0
+                consumedPrefix = ""
+                transcript = ""
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    self?.engine.clearLatestTxt()
+                    self?.engine.writeResetFlag()
+                }
+            }
+            return
+        }
+        emptyTurnStreak = 0
 
         // CONTINUATION: silence alone cannot tell "finished" from "thinking mid-sentence".
         // A slow speaker, or one on a laggy connection, says "what's the difference between
@@ -1933,6 +1964,11 @@ class MainViewModel {
            continuationCount < maxContinuations,
            mergedWords <= maxContinuationWords,
            !AutoTurnDetector.isFragmentedNoise(mergedCandidate),
+           // The FRAGMENT, judged on its own. Testing only the merged text hides a noisy
+           // fragment behind a legitimate question: the merge is mostly the real question,
+           // so the ratio stays healthy no matter what is being glued onto it.
+           !AutoTurnDetector.isChoppyFragment(text),
+           !AutoTurnDetector.looksLikeForeignSpeech(text),
            // Not if the "continuation" is the user rehearsing the answer we just gave.
            // This test existed further down and was unreachable from here: the merge runs
            // first, so speech that was plainly an echo got merged and re-answered before
