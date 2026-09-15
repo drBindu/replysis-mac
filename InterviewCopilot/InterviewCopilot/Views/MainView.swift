@@ -12,7 +12,6 @@ struct MainView: View {
     @State private var showDebugLog    = false
     @State private var showProfileMenu = false
     @State private var showCreditsPopover = false
-    @State private var showListeningModes = false
     @State private var resumeSaveTimer: Timer?
     @State private var resumeOpen = true   // false = collapsed to a compact "loaded" card
     @State private var showResumeLibrary = false
@@ -261,14 +260,8 @@ struct MainView: View {
         switch vm.listeningMode {
         case .manual:
             return vm.isListening ? "Press SPACE again to get answer" : "Press SPACE to listen"
-        case .interviewAuto:
-            // Say WHOSE voice is being heard. Mid-interview the user must be able to tell
-            // at a glance whether their own mic is open, without opening a menu.
-            return vm.isListening ? "Listening to the meeting — answers on its own"
-                                  : "Interview Auto — meeting audio only"
-        case .practiceAuto:
-            return vm.isListening ? "Listening to you — answers on its own"
-                                  : "Practice Auto — ask out loud"
+        case .auto:
+            return vm.isListening ? "Listening, answers on its own" : "Auto, answers when the question ends"
         }
     }
     var micHintColor: Color {
@@ -296,7 +289,7 @@ struct MainView: View {
             // separately-bordered floating buttons, so the header reads as a few clean
             // groups (Analyze / view toggles / status / account) rather than a row of
             // many individual chips.
-            listeningModePill
+            listeningModeSwitch
 
             watchAndCompactGroup
 
@@ -412,111 +405,40 @@ struct MainView: View {
             .padding(.horizontal, 2)
     }
 
-    // ── Listening-mode pill + popover ──────────────────────────────
-    // The single most important control in a live interview, so it is labelled rather than
-    // an anonymous icon: whether the app will answer on its own, and whether the candidate's
-    // own microphone is open, must both be readable at a glance without opening anything.
-    var listeningModePill: some View {
-        Button(action: { showListeningModes.toggle() }) {
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(vm.listeningMode.isAutomatic ? Color(hex: "#34E08A") : Color(hex: "#6b7280"))
-                    .frame(width: 7, height: 7)
-                Text(vm.listeningMode.pillLabel)
-                    .font(.system(size: 11, weight: .bold)).tracking(0.6)
+    // ── AUTO | MANUAL ──────────────────────────────────────────────
+    // WHEN the app answers, never which audio it hears; that stopped being a choice when the
+    // modes merged. Two visible segments rather than a menu: a dropdown hides the state until
+    // it is opened, and this is state a candidate has to read at a glance mid-interview.
+    var listeningModeSwitch: some View {
+        HStack(spacing: 0) {
+            modeSegment(.auto, label: "AUTO",
+                        help: "Auto. Answers as soon as the question ends.")
+            Rectangle().fill(Color.white.opacity(0.10)).frame(width: 1, height: 18)
+            modeSegment(.manual, label: "MANUAL",
+                        help: "Manual. Press Space to listen, and again to answer. Most accurate, because you decide when the question ends. In Auto the end is inferred from a pause, so an interviewer who stops mid-sentence to think can be answered half-way.")
+        }
+        .background(Capsule().fill(Color(hex: "#161b22")))
+        .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+        .clipShape(Capsule())
+    }
+
+    func modeSegment(_ mode: ListeningMode, label: String, help: String) -> some View {
+        let selected = vm.listeningMode == mode
+        let accent = mode == .auto ? Color(hex: "#34E08A") : Color(hex: "#38bdf8")
+        return Button(action: { vm.setListeningMode(mode) }) {
+            HStack(spacing: 6) {
+                Circle().fill(selected ? accent : Color.clear).frame(width: 6, height: 6)
+                Text(label)
+                    .font(.system(size: 10, weight: .bold)).tracking(0.7)
                     .lineLimit(1).fixedSize(horizontal: true, vertical: false)
-                    .foregroundColor(vm.listeningMode.isAutomatic ? Color(hex: "#B8F5D3") : Color(hex: "#cbd5e1"))
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(Color(hex: "#64748b"))
+                    .foregroundColor(selected ? .white : Color(hex: "#64748b"))
             }
             .padding(.horizontal, 11).padding(.vertical, 8)
-            .background(Capsule().fill(vm.listeningMode.isAutomatic ? Color(hex: "#102A1D") : Color(hex: "#161b22")))
-            .overlay(Capsule().stroke(
-                vm.listeningMode.isAutomatic ? Color(hex: "#2C7B50") : Color.white.opacity(0.12), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .help("How each question starts")
-        .popover(isPresented: $showListeningModes, arrowEdge: .bottom) {
-            listeningModeMenu
-        }
-    }
-
-    var listeningModeMenu: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("LISTENING MODE")
-                        .font(.system(size: 10, weight: .bold)).tracking(1.1)
-                        .foregroundColor(Color(hex: "#64748b"))
-                    Text("Choose how each question starts")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white)
-                }
-                Spacer(minLength: 12)
-                Image(systemName: "person.crop.square")
-                    .font(.system(size: 13))
-                    .foregroundColor(Color(hex: "#64748b"))
-                    .frame(width: 30, height: 30)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.05)))
-            }
-            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
-
-            Rectangle().fill(Color.white.opacity(0.07)).frame(height: 1)
-                .padding(.horizontal, 16)
-
-            VStack(spacing: 6) {
-                ForEach(ListeningMode.allCases) { mode in
-                    listeningModeRow(mode)
-                }
-            }
-            .padding(12)
-        }
-        .frame(width: 420)
-        .background(Color(hex: "#0b1220"))
-    }
-
-    func listeningModeRow(_ mode: ListeningMode) -> some View {
-        let selected = vm.listeningMode == mode
-        let accent: Color = mode == .interviewAuto ? Color(hex: "#34E08A") : Color(hex: "#38bdf8")
-        return Button(action: {
-            vm.setListeningMode(mode)
-            showListeningModes = false
-        }) {
-            HStack(spacing: 13) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 9)
-                        .fill(accent.opacity(selected ? 0.20 : 0.12))
-                        .frame(width: 40, height: 40)
-                    Image(systemName: mode.icon)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(accent)
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(mode.title)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.white)
-                    Text(mode.subtitle)
-                        .font(.system(size: 11))
-                        .foregroundColor(Color(hex: "#8b9bb0"))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 8)
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(Color(hex: "#38bdf8"))
-                }
-            }
-            .padding(.horizontal, 12).padding(.vertical, 11)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 11)
-                .fill(selected ? Color(hex: "#12283f") : Color.clear))
-            .overlay(RoundedRectangle(cornerRadius: 11)
-                .stroke(selected ? Color(hex: "#2b6ea8") : Color.clear, lineWidth: 1))
+            .background(selected ? accent.opacity(0.16) : Color.clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(help)
     }
 
     // ── WATCH SCREEN | COMPACT — one grouped pill, as on Windows ──
@@ -1333,9 +1255,9 @@ struct MainView: View {
             VStack(spacing: 0) {
                 // Hotkey bar
                 HStack {
-                    // Practice Auto listens to the USER, so calling this box INTERVIEWER
-                    // labelled their own voice as somebody else's.
-                    Text(vm.listeningMode == .practiceAuto ? "YOU" : "INTERVIEWER")
+                    // Both voices arrive here since the modes merged, so the box is not labelled
+                    // as either speaker.
+                    Text("TRANSCRIPT")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundColor(Color(hex: "#2A4A6A"))
 
@@ -1363,9 +1285,7 @@ struct MainView: View {
                                 Image(systemName: "waveform")
                                     .font(.system(size: 14, weight: .light))
                                     .foregroundColor(Color(hex: "#33506f"))
-                                Text(vm.listeningMode == .practiceAuto
-                                     ? "Ask your question out loud — it appears here"
-                                     : "Your conversation appears here as you speak")
+                                Text("The conversation appears here as it is spoken")
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundColor(Color(hex: "#33506f"))
                             }

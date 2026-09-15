@@ -45,37 +45,28 @@ struct SettingsView: View {
                             }
                         }
 
-                        // Audio Capture — the user's stealth/accuracy trade-off, tucked into
-                        // Settings instead of a main-UI button so the main window stays clean.
-                        settingsSection("AUDIO CAPTURE") {
-                            VStack(alignment: .leading, spacing: 8) {
-                                audioModeRow(
-                                    title: "System audio only",
-                                    detail: "Fully invisible — mic is never used, no orange indicator, nothing to find if checked.",
-                                    selected: !vm.micCaptureEnabled
-                                ) { vm.setMicCaptureEnabled(false) }
-                                audioModeRow(
-                                    title: "System audio + my voice",
-                                    detail: "Also transcribes what you say. macOS shows its orange mic indicator only while you're actively listening.",
-                                    selected: vm.micCaptureEnabled
-                                ) { vm.setMicCaptureEnabled(true) }
-
-                                // Interview Auto overrides this choice for as long as it is
-                                // active. Without saying so, Settings shows "+ my voice"
-                                // selected while the mic is in fact shut — a setting that
-                                // reads as on and behaves as off.
-                                if vm.micCaptureEnabled && !vm.listeningMode.usesMicrophone {
-                                    HStack(alignment: .top, spacing: 7) {
-                                        Image(systemName: "info.circle.fill")
-                                            .font(.system(size: 11))
-                                            .foregroundColor(Color(hex: "#34E08A"))
-                                        Text("Interview Auto is on, so your microphone stays closed no matter what is picked here. Your choice is remembered and applies again in the other modes.")
+                        // One mode, so one line and one switch. The microphone is a preference,
+                        // not a mode: off still works for real interviews, and practising alone
+                        // does not, which is what the switch says.
+                        settingsSection("LISTENING") {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Works for both real interviews and practice. It hears the interviewer and you, and ignores you reading an answer aloud.")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(Color(hex: "#8b9bb0"))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Toggle(isOn: Binding(get: { vm.micCaptureEnabled },
+                                                     set: { vm.setMicCaptureEnabled($0) })) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Use my microphone")
+                                            .font(.system(size: 13, weight: .medium))
+                                            .foregroundColor(.white)
+                                        Text("Needed for practice. When off, only your computer's sound is heard.")
                                             .font(.system(size: 11))
                                             .foregroundColor(Color(hex: "#8b9bb0"))
                                             .fixedSize(horizontal: false, vertical: true)
                                     }
-                                    .padding(.top, 2)
                                 }
+                                .toggleStyle(.switch)
                             }
                         }
 

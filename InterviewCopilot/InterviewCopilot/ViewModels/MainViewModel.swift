@@ -27,9 +27,8 @@ class MainViewModel {
     /// wrong there, and undermines trust in a mode whose entire promise is pressing nothing.
     var idleHintForCurrentMode: String {
         switch listeningMode {
-        case .manual:        return "Ready. Press SPACE to start listening, then SPACE again to get your answer."
-        case .interviewAuto: return "Interview Auto — let the interviewer talk. The answer appears when they finish."
-        case .practiceAuto:  return "Practice Auto — just ask out loud. The answer appears when you finish."
+        case .manual: return "Ready. Press SPACE to start listening, then SPACE again to get your answer."
+        case .auto:   return "Listening. The answer appears when the question ends."
         }
     }
     var showThinking = false
@@ -329,7 +328,9 @@ class MainViewModel {
         // loadSettings() restored the mode in init(), so the mic veto must be in force before
         // the engine's first start — otherwise a relaunch straight into Interview Auto could
         // open the mic on the very first spawn.
-        engine.micCaptureAllowed = listeningMode.usesMicrophone
+        // No mode vetoes the microphone any more. Whether it is used is the Settings switch
+        // (micCaptureEnabled), which the engine reads when it starts.
+        engine.micCaptureAllowed = true
         // THE turn signal. The recogniser has the waveform and tells us when the speaker
         // actually stopped; we no longer infer it from how the text is punctuated.
         engine.onUtteranceEnd = { [weak self] in self?.handleUtteranceEnd() }
@@ -2010,12 +2011,9 @@ class MainViewModel {
         // Detected by overlap rather than timing: a cooldown would either be too short for
         // a long answer or deafen the app to a genuine follow-up. If what was just heard is
         // largely made of words from the answer on screen, it is the answer being spoken.
-        // ...but ONLY in a mode that can actually hear us. Interview Auto closes the mic
-        // by design, so nothing the candidate says reaches the recogniser and every match
-        // here is a false positive — and a false positive is expensive, because it discards
-        // the utterance AND wipes the transcript. The realistic trigger is the interviewer
-        // restating their own question, which matches instantly: `aiAnswer` opens with the
-        // literal "Q: <question>" line, so a repeat is word-for-word our own text.
+        // Only when the microphone is actually open. With it switched off in Settings the
+        // candidate cannot be heard, so any match is a false positive, and a false positive
+        // discards the utterance and wipes the transcript.
         if micCaptureActive,
            Self.echoesOurAnswer(spoken: text, answer: Self.answerBody(aiAnswer)) {
             dlog("AUTO: our own answer being read aloud — discarding it", tag: "AUTO")
@@ -2048,9 +2046,11 @@ class MainViewModel {
         // Still skip backchannel and self-corrections — "okay", "yes sir", "sorry" are
         // complete utterances acoustically, and answering them would burn a credit and
         // put a pointless answer on screen mid-interview.
-        // Practice Auto demands a real question form — see requireInterrogative. Alone with
-        // the app, the user asks in questions and rehearses in statements, and answering the
-        // rehearsal is what turned the mode into a loop answering its own answers.
+        // No longer demands a question form. That rule belonged to Practice Auto and rejected
+        // first-person statements; with one mode the microphone is open in real interviews
+        // too, and it would also drop "I'd like to hear about a conflict you handled". The
+        // candidate reading an answer back is caught by read-back detection above. Rehearsing
+        // in entirely their own words is not, which is the known residual; Manual avoids it.
         // Drop an opening pleasantry so the question behind it survives. "Hello How are you
         // What is Java" was answered "Doing really well, thanks!" — the greeting answered,
         // the question discarded — and the owner then asked twice more. Those repeats read
@@ -2075,7 +2075,7 @@ class MainViewModel {
         }
 
         guard AutoTurnDetector.isLikelyCompleteQuestion(AutoTurnDetector.normalize(text),
-                                                        requireInterrogative: listeningMode == .practiceAuto) else {
+                                                        requireInterrogative: false) else {
             // IGNORING IS NOT ENOUGH. Rejected speech stays in the file and gets glued to the
             // next real question, and once the pile carries two full stops with no
             // interrogative in its opening words it is rejected FOREVER — every later
@@ -3125,8 +3125,8 @@ class MainViewModel {
             // switch to system-audio-only in Settings.
             micCaptureEnabled = obj["micCaptureEnabled"] as? Bool ?? true
             isWatchMode = obj["screenAnswers"] as? Bool ?? true
-            listeningMode = ListeningMode(rawValue: obj["listeningMode"] as? String ?? "")
-                ?? ((obj["autoModeEnabled"] as? Bool ?? false) ? .interviewAuto : .manual)
+            listeningMode = ListeningMode.fromStored(obj["listeningMode"] as? String)
+                ?? ((obj["autoModeEnabled"] as? Bool ?? false) ? .auto : .manual)
             // Default ON: hidden from screen sharing/recording out of the box. Settings
             // can turn it off for anyone who wants the window visible in a recording.
             stealthModeEnabled = obj["stealthModeEnabled"] as? Bool ?? true
@@ -3239,12 +3239,9 @@ class MainViewModel {
             self?.engine.writeResetFlag()
         }
 
-        // The mic is the real difference between the two automatic modes, and the engine
-        // decides mic capture at start time — so a mode change that flips it needs the
-        // engine restarted, not just a flag set.
-        if previous.usesMicrophone != mode.usesMicrophone {
-            applyMicRule(for: mode)
-        }
+        // Auto and Manual no longer restart the engine. The flip used to change which audio
+        // was open, so it had to; it cannot any more, and the restart was a visible stall on
+        // every change.
 
         guard mode.isAutomatic else {
             // Back to manual: stop listening rather than leaving the mic silently open.
@@ -3274,42 +3271,18 @@ class MainViewModel {
             }
             engine.start(smKey: key)
         }
-        aiAnswerHint = mode == .interviewAuto
-            ? "Interview Auto — let the interviewer talk. The answer appears when they finish."
-            : "Practice Auto — just ask out loud. The answer appears when you finish."
+        aiAnswerHint = idleHintForCurrentMode
         rearmAutoModeIfNeeded()
     }
 
-    /// Apply the MODE's microphone rule WITHOUT touching the user's saved Settings choice.
-    ///
-    /// This used to call setMicCaptureEnabled(), which persists. So choosing Interview Auto
-    /// permanently switched the user's "System audio + my voice" preference off, choosing
-    /// Practice Auto switched it back on, and returning to Manual left whatever the last
-    /// automatic mode had written — a setting the user picked, silently overwritten by an
-    /// unrelated control. The mode is a runtime veto; the preference is theirs.
-    private func applyMicRule(for mode: ListeningMode) {
-        engine.micCaptureAllowed = mode.usesMicrophone
-        dlog("Mic rule for \(mode.rawValue): allowed=\(mode.usesMicrophone) (saved preference micCaptureEnabled=\(micCaptureEnabled) untouched)", tag: "AUTO")
-        if mode.usesMicrophone {
-            primeMicIfPermitted()   // re-warm; see setMicCaptureEnabled for why
-        } else {
-            MicPrimer.shared.stop()        // or the warmed AVAudioEngine keeps the mic open
-        }
-        guard session.isLoggedIn, engine.isRunning else { return }
-        engine.stop()
-        engine.start(smKey: session.speechmaticsKey)
-    }
-
-    /// Nothing may be captured: the system tap could not start and this mode forbids the mic.
+    /// Nothing may be captured: the system tap could not start and the microphone is switched off.
     private func handleCaptureUnavailable() {
         isListening = false; isMuted = true
         micStatus = "NO AUDIO"; micColor = Color(white: 0.42)
         showThinking = false; isProcessing = false
-        let why = listeningMode == .interviewAuto
-            ? "Interview Auto captures meeting audio only, and macOS is not allowing that capture right now — most often because Screen Recording is turned off for this app.\n\nIt will NOT switch to your microphone instead: in a real interview that would transcribe your own voice and answer it as the interviewer's question.\n\nEnable Screen Recording in System Settings → Privacy & Security, then click NO AUDIO to retry — or switch to Manual to use your microphone deliberately."
-            : "Your audio settings are System-audio-only, and macOS is not allowing that capture right now — most often because Screen Recording is turned off for this app.\n\nEnable Screen Recording in System Settings → Privacy & Security, then click NO AUDIO to retry — or turn on \"+ my voice\" in Settings."
+        let why = "Your microphone is switched off in Settings, and macOS is not allowing system audio capture right now, most often because Screen Recording is turned off for this app.\n\nEnable Screen Recording in System Settings > Privacy & Security, then click NO AUDIO to retry. Or turn on Use my microphone in Settings."
         aiAnswer = "⚠ " + why
-        dlog("AUTO: capture unavailable in \(listeningMode.rawValue) — refused to fall back to the mic", tag: "AUTO")
+        dlog("AUTO: capture unavailable with the microphone switched off", tag: "AUTO")
         updateMicUI()
     }
 
@@ -3369,17 +3342,9 @@ class MainViewModel {
     /// Both states mean "no audio is reaching the app, tap to try again". NO AUDIO was
     /// initially invisible to the header, so the one control that recovers from it did
     /// nothing when clicked.
-    /// Warm the microphone ONLY if both the user's setting and the active mode permit it.
-    ///
-    /// MicPrimer opens a real AVAudioEngine on the mic, which lights the orange macOS
-    /// indicator. Three separate call sites started it while only consulting the saved
-    /// preference, so relaunching into Interview Auto — or granting mic permission, or
-    /// toggling "+ my voice" — turned the candidate's mic on inside the one mode whose
-    /// promise is that it stays off. One gate, so there is one place to get it right.
-    /// Is the microphone genuinely in play right now — saved preference AND active mode?
-    /// Anything that prompts for, warms, or complains about the mic must ask THIS, not the
-    /// preference alone.
-    var micCaptureActive: Bool { micCaptureEnabled && listeningMode.usesMicrophone }
+    /// Is the microphone in play right now? Only the Settings switch decides it since the
+    /// modes merged. Anything that prompts for, warms, or complains about the mic asks this.
+    var micCaptureActive: Bool { micCaptureEnabled }
 
     private func primeMicIfPermitted() {
         guard micCaptureActive,

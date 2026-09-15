@@ -1,67 +1,37 @@
 import Foundation
 
 // ══════════════════════════════════════════════════════════════════════════
-// ListeningMode — how each question starts.
+// ListeningMode — WHEN the app answers. Never which audio it hears.
 //
-// The distinction that matters is not "auto vs manual" but WHOSE VOICE is
-// being listened to. In a real interview the candidate's own mic must stay
-// shut: the orange macOS mic indicator is visible, and anything the candidate
-// says would otherwise be transcribed and answered as though the interviewer
-// had asked it. When practising alone there is no meeting audio to capture, so
-// the mic is the only possible source.
+// There used to be three modes: Manual, Interview Auto (system audio only) and Practice
+// Auto (microphone too). The two automatic modes differed in exactly one thing, which
+// audio source was open, and getting that choice wrong failed silently: a real interview
+// left on Practice listened to the candidate instead of the interviewer, nothing errored,
+// the mic ring lit, and no answer ever arrived. Three names were tried for that choice on
+// Windows and renaming a trap does not disarm it, so the choice was deleted instead.
+//
+// Both sources are now always open. That is only safe because read-back detection
+// (AutoTurnDetector.isEchoOfPrevious) stops the app answering the candidate reading an
+// answer aloud. The microphone survives as one Settings switch, micCaptureEnabled, which
+// is a preference rather than a mode. Matches Windows 178fe36.
 // ══════════════════════════════════════════════════════════════════════════
 
 enum ListeningMode: String, CaseIterable, Identifiable {
+    case auto
     case manual
-    case interviewAuto
-    case practiceAuto
 
     var id: String { rawValue }
 
     /// Does the app decide when the question ended, rather than the user pressing Space?
-    var isAutomatic: Bool { self != .manual }
+    var isAutomatic: Bool { self == .auto }
 
-    /// Should the microphone be captured in this mode?
-    ///
-    ///   Manual          mic + system  — the user drives it, and may be speaking themselves
-    ///   Interview Auto  system only   — the ONLY mode that closes the mic, on purpose: the
-    ///                                   candidate's own voice must never be transcribed and
-    ///                                   answered as though the interviewer had asked it
-    ///   Practice Auto   mic + system  — rehearsing alone, so the user's voice is the only input
-    ///
-    /// If two modes ever agree on BOTH this and isAutomatic, they are the same mode.
-    var usesMicrophone: Bool { self != .interviewAuto }
-
-    var title: String {
-        switch self {
-        case .manual:        return "Manual"
-        case .interviewAuto: return "Interview Auto"
-        case .practiceAuto:  return "Practice Auto"
-        }
-    }
-
-    var subtitle: String {
-        switch self {
-        case .manual:        return "Press Space to listen, then Space to answer"
-        case .interviewAuto: return "Meeting audio only · microphone stays off"
-        case .practiceAuto:  return "Ask with your voice · no meeting required"
-        }
-    }
-
-    /// Short label for the header pill.
-    var pillLabel: String {
-        switch self {
-        case .manual:        return "MANUAL"
-        case .interviewAuto: return "INTERVIEW AUTO"
-        case .practiceAuto:  return "PRACTICE AUTO"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .manual:        return "play.fill"
-        case .interviewAuto: return "display"
-        case .practiceAuto:  return "mic.fill"
+    /// Settings written before the merge stored "interviewAuto" or "practiceAuto". Both
+    /// were automatic, so both become Auto; anything unrecognised is left to the caller.
+    static func fromStored(_ raw: String?) -> ListeningMode? {
+        switch raw {
+        case "auto", "interviewAuto", "practiceAuto": return .auto
+        case "manual":                                return .manual
+        default:                                      return nil
         }
     }
 }
