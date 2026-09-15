@@ -138,46 +138,56 @@ struct AutoTurnDetector {
         return Double(unknown) / Double(words.count) >= 0.40
     }
 
-    /// The user reading the app's own answer back, rather than asking something.
+    /// The candidate reading the app's own answer aloud, rather than anyone asking something.
     ///
-    /// From a real session (SESSION 62): the answer to "what is your day by day activities"
-    /// was on screen, the owner read it aloud to rehearse, and the recogniser heard
+    /// With one listening mode the microphone is always open, so this is load-bearing: every
+    /// answer the candidate reads comes straight back as a transcript, and without this the
+    /// app answers its own answer, replaces the text they are half-way through reading, and
+    /// charges for it.
     ///
-    ///   "Okay. What is your day by day activities? In your office? Yeah. So , my day by
-    ///    day activities. Usually starts by checking ."
+    /// Judged by WORD ORDER, not vocabulary. Both earlier versions counted shared words, and
+    /// a follow-up question shares words with the answer it follows by nature — "What
+    /// blockers did you usually run into with the team" has five of its seven content words
+    /// in the answer on screen and was discarded as an echo. Reading aloud reproduces
+    /// sequence, even paraphrased and with recogniser errors; a follow-up borrows isolated
+    /// words. A five-word phrase match was not safe either: "How do you make sure your
+    /// changes don't break anything else" quotes a phrase straight out of the answer and is a
+    /// real question.
     ///
-    /// — the question repeated, then the opening words of the answer. Every test passed it:
-    /// real English, interrogative, complete. It was answered again, identically, at the
-    /// cost of another credit. In Practice Auto, where rehearsing out loud IS the feature,
-    /// this fires on every single answer the user reads.
+    /// Share of adjacent word pairs that also occur in the previous question + answer,
+    /// measured before choosing 0.66:
     ///
-    /// The previous turn is judged AS A WHOLE — question and answer opening together.
-    /// Separately neither is decisive: that transcript scored 0.67 against the question and
-    /// 0.53 against the answer, under any sane threshold for either, while being obviously
-    /// an echo. Someone reading back mixes the two, so splitting the evidence in half is
-    /// exactly what let it through.
+    ///     read-backs, incl. SESSION 62 and 66 verbatim     0.75 - 1.00
+    ///     follow-ups and new questions                     0.00 - 0.57
     ///
-    /// Compared against the answer's OPENING only. The whole answer is several hundred
-    /// words and would match almost any follow-up question by chance.
+    /// Filler words are dropped first, since the recogniser inserts them into read speech.
+    /// Below five words it does not judge: too few pairs for a ratio to mean anything, and
+    /// swallowing a real follow-up is worse than one repeated answer.
     static func isEchoOfPrevious(_ text: String, lastQuestion: String, lastAnswer: String) -> Bool {
-        // The same question again, at any length. This is checked FIRST and without the
-        // word-count floor below, because the floor is what let the plainest case through:
-        // "What is Java" answered, then "So what is Java" answered again, in full, seconds
-        // later. Stripped of filler the two are identical; the floor never looked, because
-        // dropping short words left only [what, java] and it abstained at two.
-        //
-        // A floor that exists to prevent misjudging short input must not also excuse the one
-        // short input we can judge with certainty: a verbatim repeat.
+        // The same question again, at any length, before the floor below. "So what is Java"
+        // straight after "What is Java" has only four words and must still be caught.
         let a = strippedForRepeat(text), b = strippedForRepeat(lastQuestion)
         if !a.isEmpty, a == b { return true }
 
-        let t = normWords(text)
-        guard t.count >= 5 else { return false }        // too short to judge safely
-        var vocab = Set(normWords(lastQuestion))
-        vocab.formUnion(normWords(lastAnswer).prefix(60))
-        guard !vocab.isEmpty else { return false }
-        let shared = t.filter { vocab.contains($0) }.count
-        return Double(shared) / Double(t.count) >= 0.75
+        let spoken = readBackTokens(text)
+        guard spoken.count >= 5 else { return false }
+        let ref = readBackTokens(lastQuestion + " " + lastAnswer)
+        guard ref.count >= 2 else { return false }
+        var refPairs = Set<String>()
+        for i in 0..<(ref.count - 1) { refPairs.insert(ref[i] + " " + ref[i + 1]) }
+        var shared = 0
+        for i in 0..<(spoken.count - 1) where refPairs.contains(spoken[i] + " " + spoken[i + 1]) {
+            shared += 1
+        }
+        return Double(shared) / Double(spoken.count - 1) >= 0.66
+    }
+
+    private static func readBackTokens(_ s: String) -> [String] {
+        let fillers: Set<String> = ["um", "uh", "yeah", "so", "like", "okay", "ok", "hmm",
+                                    "hey", "well", "actually"]
+        return s.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty && !fillers.contains($0) }
     }
 
     /// Normalised for repeat-detection: every word kept, leading filler removed. Unlike
@@ -229,11 +239,6 @@ struct AutoTurnDetector {
                                    "also", "actually", "again", "sorry"]
         while let f = w.first, filler.contains(f), w.count > 1 { w.removeFirst() }
         return w.joined(separator: " ")
-    }
-
-    private static func normWords(_ s: String) -> [String] {
-        s.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
-         .filter { $0.count > 2 }
     }
 
     /// A "continuation" that is really chopped-up room audio.

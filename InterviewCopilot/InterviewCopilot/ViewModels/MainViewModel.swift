@@ -2016,7 +2016,7 @@ class MainViewModel {
         // the utterance AND wipes the transcript. The realistic trigger is the interviewer
         // restating their own question, which matches instantly: `aiAnswer` opens with the
         // literal "Q: <question>" line, so a repeat is word-for-word our own text.
-        if listeningMode.usesMicrophone,
+        if micCaptureActive,
            Self.echoesOurAnswer(spoken: text, answer: Self.answerBody(aiAnswer)) {
             dlog("AUTO: our own answer being read aloud — discarding it", tag: "AUTO")
             // DISCARD it rather than just ignoring it. The transcript accumulates, so an
@@ -2163,49 +2163,13 @@ class MainViewModel {
         submitAutomaticTurn()
     }
 
-    /// Is the speech we just heard the user reading our own answer back?
+    /// Is the speech we just heard the candidate reading the answer on screen aloud?
     ///
-    /// Compares content words against the answer currently on screen. A genuine follow-up
-    /// question shares a few topic words with the answer; reading the answer aloud shares
-    /// most of them, so the threshold sits well above normal topical overlap.
+    /// One test, shared with the continuation merge and the question gate, so the three
+    /// paths cannot disagree about what an echo is. See AutoTurnDetector.isEchoOfPrevious
+    /// for why it measures word order rather than shared vocabulary.
     static func echoesOurAnswer(spoken: String, answer: String) -> Bool {
-        let strip: (String) -> Set<String> = { text in
-            let stop: Set<String> = ["the","a","an","and","or","but","to","of","in","on","at",
-                                     "for","with","is","are","was","were","i","you","it","that",
-                                     "this","my","your","we","they","so","as","be","have","has"]
-            return Set(text.lowercased()
-                .components(separatedBy: CharacterSet.alphanumerics.inverted)
-                .filter { $0.count > 2 && !stop.contains($0) })
-        }
-        // PHRASE MATCH FIRST. Reading a long answer aloud produces several utterances,
-        // one per natural pause, and a single sentence from the middle is often too short
-        // for a word-ratio test to catch — so the app answered a sentence of its own
-        // answer. A run of consecutive words lifted straight from the answer is far
-        // stronger evidence than any ratio: people do not accidentally reproduce five of
-        // your words in the same order.
-        let norm: (String) -> String = { t in
-            t.lowercased()
-                .components(separatedBy: CharacterSet.alphanumerics.inverted)
-                .filter { !$0.isEmpty }
-                .joined(separator: " ")
-        }
-        let spokenNorm = norm(spoken)
-        let answerNorm = norm(answer)
-        let spokenSeq = spokenNorm.components(separatedBy: " ").filter { !$0.isEmpty }
-        if spokenSeq.count >= 5, answerNorm.count > 40 {
-            for start in 0...(spokenSeq.count - 5) {
-                let phrase = spokenSeq[start..<(start + 5)].joined(separator: " ")
-                if answerNorm.contains(phrase) { return true }
-            }
-        }
-
-        let spokenWords = strip(spoken)
-        // Too short to judge — a brief utterance could legitimately repeat a few words.
-        guard spokenWords.count >= 6 else { return false }
-        let answerWords = strip(answer)
-        guard answerWords.count >= 10 else { return false }
-        let shared = spokenWords.intersection(answerWords).count
-        return Double(shared) / Double(spokenWords.count) >= 0.6
+        AutoTurnDetector.isEchoOfPrevious(spoken, lastQuestion: "", lastAnswer: answer)
     }
 
     /// Is `next` a continuation of `previous` rather than a brand-new question?
