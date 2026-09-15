@@ -1983,6 +1983,15 @@ class MainViewModel {
             return
         }
 
+        // The question again, late: the microphone hearing the speakers after the system tap
+        // already delivered it. Joining it on would re-answer a stutter. See repeatsQuestion.
+        if !lastAnsweredQuestion.isEmpty, AutoTurnDetector.repeatsQuestion(text, lastAnsweredQuestion) {
+            dlog("AUTO: the question heard a second time — stepping past: '\(text.prefix(40))'", tag: "AUTO")
+            consumedPrefix = rawNow
+            pendingSpeechStartedAt = nil
+            return
+        }
+
         // SAID BEFORE THE ANSWER WAS UP. The owner, 2026-09-15: the question is asked, and
         // while the answer is still coming the interviewer adds one more line — and the app
         // answered that line alone and threw the question away. Speech that begins before
@@ -2001,8 +2010,11 @@ class MainViewModel {
         // whole thing, replacing the partial answer.
         let sinceAnswer = Date().timeIntervalSince(lastAnsweredAt)
         let chainAge = Date().timeIntervalSince(continuationChainStartedAt)
-        let mergedCandidate = (lastAnsweredQuestion + " " + text)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Cleaned here as well as in extractLatestQuestion: a joined question is sent as it
+        // stands, and never passes through there.
+        let mergedCandidate = AutoTurnDetector.stripTrailingStalls(
+            AutoTurnDetector.collapseRepeats((lastAnsweredQuestion + " " + text)
+                .trimmingCharacters(in: .whitespacesAndNewlines)))
         let mergedWords = mergedCandidate.split(whereSeparator: { $0 == " " }).count
         if !lastAnsweredQuestion.isEmpty, sinceAnswer < continuationWindow,
            chainAge < continuationWindow,
@@ -3489,7 +3501,8 @@ class MainViewModel {
         // that reaches here already holds only the speech of one turn (the listening turn in
         // Manual, the unanswered remainder in Auto), so there is nothing old to trim. An
         // opening greeting is still dropped, and a runaway transcript is still bounded.
-        let question = AutoTurnDetector.stripLeadingPleasantries(trimmed)
+        let question = AutoTurnDetector.stripTrailingStalls(
+            AutoTurnDetector.collapseRepeats(AutoTurnDetector.stripLeadingPleasantries(trimmed)))
         let words = question.split(separator: " ")
         return words.count > 150 ? words.suffix(150).joined(separator: " ") : question
     }

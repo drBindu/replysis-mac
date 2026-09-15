@@ -260,6 +260,97 @@ struct AutoTurnDetector {
         return s.split(separator: " ").allSatisfy { fillers.contains(String($0)) }
     }
 
+    /// The same words twice in a row, kept once.
+    ///
+    /// With one mode the microphone is always open, and on a laptop without headphones it
+    /// hears the interviewer through the speakers while the system tap hears them directly.
+    /// The engine takes whichever is louder every 100ms and the two copies do not arrive
+    /// together, so the recogniser is given the question twice: measured on this Mac,
+    /// "What is Java? What is Java?" and "What is Docker? Is Docker?". Sent like that, the
+    /// model is asked a stutter. Only runs of two or more words collapse, so "very very"
+    /// stays as spoken.
+    static func collapseRepeats(_ text: String) -> String {
+        var words = text.split(whereSeparator: { $0 == " " || $0 == "\n" }).map(String.init)
+        func key(_ w: String) -> String { w.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "'" } }
+        var i = 1
+        while i < words.count {
+            var collapsed = false
+            var len = min(i, words.count - i)
+            while len >= 2 {
+                let first = (0..<len).map { key(words[i - len + $0]) }
+                let second = (0..<len).map { key(words[i + $0]) }
+                if first.contains(where: { !$0.isEmpty }), first == second {
+                    // Keep the question mark if only the second copy had one.
+                    let end = words[i + len - 1]
+                    words.removeSubrange(i..<(i + len))
+                    if let p = end.last, "?.!".contains(p),
+                       let q = words[i - 1].last, !"?.!".contains(q) { words[i - 1].append(p) }
+                    collapsed = true
+                    break
+                }
+                // The recogniser seldom hears the same words identically twice: measured,
+                // "used it in your project?" then "used it in your projects?". A long run whose
+                // only difference is one word's ending is still one sentence said twice. Keep
+                // the later copy, the fuller hearing. A different word is not an ending, so
+                // "tell me about Java, tell me about Python" is left alone.
+                if len >= 4, Self.differsByOneEnding(first, second) {
+                    words.removeSubrange((i - len)..<i)
+                    i = max(1, i - len)
+                    collapsed = true
+                    break
+                }
+                len -= 1
+            }
+            if !collapsed { i += 1 }
+        }
+        return words.joined(separator: " ")
+    }
+
+    /// Nothing but words from the question just asked, in the same order: the second copy of
+    /// it arriving late (see collapseRepeats). Heard while its answer loads, it would now be
+    /// joined on and the question re-answered with a stutter, for a second credit.
+    static func repeatsQuestion(_ text: String, _ question: String) -> Bool {
+        let t = readBackTokens(text), q = readBackTokens(question)
+        guard !t.isEmpty, t.count <= q.count else { return false }
+        for start in 0...(q.count - t.count) where Array(q[start..<(start + t.count)]) == t { return true }
+        return false
+    }
+
+    /// Exactly one position differs, and only by an ending of up to two letters on a word of
+    /// three or more: "project" / "projects", "use" / "used". Anything else is different words.
+    private static func differsByOneEnding(_ a: [String], _ b: [String]) -> Bool {
+        guard a.count == b.count else { return false }
+        var diffs = 0
+        for (x, y) in zip(a, b) where x != y {
+            let (short, long) = x.count <= y.count ? (x, y) : (y, x)
+            guard short.count >= 3, long.hasPrefix(short), long.count - short.count <= 2 else { return false }
+            diffs += 1
+        }
+        return diffs == 1
+    }
+
+    /// The candidate's stall caught on the end of the question: "What is Kubernetes? Good
+    /// question." Measured live — the stall began before the recogniser called the question
+    /// finished, so it arrived inside the same turn and was sent to the model as part of it.
+    /// Only whole trailing sentences go, and never the last one standing.
+    static func stripTrailingStalls(_ text: String) -> String {
+        var sentences: [String] = []
+        var current = ""
+        for ch in text {
+            current.append(ch)
+            if "?.!".contains(ch) {
+                let s = current.trimmingCharacters(in: .whitespaces)
+                if !s.isEmpty { sentences.append(s) }
+                current = ""
+            }
+        }
+        let tail = current.trimmingCharacters(in: .whitespaces)
+        if !tail.isEmpty { sentences.append(tail) }
+        let before = sentences.count
+        while sentences.count > 1, let last = sentences.last, isStallPhrase(last) { sentences.removeLast() }
+        return sentences.count == before ? text : sentences.joined(separator: " ")
+    }
+
     private static func strippedForRepeat(_ s: String) -> String {
         var w = s.lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
