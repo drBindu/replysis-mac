@@ -145,7 +145,7 @@ struct AnswerOverlayView: View {
                 .font(.system(size: 12, weight: .bold))
                 .foregroundColor(.white)
             if isIdle {
-                Text("· press Space to listen")
+                Text("Press Space to listen")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(.white.opacity(0.4))
             }
@@ -205,6 +205,16 @@ struct AnswerOverlayView: View {
         .padding(.horizontal, 16).padding(.vertical, 10)
     }
 
+    /// The spoken answer and the MORE TO SAY notes, split at the marker the answer path writes.
+    private var answerParts: (spoken: String, more: String) {
+        let parts = vm.aiAnswer.components(separatedBy: MainViewModel.moreToSayMarker)
+        let spoken = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+        let more = parts.count > 1
+            ? parts.dropFirst().joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
+        return (spoken, more)
+    }
+
     // ── AI answer (expands the box downward) ──
     private var answerArea: some View {
         ScrollViewReader { proxy in
@@ -216,16 +226,39 @@ struct AnswerOverlayView: View {
                             .foregroundColor(.white)
                             .shadow(color: .black.opacity(0.6), radius: 3, x: 0, y: 1)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                    } else if vm.isProcessing {
-                        // Streaming: plain text for smooth rendering (no parse/highlight cost)
-                        Text(vm.aiAnswer)
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundColor(.white)
-                            .shadow(color: .black.opacity(0.6), radius: 3, x: 0, y: 1)
-                            .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
-                        // Finished: rich renderer (styled headers + highlighted code)
-                        AnswerContentView(raw: vm.aiAnswer, fontSize: 17, codeFontSize: 12)
+                        // The words to say and the notes behind them are two blocks, not one.
+                        // As a single block the literal MORE TO SAY printed as a sentence in the
+                        // middle of the answer and the bullets looked exactly as urgent as the
+                        // words being spoken. Windows a191a81: answer 16pt, quiet label, notes
+                        // 13pt and dimmer.
+                        let parts = answerParts
+                        VStack(alignment: .leading, spacing: 10) {
+                            if vm.isProcessing {
+                                // Streaming: plain text for smooth rendering (no parse cost)
+                                Text(parts.spoken)
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .shadow(color: .black.opacity(0.6), radius: 3, x: 0, y: 1)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            } else {
+                                // Finished: rich renderer (styled headers + highlighted code)
+                                AnswerContentView(raw: parts.spoken, fontSize: 16, codeFontSize: 12)
+                            }
+                            if !parts.more.isEmpty {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("MORE TO SAY")
+                                        .font(.system(size: 10, weight: .bold)).tracking(0.8)
+                                        .foregroundColor(Color(hex: "#64748b"))
+                                    Text(parts.more)
+                                        .font(.system(size: 13))
+                                        .foregroundColor(Color(hex: "#94a3b8"))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .textSelection(.enabled)
+                                }
+                                .padding(.top, 4)
+                            }
+                        }
                     }
                 }
                 .padding(16)

@@ -268,7 +268,7 @@ struct SessionsView: View {
                                 .font(.system(size: 15, weight: .bold))
                                 .foregroundColor(.white)
                             HStack(spacing: 8) {
-                                Label(sel.formattedDate + " · " + sel.formattedTime, systemImage: "calendar")
+                                Label(sel.formattedDate + ", " + sel.formattedTime, systemImage: "calendar")
                                     .font(.system(size: 11))
                                     .foregroundColor(Color(hex: "#4b5563"))
                                 Label("\(sel.questionCount) questions", systemImage: "questionmark.circle")

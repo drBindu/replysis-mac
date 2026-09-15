@@ -1240,7 +1240,7 @@ class MainViewModel {
         capturingWholeScreen = wholeScreen
         isScreenAnalyzing = true; isProcessing = true; updateMicUI()
 
-        Task { await _doScreenCapture(label: wholeScreen ? "📸 MAIN SCREEN" : "📸 THIS SCREEN") }
+        Task { await _doScreenCapture(label: wholeScreen ? "MAIN SCREEN" : "THIS SCREEN") }
     }
 
     // Arms screen answers. Despite what this comment used to say, nothing is captured on a
@@ -1314,7 +1314,7 @@ class MainViewModel {
         let ts = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)
         let currentTranscript = transcript  // pass what interviewer said too
 
-        aiAnswer = "\(label)  [\(ts)]\n\n"
+        aiAnswer = "\(label)   \(ts)\n\n"
         showThinking = true
         var accumulated = ""; var tokenCount = 0
         let epoch = answerEpoch   // ignore stale callbacks if the answer is replaced
@@ -1334,14 +1334,14 @@ class MainViewModel {
                 accumulated += token; tokenCount += 1
                 if tokenCount == 1 { self.showThinking = false }
                 if tokenCount % 3 == 0 || token.contains("\n") {
-                    self.aiAnswer = "\(label)  [\(ts)]\n\n\(accumulated)"
+                    self.aiAnswer = "\(label)   \(ts)\n\n\(accumulated)"
                 }
             },
             onDone: { [weak self] in
                 guard let self = self, self.answerEpoch == epoch else { return }
                 // Screen answers use the ━━━-aware post-processor (keeps headers + code)
                 let final = NetworkClient.postProcessScreen(accumulated)
-                self.aiAnswer = "\(label)  [\(ts)]\n\n\(final)"
+                self.aiAnswer = "\(label)   \(ts)\n\n\(final)"
                 PromptBuilder.shared.addToHistory(question: "Analyze what is on my screen", answer: final)
                 self.appendToSessionLog(q: "[Screen Analysis]", a: final)
                 self.stopThinkingUI()
@@ -1591,7 +1591,7 @@ class MainViewModel {
         capturingWholeScreen = true
         isScreenAnalyzing = true; isProcessing = true; updateMicUI()
         transcript = question
-        Task { await _doScreenCapture(label: "📸 AFTER SCROLL") }
+        Task { await _doScreenCapture(label: "AFTER SCROLL") }
     }
 
     /// The prepared id, but ONLY if it is still fresh and still shows the same screen.
@@ -3440,6 +3440,14 @@ class MainViewModel {
         // Split at the depth marker FIRST. The two halves need opposite treatment: the
         // spoken half must have no list punctuation at all, while the depth half is a list
         // and must keep its bullets. Running one pass over both destroyed the bullets.
+        // U+2011 non-breaking hyphen, U+2012 figure dash and U+2212 minus, to a plain hyphen.
+        // The dash rewrite below only knew em and en dashes, and this model writes compound
+        // adjectives with U+2011 constantly: "statically‑typed", "key‑value", "real‑time". It
+        // renders as a hyphen that refuses to wrap, which throws the whole compound onto its
+        // own line in the narrow overlay. Windows a191a81.
+        let text = text.replacingOccurrences(of: "\u{2011}", with: "-")
+                       .replacingOccurrences(of: "\u{2012}", with: "-")
+                       .replacingOccurrences(of: "\u{2212}", with: "-")
         let parts = text.components(separatedBy: Self.moreToSayMarker)
         let spoken = cleanSpoken(parts[0])
         guard parts.count > 1 else { return spoken }

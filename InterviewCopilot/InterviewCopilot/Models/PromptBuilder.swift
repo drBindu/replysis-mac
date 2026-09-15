@@ -906,6 +906,13 @@ class PromptBuilder {
         }
     }
 
+    /// "What is X", "what are X", "define X", but not "what is your ...". Same pattern as
+    /// Windows IsSimpleDefinitionQuestion, so both apps give this wording to the same questions.
+    static func isSimpleDefinitionQuestion(_ question: String) -> Bool {
+        question.range(of: #"(?:^|[?.!]\s*)(?:what is|what are|define)\s+(?!your\b|you\b)"#,
+                       options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
     private func baseFormatReminder(qType: QuestionType, question: String, isDrillDown: Bool) -> String {
         if hasLockedConflict(for: question) {
             return "1-2 short sentences. NO bullets. Politely correct, restate your locked answer. Example: 'Actually I said Python earlier, that's still my answer.' Don't justify."
@@ -934,6 +941,30 @@ class PromptBuilder {
         case .intro:
             return "3-4 SHORT scannable paragraphs separated by blank lines. NO bullet symbols. P1: Who you are now + current role. P2: One specific win — cite a metric ONLY if your resume actually contains one, otherwise describe the result qualitatively and name the tools used. P3: Previous role briefly. P4: Why this company (something specific). Mix sentence length. Use 'yeah', 'so', 'honestly'."
         case .technical:
+            // A plain definition question gets the wording Windows MEASURED (a191a81), copied
+            // byte for byte. The old shape asked for "one-sentence definition in plain words",
+            // which the model reads as "Java is a statically-typed programming language that
+            // runs on the JVM" — the answer the owner called robotic and hard to say aloud.
+            // Against the live model the Windows text opened "X is a ..." in 0 of 10 definition
+            // questions, where the shipped text did in 8 of 10. Two details carried it: naming
+            // the banned opening mechanically, including that a leading A or An does not exempt
+            // it, and asking for an action as the main verb so the model has somewhere to go.
+            // A slightly reworded draft scored far worse, so do not paraphrase this string.
+            if Self.isSimpleDefinitionQuestion(question) {
+                return "3 concise spoken sentences, the way you would answer a colleague out loud. " +
+                       "Do not open by classifying the term. An opening of the form TERM is a NOUN, " +
+                       "TERM is an NOUN or TERM is the NOUN is the single clearest sign an answer is " +
+                       "being read off a screen, and a leading A or An does not exempt it. Open with " +
+                       "what it does or what you use it for, so the main verb is an action rather " +
+                       "than is. " +
+                       "Yes: A hash map gets you a value back in roughly constant time by hashing the " +
+                       "key to a bucket. " +
+                       "Yes: Docker packages an app with everything it needs so it runs the same on " +
+                       "my laptop and in prod. " +
+                       "No: A hash map is a key-value data structure. " +
+                       "Use contractions the way you would speaking. One short clause of your own use " +
+                       "is good. No project story, no employer list, no history lesson."
+            }
             return "3-4 SHORT paragraphs separated by blank lines. NO bullet symbols. P1: One-sentence definition in plain words. P2: REAL example from YOUR work. P3: Something tricky and how you handled it. P4 (optional): Result or lesson."
         case .behavioral:
             return "3-5 SHORT paragraphs separated by blank lines. NO bullet symbols. NOT textbook STAR. P1: Scene casually. P2: Concrete problem. P3: What YOU personally did. P4: How it turned out — use a real number ONLY if your resume has one, otherwise describe the result qualitatively. NEVER invent stats."

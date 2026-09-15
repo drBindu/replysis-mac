@@ -605,7 +605,7 @@ struct MainView: View {
                 } else if !vm.session.isUnlimited {
                     // Paid but metered: the useful action is more credits, not a new plan.
                     menuRow(icon: "creditcard.fill", title: "Top up credits",
-                            subtitle: "\(vm.session.plan.capitalized) plan · \(vm.session.credits) left",
+                            subtitle: "\(vm.session.plan.capitalized) plan, \(vm.session.credits) left",
                             accent: Color(hex: "#34E08A")) {
                         showProfileMenu = false
                         NSWorkspace.shared.open(URL(string: "https://replysis.com/pricing")!)
@@ -1158,7 +1158,7 @@ struct MainView: View {
                             Text(vm.thinkingText)
                                 .font(.system(size: 12).italic())
                                 .foregroundColor(Color(hex: "#38BDF8"))
-                            Text("· F8 all screens  ·  F9 primary")
+                            Text("F8 all screens, F9 primary")
                                 .font(.system(size: 11))
                                 .foregroundColor(Color(hex: "#334466"))
                         }
