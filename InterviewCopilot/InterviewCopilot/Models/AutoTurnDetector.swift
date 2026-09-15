@@ -230,6 +230,36 @@ struct AutoTurnDetector {
         return out.isEmpty ? text : out
     }
 
+    /// The candidate filling the silence while the answer loads — "good question", "let me
+    /// think", "okay" — and nothing else.
+    ///
+    /// The microphone is open in the one mode, so this is heard, and it arrives in exactly
+    /// the window where speech is now joined onto the question being answered. Joined, it
+    /// re-asks the question with "let me think" glued on and spends a credit; judged on its
+    /// own, "let me think about that" is a finished sentence and replaced the answer with a
+    /// reply to itself. It is neither. Step past it.
+    static func isStallPhrase(_ text: String) -> Bool {
+        var s = " " + text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted.subtracting(CharacterSet(charactersIn: "'")))
+            .filter { !$0.isEmpty }
+            .joined(separator: " ") + " "
+        guard s.split(separator: " ").count <= 12 else { return false }
+        // Longest first, so "that's a good question" is removed before "good question".
+        let stalls = ["that's a really good question", "that's a great question", "that's a good question",
+                      "thats a great question", "thats a good question", "really good question",
+                      "great question", "good question", "interesting question",
+                      "let me think about that", "let me think about it", "let me think",
+                      "give me a second", "give me a moment", "give me a sec", "just a second",
+                      "just a moment", "one second", "one sec", "one moment", "hold on",
+                      "let me see", "let me recall", "thank you", "got it", "i see", "sure"]
+        // Until nothing changes: one pass leaves the second of "sure sure" behind.
+        for p in stalls { while s.contains(" \(p) ") { s = s.replacingOccurrences(of: " \(p) ", with: " ") } }
+        let fillers: Set<String> = ["um", "uh", "hmm", "mhm", "okay", "ok", "yeah", "yes", "yep",
+                                    "so", "well", "right", "alright", "sure", "thanks", "and",
+                                    "oh", "ah", "like", "that", "that's", "it", "is", "a"]
+        return s.split(separator: " ").allSatisfy { fillers.contains(String($0)) }
+    }
+
     private static func strippedForRepeat(_ s: String) -> String {
         var w = s.lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
