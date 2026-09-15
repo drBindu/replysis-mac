@@ -33,18 +33,6 @@ struct SettingsView: View {
                 ScrollView {
                     VStack(spacing: 20) {
 
-                        // AI Model
-                        settingsSection("AI MODEL") {
-                            VStack(spacing: 8) {
-                                modelRow("Groq (Llama — Fast & Free)", selected: vm.useGroq) {
-                                    vm.useGroq = true; vm.saveSettings()
-                                }
-                                modelRow("OpenAI (GPT-4o — More Accurate)", selected: !vm.useGroq) {
-                                    vm.useGroq = false; vm.saveSettings()
-                                }
-                            }
-                        }
-
                         // One mode, so one line and one switch. The microphone is a preference,
                         // not a mode: off still works for real interviews, and practising alone
                         // does not, which is what the switch says.

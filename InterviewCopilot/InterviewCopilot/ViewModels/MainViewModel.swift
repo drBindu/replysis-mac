@@ -143,7 +143,12 @@ class MainViewModel {
     /// turn-ends on its own.
     var autoModeEnabled: Bool { listeningMode.isAutomatic }
     private var autoDetector = AutoTurnDetector()
-    var useGroq = true
+    /// Sent as "provider" on every answer and screen request. The backend chooses the model
+    /// itself (Cerebras for answers, Gemini for vision) and ignores this label, but it still
+    /// validates it against an allow-list, so it must stay a string the backend accepts. It
+    /// used to follow a Settings picker offering "OpenAI (GPT-4o)", an account inactive since
+    /// 2026-08-22: a choice nobody could actually get. MAC_CATCHUP, 2026-09-12.
+    static let providerLabel = "groq"
 
     // MARK: - Permission onboarding
     // The app is NEVER blocked on permissions. Microphone is a one-tap popup (all that's
@@ -1082,7 +1087,7 @@ class MainViewModel {
                                              qTypeHint: qType, drillDownHint: isDrill,
                                              jobContext: jobContext, concise: conciseAnswers,
                                              hints: liveHints, screening: screeningContext)
-        let provider = useGroq ? "groq" : "openai"
+        let provider = Self.providerLabel
         let lowBanner = (!session.isUnlimited && session.credits > 0 && session.credits < 5)
             ? "⚠ Only \(session.credits) credit(s) remaining.\n\n" : ""
 
@@ -1310,7 +1315,7 @@ class MainViewModel {
         dlog("Screen captured: \(imageData.count) bytes", tag: "SCREEN")
         let base64 = imageData.base64EncodedString()
         let resumeFacts = ResumeParser.extractFacts(resumeText)
-        let provider = useGroq ? "groq" : "openai"
+        let provider = Self.providerLabel
         let ts = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)
         let currentTranscript = transcript  // pass what interviewer said too
 
@@ -2773,7 +2778,7 @@ class MainViewModel {
                 let fmt = DateFormatter()
                 fmt.dateFormat = "yyyy-MM-dd HH:mm"
                 let resumeName = ResumeParser.extractName(resumeText)
-                let header = "SESSION \(sessionNumber) | \(useGroq ? "groq" : "openai") | \(fmt.string(from: Date())) | RESUME: \(resumeName)\n\n"
+                let header = "SESSION \(sessionNumber) | ai | \(fmt.string(from: Date())) | RESUME: \(resumeName)\n\n"
                 try (header + entry).write(to: path, atomically: true, encoding: .utf8)
                 // Interview transcripts hold the questions asked plus every AI answer built
                 // from the resume — lock to owner-only, same as the resume itself.
@@ -3116,7 +3121,6 @@ class MainViewModel {
         let path = engine.appDataFolder.appendingPathComponent("settings.json")
         if let data = try? Data(contentsOf: path),
            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            useGroq = obj["useGroq"] as? Bool ?? true
             mainWindowOpacity = obj["mainOpacity"] as? Double ?? 0.40
             overlayOpacity = obj["overlayOpacity"] as? Double ?? 0.90
             conciseAnswers = obj["concise"] as? Bool ?? false
@@ -3148,7 +3152,7 @@ class MainViewModel {
 
     func saveSettings() {
         let path = engine.appDataFolder.appendingPathComponent("settings.json")
-        let obj: [String: Any] = ["useGroq": useGroq, "mainOpacity": mainWindowOpacity,
+        let obj: [String: Any] = ["mainOpacity": mainWindowOpacity,
                                   "overlayOpacity": overlayOpacity, "concise": conciseAnswers,
                                   "micCaptureEnabled": micCaptureEnabled,
                                   "screenAnswers": isWatchMode,

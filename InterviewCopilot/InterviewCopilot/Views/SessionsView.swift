@@ -16,14 +16,8 @@ struct SessionEntry: Identifiable, Equatable {
         // Cloud sessions come from the website's real-interview page, which has no
         // local "groq/openai" header line to parse — badge them distinctly instead.
         if isCloud { return "Web" }
-        // Session headers are written by appendToSessionLog as "groq" or "openai" —
-        // those two must be recognized here or every session badge just says "AI".
-        if header.lowercased().contains("groq") { return "Groq" }
-        if header.lowercased().contains("gpt-4o") || header.lowercased().contains("openai") { return "GPT-4o" }
-        if header.lowercased().contains("gpt-4") { return "GPT-4" }
-        if header.lowercased().contains("gpt") { return "GPT" }
-        if header.lowercased().contains("claude") { return "Claude" }
-        if header.lowercased().contains("gemini") { return "Gemini" }
+        // No provider names. Sessions used to be badged Groq, GPT-4o or Gemini from the header
+        // line, and none of those is what answers now (MAC_CATCHUP, provider truth).
         return "AI"
     }
     var formattedDate: String { Self.dateFmt.string(from: date) }

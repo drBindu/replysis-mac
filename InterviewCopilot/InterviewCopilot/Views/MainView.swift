@@ -576,7 +576,7 @@ struct MainView: View {
             // Menu items
             VStack(spacing: 0) {
                 menuRow(icon: "gearshape.fill", title: "Settings",
-                        subtitle: "AI model · audio · appearance") {
+                        subtitle: "Listening, screen, appearance") {
                     showProfileMenu = false; showSettings = true
                 }
                 menuRow(icon: "clock.arrow.circlepath", title: "Past Sessions",
