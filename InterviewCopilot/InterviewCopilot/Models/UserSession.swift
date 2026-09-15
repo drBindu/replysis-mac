@@ -61,6 +61,12 @@ class UserSession {
     var plan = "free"
     var isUnlimited = false
     var speechmaticsKey = ""
+    /// Deepgram's short-lived token, minted by /stt/key alongside the Speechmatics one when the
+    /// server has Deepgram enabled. Empty means the engine runs Speechmatics exactly as before.
+    /// Lives and dies with speechmaticsKey: cached with it, cleared everywhere it is cleared,
+    /// because a token that outlives its sibling is how a correct server-side change ends up
+    /// looking like it did nothing.
+    var deepgramToken = ""
 
     // True for the free-trial-without-sign-in path (see startGuestSession()) — isLoggedIn
     // is also true in this state so every existing `session.isLoggedIn` gate throughout
@@ -182,6 +188,7 @@ class UserSession {
         email = ""; name = ""; idToken = ""; refreshToken = ""
         userId = ""; credits = 0; plan = "free"; isUnlimited = false
         speechmaticsKey = ""
+        deepgramToken = ""
         Keychain.delete(account: "session")
         Keychain.delete(account: Self.speechKeyAccount)   // never outlive the session it belongs to
         // The debug log holds what was said in this account's interviews. Signing out must
@@ -273,6 +280,13 @@ class UserSession {
         /// Which account minted it. Handing one user's token to another is both a leak and
         /// a miserable thing to debug, and switching accounts is exactly when it would happen.
         let owner: String
+        /// nil  = written by a build that predated Deepgram: stale, refetch once.
+        /// ""   = the server was asked and had no Deepgram token: valid, do NOT refetch.
+        /// The distinction matters because a pre-Deepgram entry stays valid for up to an hour,
+        /// so an upgrade would otherwise run Speechmatics-only for that hour with nothing to
+        /// say why — while refetching on every empty value would spend the twelve-per-hour
+        /// mint allowance on a server that simply has Deepgram switched off.
+        let deepgramToken: String?
     }
 
     private var speechKeyOwner: String {
@@ -290,6 +304,11 @@ class UserSession {
             dlog("SM key cache: expired, or close enough — fetching a fresh one", tag: "AUTH")
             discardCachedSpeechKey(); return nil
         }
+        guard let dgCached = cached.deepgramToken else {
+            dlog("SM key cache: written before Deepgram support — fetching a fresh pair once", tag: "AUTH")
+            discardCachedSpeechKey(); return nil
+        }
+        deepgramToken = dgCached
         return cached.key
     }
 
@@ -338,7 +357,8 @@ class UserSession {
     private func cacheSpeechKey(_ key: String, ttl: TimeInterval) {
         let cached = CachedSpeechKey(key: key,
                                      expiresAt: Date().addingTimeInterval(ttl),
-                                     owner: speechKeyOwner)
+                                     owner: speechKeyOwner,
+                                     deepgramToken: deepgramToken)
         guard let data = try? JSONEncoder().encode(cached) else { return }
         Keychain.save(data, account: Self.speechKeyAccount)
         dlog("SM key cached — reusable for \(Int(ttl / 60)) minutes", tag: "AUTH")
@@ -351,6 +371,7 @@ class UserSession {
     /// nothing on screen explains why transcription stopped.
     func discardCachedSpeechKey() {
         speechmaticsKey = ""
+        deepgramToken = ""
         Keychain.delete(account: Self.speechKeyAccount)
     }
 
@@ -387,6 +408,14 @@ class UserSession {
                let key = obj["key"] as? String, !key.isEmpty {
                 self.speechmaticsKey = key
                 self.logSpeechKeyLimits(key)
+                // Absent when the server has no DEEPGRAM_API_KEY, or Deepgram refused the
+                // grant — in both cases the response is otherwise identical and the engine
+                // runs Speechmatics. Length only, never the token.
+                self.deepgramToken = (obj["deepgramToken"] as? String) ?? ""
+                dlog(self.deepgramToken.isEmpty
+                     ? "STT key: no Deepgram token in the response — Speechmatics only"
+                     : "STT key: Deepgram token received (length \(self.deepgramToken.count))",
+                     tag: "AUTH")
                 // The server says how long it is good for; Windows clamps the same way.
                 let ttl = TimeInterval(min(max(obj["expiresIn"] as? Int ?? 3600, 60), 86_400))
                 self.cacheSpeechKey(key, ttl: ttl)

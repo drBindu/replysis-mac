@@ -328,6 +328,17 @@ class SpeechmaticsEngine {
         var env = ProcessInfo.processInfo.environment
         env["SPEECHMATICS_API_KEY"] = smKey
         env["APP_DATA_DIR"] = appDataFolder.path
+        // Deepgram first, Speechmatics as fallback, decided inside the engine: with DG_TOKEN
+        // set and the default language (en) it runs Deepgram, and hands over to Speechmatics
+        // in the same process on a 401/402/403/429 handshake or two failed connections. No
+        // token means exactly the old behaviour, so this is safe on any backend.
+        let dg = UserSession.shared.deepgramToken
+        if !dg.isEmpty {
+            env["DG_TOKEN"] = dg
+            dlog("SM: Deepgram token passed to the engine — Deepgram first, Speechmatics fallback", tag: "SM")
+        } else {
+            env.removeValue(forKey: "DG_TOKEN")   // never inherit one from the launching shell
+        }
         // Point OpenSSL at the CA bundle we SHIP, instead of whatever path happened to be
         // compiled into the Python that froze the engine.
         //
