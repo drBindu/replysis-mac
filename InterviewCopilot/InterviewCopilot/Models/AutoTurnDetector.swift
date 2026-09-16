@@ -280,7 +280,16 @@ struct AutoTurnDetector {
         let stallWords: Set<String> = ["let", "me", "think", "thinking", "second", "sec", "moment",
                                        "see", "question", "good", "great", "really", "give", "just",
                                        "hold", "on", "recall", "one", "interesting", "about"]
-        return left.count <= 3 && left.allSatisfy { fillers.contains($0) || stallWords.contains($0) }
+        // Words that carry no meaning of their own and only join the stall together. Measured:
+        // "Give me a second to think about it." was NOT read as a stall — it opens with "give",
+        // the way an interviewer says "Give me an example" — so it was joined onto the question
+        // and the whole thing re-answered. Every word has to be stall vocabulary, and at least
+        // one of them a real stall word, so "Give me an example." (example) is untouched.
+        let joiners: Set<String> = ["to", "for", "it", "that", "this", "the", "a", "an", "of", "my"]
+        guard left.count <= 8, left.contains(where: { stallWords.contains($0) }) else {
+            return left.count <= 3 && left.allSatisfy { fillers.contains($0) || stallWords.contains($0) }
+        }
+        return left.allSatisfy { fillers.contains($0) || stallWords.contains($0) || joiners.contains($0) }
     }
 
     /// The same words twice in a row, kept once.
@@ -404,7 +413,12 @@ struct AutoTurnDetector {
     /// An interviewer talks about the listener ("you", "your") or asks outright, and the
     /// first-person ways of asking ("I'd like to hear about...", "I want to know...") are
     /// named so they are never mistaken for the candidate.
-    static func soundsLikeCandidate(_ text: String) -> Bool {
+    /// - Parameter includePlural: also count "we", "our", "us" as the candidate. Only true in
+    ///   the window after an answer. Before a question is asked, "we" is the interviewer
+    ///   describing the company ("We are building a payments platform"); after the answer is
+    ///   up, "we had a database failure at night" is the candidate answering. The same words,
+    ///   and only WHEN they are said tells them apart.
+    static func soundsLikeCandidate(_ text: String, includePlural: Bool = false) -> Bool {
         let lower = text.lowercased()
         let words = lower
             .components(separatedBy: CharacterSet.alphanumerics.inverted.subtracting(CharacterSet(charactersIn: "'")))
@@ -421,8 +435,9 @@ struct AutoTurnDetector {
         // Singular only. "We" and "our" are how an interviewer describes the company — measured:
         // "We are building a payments platform that handles 10,000 transactions per second" was
         // stepped past as the candidate, and only the question after it was answered.
-        let speaker: Set<String> = ["i", "i'm", "im", "i've", "ive", "i'd", "id", "i'll", "my", "me",
+        var speaker: Set<String> = ["i", "i'm", "im", "i've", "ive", "i'd", "id", "i'll", "my", "me",
                                     "mine", "myself"]
+        if includePlural { speaker.formUnion(["we", "we're", "we've", "our", "us"]) }
         let fillers: Set<String> = ["so", "okay", "ok", "and", "um", "uh", "well", "yeah", "yes", "hmm",
                                     "like", "actually", "basically", "sure", "right", "alright"]
         var rest = words[...]
@@ -442,10 +457,11 @@ struct AutoTurnDetector {
 
     /// Trailing sentences that are the candidate — a stall, or the start of their answer —
     /// taken off the end. Never the last one standing.
-    static func withoutCandidateTail(_ text: String) -> String {
+    static func withoutCandidateTail(_ text: String, includePlural: Bool = false) -> String {
         var parts = sentences(text)
         let before = parts.count
-        while parts.count > 1, let last = parts.last, isStallPhrase(last) || soundsLikeCandidate(last) {
+        while parts.count > 1, let last = parts.last,
+              isStallPhrase(last) || soundsLikeCandidate(last, includePlural: includePlural) {
             parts.removeLast()
         }
         return parts.count == before ? text : parts.joined(separator: " ")

@@ -2060,15 +2060,20 @@ class MainViewModel {
         // The candidate talking — starting their answer, or talking about themselves — is not a
         // question, and not more of one. See AutoTurnDetector.soundsLikeCandidate. Only with the
         // microphone on: without it the candidate cannot be heard at all.
+        // Known here rather than below, because who is talking depends on WHEN: see
+        // soundsLikeCandidate(includePlural:).
+        let saidBeforeAnswer = pendingSpeechStartedAt != nil && pendingSpeechBeganBeforeAnswer
+
         if micCaptureActive {
             // Only the candidate's OWN words go. Measured: "With an example from Spring. Sure.
             // Let me think." was dropped whole — the stall on the end made the lot read as the
             // candidate — and the interviewer's addition to the question went with it.
-            let front = AutoTurnDetector.withoutCandidateTail(text)
-            if front != text, !front.isEmpty, !AutoTurnDetector.soundsLikeCandidate(front) {
+            let front = AutoTurnDetector.withoutCandidateTail(text, includePlural: saidBeforeAnswer)
+            if front != text, !front.isEmpty,
+               !AutoTurnDetector.soundsLikeCandidate(front, includePlural: saidBeforeAnswer) {
                 dlog("AUTO: dropped the candidate's words off the end — keeping: '\(front.prefix(50))'", tag: "AUTO")
                 text = front
-            } else if AutoTurnDetector.soundsLikeCandidate(text) {
+            } else if AutoTurnDetector.soundsLikeCandidate(text, includePlural: saidBeforeAnswer) {
                 dlog("AUTO: the candidate talking, not a question — stepping past: '\(text.prefix(50))'", tag: "AUTO")
                 consumedPrefix = rawNow
                 pendingSpeechStartedAt = nil
@@ -2076,15 +2081,13 @@ class MainViewModel {
             }
         }
 
-        // SAID BEFORE THE ANSWER WAS UP. The owner, 2026-09-15: the question is asked, and
-        // while the answer is still coming the interviewer adds one more line — and the app
-        // answered that line alone and threw the question away. Speech that begins before
-        // anyone could have read the answer cannot be a reply to it, so it is the same
+        // SAID BEFORE THE ANSWER WAS UP (declared above). The owner, 2026-09-15: the question
+        // is asked, and while the answer is still coming the interviewer adds one more line —
+        // and the app answered that line alone and threw the question away. Speech that begins
+        // before anyone could have read the answer cannot be a reply to it, so it is the same
         // question continuing, whatever it looks like on its own. The joining-word test below
         // is for speech heard AFTER an answer, where a new question is the likelier reading;
         // "Where have you used it?" fails it, and was answered as if nothing came before.
-        let saidBeforeAnswer = pendingSpeechStartedAt != nil && pendingSpeechBeganBeforeAnswer
-
         // CONTINUATION: silence alone cannot tell "finished" from "thinking mid-sentence".
         // A slow speaker, or one on a laggy connection, says "what's the difference between
         // W2 and C2C" ... pause ... "and full time" — and a pure silence trigger answers
@@ -2096,11 +2099,15 @@ class MainViewModel {
         let chainAge = Date().timeIntervalSince(continuationChainStartedAt)
         // Cleaned here as well as in extractLatestQuestion: a joined question is sent as it
         // stands, and never passes through there.
+        // Measured: "Tell me about a time you handled a production outage." was re-answered as
+        // "... outage. last" — one word off the front of the candidate's own sentence.
+        let addition = AutoTurnDetector.withoutCandidateTail(text, includePlural: saidBeforeAnswer)
+        let additionWords = addition.split(whereSeparator: { $0 == " " }).count
         let mergedCandidate = AutoTurnDetector.stripTrailingStalls(
-            AutoTurnDetector.collapseRepeats((lastAnsweredQuestion + " " + AutoTurnDetector.withoutCandidateTail(text))
+            AutoTurnDetector.collapseRepeats((lastAnsweredQuestion + " " + addition)
                 .trimmingCharacters(in: .whitespacesAndNewlines)))
         let mergedWords = mergedCandidate.split(whereSeparator: { $0 == " " }).count
-        if !lastAnsweredQuestion.isEmpty, sinceAnswer < continuationWindow,
+        if !lastAnsweredQuestion.isEmpty, additionWords >= 2, sinceAnswer < continuationWindow,
            chainAge < continuationWindow,
            continuationCount < maxContinuations,
            mergedWords <= (saidBeforeAnswer ? maxGapMergeWords : maxContinuationWords),
@@ -2472,8 +2479,20 @@ class MainViewModel {
             // Brief drain: recognition runs behind live speech, so the tail is still
             // arriving at the moment we decided the turn was over.
             try? await Task.sleep(nanoseconds: 150_000_000)
-            self?.autoTurnSubmitting = false
             guard let self, self.autoModeEnabled else { return }
+            // STILL MID-SENTENCE? Then the rest is on its way. Recognition runs behind live
+            // speech, and one fixed 150ms was not always enough: measured, the model was asked
+            // "What is the difference between an abstract class and an" — the last three words
+            // of the question still in flight. Up to 450ms more, only while the words plainly
+            // cannot end a sentence, so a question that has finished waits for nothing.
+            var extraWaits = 0
+            while extraWaits < 3,
+                  AutoTurnDetector.classifyTurnEnding(
+                      self.remainingSpeech(self.engine.readLatestTxt())) == .unfinished {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                extraWaits += 1
+            }
+            self.autoTurnSubmitting = false
             // Everything heard up to this instant is what we are about to answer. Record it
             // BEFORE answering, so whatever arrives next can be told apart from it without
             // clearing the file out from under a speaker who is still mid-sentence.
