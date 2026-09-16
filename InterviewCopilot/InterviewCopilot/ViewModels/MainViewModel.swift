@@ -1754,7 +1754,8 @@ class MainViewModel {
             if pendingSpeechStartedAt == nil, !lastAnsweredQuestion.isEmpty,
                !remainingSpeech(raw).isEmpty {
                 pendingSpeechStartedAt = Date()
-                pendingSpeechBeganBeforeAnswer = isProcessing || showThinking
+                pendingSpeechBeganWhileLoading = isProcessing || showThinking
+                pendingSpeechBeganBeforeAnswer = pendingSpeechBeganWhileLoading
                     || Date().timeIntervalSince(answerSettledAt) < answerReadGrace
             }
             // THE QUESTION IS OVER AND THE CANDIDATE HAS STARTED TALKING. The end of speech is
@@ -1942,6 +1943,17 @@ class MainViewModel {
     /// loading at that moment. Cleared whenever that speech is answered or stepped past.
     private var pendingSpeechStartedAt: Date?
     private var pendingSpeechBeganBeforeAnswer = false
+    /// Stricter than the flag above: the answer was still LOADING when these words began, not
+    /// merely seconds old. Nobody can read aloud an answer that is not on screen yet, so
+    /// read-back detection must not be applied to this speech — it is the interviewer finishing
+    /// their question. Measured: "an abstract class and an interface?" was thrown away as our
+    /// own answer being read back, because the answer to the half-question it followed was
+    /// about abstract classes and interfaces.
+    private var pendingSpeechBeganWhileLoading = false
+    /// True only while the speech that began during the load is still the unanswered speech.
+    private var speechBeganWhileLoading: Bool {
+        pendingSpeechStartedAt != nil && pendingSpeechBeganWhileLoading
+    }
     /// Between deciding a turn is over and taking the snapshot of what to answer (the 150ms
     /// drain). Two triggers now exist — the recogniser's end of speech and a question
     /// followed by the candidate talking — and both firing inside that window would answer
@@ -2125,9 +2137,10 @@ class MainViewModel {
            // then that plus "Kick kicks in", each answered in full.
            //
            // A check placed after the branch that bypasses it is not a check.
-           !AutoTurnDetector.isEchoOfPrevious(text,
-                                              lastQuestion: lastAnsweredQuestion,
-                                              lastAnswer: lastAnsweredAnswer),
+           speechBeganWhileLoading
+            || !AutoTurnDetector.isEchoOfPrevious(text,
+                                                  lastQuestion: lastAnsweredQuestion,
+                                                  lastAnswer: lastAnsweredAnswer),
            saidBeforeAnswer
             || (sinceAnswer < tailWindow
                 && Self.looksLikeContinuation(previous: lastAnsweredQuestion, next: text)) {
@@ -2179,7 +2192,7 @@ class MainViewModel {
         // Only when the microphone is actually open. With it switched off in Settings the
         // candidate cannot be heard, so any match is a false positive, and a false positive
         // discards the utterance and wipes the transcript.
-        if micCaptureActive,
+        if micCaptureActive, !speechBeganWhileLoading,
            Self.echoesOurAnswer(spoken: text, answer: Self.answerBody(aiAnswer)) {
             dlog("AUTO: our own answer being read aloud — discarding it", tag: "AUTO")
             // DISCARD it rather than just ignoring it. The transcript accumulates, so an
@@ -2230,7 +2243,8 @@ class MainViewModel {
         // Reading the app's own answer back is not a new question. See isEchoOfPrevious —
         // from a real session, where the owner rehearsed aloud and was answered again,
         // identically, at the cost of another credit.
-        if AutoTurnDetector.isEchoOfPrevious(text,
+        if !speechBeganWhileLoading,
+           AutoTurnDetector.isEchoOfPrevious(text,
                                              lastQuestion: lastAnsweredQuestion,
                                              lastAnswer: lastAnsweredAnswer) {
             dlog("AUTO: that is our own previous turn being read back — not answering again",
