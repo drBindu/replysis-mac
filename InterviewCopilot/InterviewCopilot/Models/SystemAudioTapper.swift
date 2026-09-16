@@ -47,7 +47,10 @@ nonisolated final class SystemAudioTapper {
         func push(_ d: Data) {
             os_unfair_lock_lock(&lock)
             buf.append(d)
-            if buf.count > capBytes { buf.removeFirst((buf.count - capBytes) & ~1) }
+            // Data.removeFirst only moves the start of the range: the allocation behind it
+            // keeps every byte ever appended. Rebuilt from the slice so the memory is actually
+            // handed back — see the writer loop for what that cost when it was missed.
+            if buf.count > capBytes { buf = Data(buf.suffix(capBytes & ~1)) }
             os_unfair_lock_unlock(&lock)
         }
         func drain() -> Data { os_unfair_lock_lock(&lock); let d = buf; buf = Data(); os_unfair_lock_unlock(&lock); return d }
@@ -288,6 +291,7 @@ nonisolated final class SystemAudioTapper {
                     if held.count > Self.maxHeldBytes {
                         let drop = (held.count - Self.maxHeldBytes) & ~1
                         held.removeFirst(drop)
+                        held = Data(held)          // hand the dropped bytes back, not just the range
                         droppedThisSec += drop
                     }
                     var failed = false
@@ -299,6 +303,15 @@ nonisolated final class SystemAudioTapper {
                         let w = held.withUnsafeBytes { raw in write(fd, raw.baseAddress!, n) }
                         if w > 0 {
                             held.removeFirst(w)
+                            // COMPACT, every time. `removeFirst` leaves the backing allocation
+                            // exactly as large as everything ever appended to it, and the cap
+                            // above counts the bytes still in hand, not the bytes still owned —
+                            // so the cap never fired and the buffer grew forever. Measured at
+                            // roughly 2.5 MB a minute, about 150 MB an hour of an interview,
+                            // with the allocation COUNT flat the whole time, which is why it
+                            // looked like ordinary memory use rather than a leak. A few
+                            // kilobytes copied per 10ms write costs nothing.
+                            held = held.isEmpty ? Data() : Data(held)
                             bytesThisSec += w
                         } else {
                             if errno != EAGAIN { failed = true }
