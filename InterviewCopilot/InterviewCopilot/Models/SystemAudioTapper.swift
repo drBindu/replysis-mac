@@ -40,7 +40,16 @@ nonisolated final class SystemAudioTapper {
     private final class PCMQueue {
         nonisolated(unsafe) private var buf = Data()
         private var lock = os_unfair_lock()
-        func push(_ d: Data) { os_unfair_lock_lock(&lock); buf.append(d); os_unfair_lock_unlock(&lock) }
+        /// One second. Audio older than that is useless to a live transcript, and without a
+        /// cap the queue grew for as long as the writer could not write — 115 MB an hour
+        /// while listening was paused.
+        private let capBytes = 32_000
+        func push(_ d: Data) {
+            os_unfair_lock_lock(&lock)
+            buf.append(d)
+            if buf.count > capBytes { buf.removeFirst((buf.count - capBytes) & ~1) }
+            os_unfair_lock_unlock(&lock)
+        }
         func drain() -> Data { os_unfair_lock_lock(&lock); let d = buf; buf = Data(); os_unfair_lock_unlock(&lock); return d }
         func clear() { os_unfair_lock_lock(&lock); buf = Data(); os_unfair_lock_unlock(&lock) }
     }
@@ -210,50 +219,101 @@ nonisolated final class SystemAudioTapper {
 
     // MARK: - FIFO writer
 
+    // THE FIFO MUST NEVER HOLD A BACKLOG.
+    //
+    // The engine takes exactly one 100ms chunk of system audio for every 100ms of microphone.
+    // It reads at the rate audio is made, so it can never catch up: anything that once put it
+    // behind — a pause, the recogniser connecting, a slow moment — stayed as delay for the rest
+    // of the session. Measured 2026-09-15: the pipe permanently full (8,192 bytes), and the
+    // interviewer's words reaching the recogniser 2 to 4 seconds after the microphone's copy.
+    // With headphones every answer started that late. Without them the two copies overlapped,
+    // and questions arrived as "What is What is Kubernetes?".
+    //
+    // The writer cannot catch the reader up, but it can stop feeding it stale audio: write
+    // only while the pipe is nearly empty, and keep only the newest audio in hand.
+
+    /// Write while fewer than this many bytes are waiting in the pipe: 100ms.
+    private static let writeWhenBelow = 3_200
+    /// Audio held for the pipe beyond this is older than anything worth hearing: 150ms.
+    private static let maxHeldBytes = 4_800
+    /// Writes of at most PIPE_BUF (512 on macOS) bytes are atomic, so a write can never land
+    /// half a sample and shift every later sample by one byte. Even, and 10ms.
+    private static let writePiece = 320
+
+    /// Bytes waiting in the pipe. FIONREAD on the WRITE end always reports 0 on macOS
+    /// (measured), so this asks the app's own read handle, which never reads.
+    private static func unreadBytes(_ probe: Int32) -> Int {
+        var n: Int32 = 0
+        return ioctl(probe, fionread, &n) == 0 ? Int(n) : 0
+    }
+    /// FIONREAD from <sys/filio.h>, _IOR('f', 127, int). A function-like C macro, so Swift
+    /// does not import it.
+    private static let fionread: UInt = 0x4004_667F
+
     private func startWriter() {
         let path = fifoPath
         let q = pcmQueue
         let t = Thread { [weak self] in
             guard let self else { return }
             var bytesThisSec = 0
+            var droppedThisSec = 0
+            var behindPeak = 0
             var peakThisSec: Int32 = 0
             var lastLog = Date()
             let tapStart = Date()
             var sawAudio = false
             var silentFired = false
             while !self.shouldStop() {
-                // Blocks until the engine opens the FIFO for reading.
-                let fd = open(path, O_WRONLY)
-                if fd < 0 { usleep(100_000); continue }
+                // The app's own read handle, opened first: it is how the writer sees how far
+                // behind the engine is, and while it is open the pipe always has a reader, so
+                // the write handle below opens at once and survives the engine restarting.
+                let probe = open(path, O_RDONLY | O_NONBLOCK)
+                if probe < 0 { usleep(100_000); continue }
+                let fd = open(path, O_WRONLY | O_NONBLOCK)
+                if fd < 0 { close(probe); usleep(100_000); continue }
+                // Whatever queued while nothing was connected is stale.
+                q.clear()
+                var held = Data()
                 writeLoop: while !self.shouldStop() {
-                    let chunk = q.drain()
-                    if chunk.isEmpty { usleep(5_000) } else {
-                        var ok = true
-                        chunk.withUnsafeBytes { raw in
-                            let base = raw.baseAddress!
-                            let total = raw.count
-                            var off = 0
-                            while off < total {
-                                let w = write(fd, base + off, total - off)
-                                if w <= 0 { ok = false; break }
-                                off += w
-                            }
-                        }
-                        if !ok { break writeLoop }   // reader gone → reopen
-                        bytesThisSec += chunk.count
-                        chunk.withUnsafeBytes { raw in
+                    let fresh = q.drain()
+                    if !fresh.isEmpty {
+                        fresh.withUnsafeBytes { raw in
                             let s = raw.bindMemory(to: Int16.self)
                             let step = max(1, s.count / 256)
                             var i = 0
                             while i < s.count { let a = abs(Int32(s[i])); if a > peakThisSec { peakThisSec = a }; i += step }
                         }
+                        held.append(fresh)
                     }
+                    if held.count > Self.maxHeldBytes {
+                        let drop = (held.count - Self.maxHeldBytes) & ~1
+                        held.removeFirst(drop)
+                        droppedThisSec += drop
+                    }
+                    var failed = false
+                    while held.count >= 2 {
+                        let waiting = Self.unreadBytes(probe)
+                        behindPeak = max(behindPeak, waiting)
+                        if waiting >= Self.writeWhenBelow { break }
+                        let n = min(Self.writePiece, held.count & ~1)
+                        let w = held.withUnsafeBytes { raw in write(fd, raw.baseAddress!, n) }
+                        if w > 0 {
+                            held.removeFirst(w)
+                            bytesThisSec += w
+                        } else {
+                            if errno != EAGAIN { failed = true }
+                            break
+                        }
+                    }
+                    if failed { break writeLoop }   // unexpected write error → reopen both
+                    usleep(5_000)
                     if peakThisSec > 300 { sawAudio = true }   // ~1% full-scale = real audio
                     let now = Date(); let el = now.timeIntervalSince(lastLog)
                     if el >= 2.0 {
-                        dlog(String(format: "in-app tap: peak=%.3f  rate=%.0fB/s",
-                                    Double(peakThisSec) / 32768.0, Double(bytesThisSec) / el), tag: "TAP")
-                        bytesThisSec = 0; peakThisSec = 0; lastLog = now
+                        dlog(String(format: "in-app tap: peak=%.3f  rate=%.0fB/s  behind<=%.0fms  dropped=%.0fms",
+                                    Double(peakThisSec) / 32768.0, Double(bytesThisSec) / el,
+                                    Double(behindPeak) / 32.0, Double(droppedThisSec) / 32.0), tag: "TAP")
+                        bytesThisSec = 0; droppedThisSec = 0; behindPeak = 0; peakThisSec = 0; lastLog = now
                     }
                     // Diagnostic only — silence here usually just means nothing is
                     // playing (the output device idles), NOT a missing permission,

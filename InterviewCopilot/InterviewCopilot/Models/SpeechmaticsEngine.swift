@@ -516,6 +516,11 @@ class SpeechmaticsEngine {
             if let n = Self.charCount(in: line), n > 0 {
                 Task { @MainActor [weak self] in self?.lastWordsAt = Date() }
             }
+            // The microphone read stopped returning. See handleMicHang — this line is printed
+            // ONCE per process, so it is a signal, never something to count.
+            if line.contains("READ TIMEOUT"), line.contains("MIC") {
+                Task { @MainActor [weak self] in self?.handleMicHang() }
+            }
             // CONTRACT:RUNTIME — see ENGINE_CONTRACT.md and verify_engine_contract.py
             if line.contains("STATUS: ONLINE") || line.contains("ENGINE: READY") {
                 Task { @MainActor [weak self] in self?.isReady = true }
@@ -637,6 +642,51 @@ class SpeechmaticsEngine {
         // recover from a problem retrying cannot fix. Ten minutes still recovers on its own,
         // promptly enough, once billing is restored.
         startRetryTimer(interval: 600)
+    }
+
+    // MARK: - A microphone that stops answering
+
+    private var micHangRestarts = 0
+    private var lastMicRestartAt = Date.distantPast
+    /// At most this many engine restarts for a hung microphone in one session, and never two
+    /// inside a minute: a restart that does not help must not become a loop.
+    private let maxMicHangRestarts = 5
+
+    /// The engine's microphone read stopped returning — it prints "MIC READ TIMEOUT ... this is
+    /// why no audio ever gets through" and hands back silence from then on.
+    ///
+    /// Nothing recovers from it. The engine's own input-switching only runs for a microphone
+    /// that was NEVER heard ("not _mic_ever_heard"), which is the opposite case, and the
+    /// warning is printed once per process, so the log goes quiet while the app sits deaf with
+    /// everything looking healthy: the process alive, the websocket up, the transcript empty.
+    /// Measured on this Mac, 2026-09-16: deaf from 00:46:57 until the session ended, four test
+    /// scenarios in a row heard nothing, and the only visible consequence was the idle timer
+    /// eventually stopping the microphone for "no speech".
+    ///
+    /// Only replacing the process fixes it. Confirmed first: if words arrive in the next couple
+    /// of seconds the read recovered on its own and the restart is skipped.
+    private func handleMicHang() {
+        guard !engineCancelled, !stoppedByUser, isRunning else { return }
+        let wordsBefore = lastWordsAt
+        dlog("SM: the engine says its microphone read is hanging — checking whether anything still arrives", tag: "SM")
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard let self, !self.engineCancelled, !self.stoppedByUser, self.isRunning else { return }
+            guard self.lastWordsAt <= wordsBefore else {
+                dlog("SM: words are still arriving — the microphone read recovered by itself", tag: "SM")
+                return
+            }
+            guard self.micHangRestarts < self.maxMicHangRestarts,
+                  Date().timeIntervalSince(self.lastMicRestartAt) > 60 else { return }
+            let key = UserSession.shared.speechmaticsKey
+            guard !key.isEmpty else { return }
+            self.micHangRestarts += 1
+            self.lastMicRestartAt = Date()
+            dlog("SM: microphone still deaf — restarting the engine (\(self.micHangRestarts) of \(self.maxMicHangRestarts))", tag: "SM")
+            self.isReady = false
+            self.killAndDispose()
+            self.start(smKey: key)
+        }
     }
 
     private func startMonitorTimer() {
