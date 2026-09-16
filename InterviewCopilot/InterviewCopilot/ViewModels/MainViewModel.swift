@@ -3421,6 +3421,10 @@ class MainViewModel {
     // MARK: - Job context
     func loadJob() {
         let path = engine.appDataFolder.appendingPathComponent("job.json")
+        // Tighten a file left behind by an older build, the way the debug log does. Fixing
+        // this only on write would leave every existing user's work authorization and pay
+        // expectations world-readable until they happened to edit their job context again.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
         if let data = try? Data(contentsOf: path),
            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
             companyName = obj["company"] ?? ""
@@ -3441,11 +3445,18 @@ class MainViewModel {
                    "workType": workType, "workAuth": workAuth, "canStart": canStart,
                    "workLocation": workLocation, "payRate": payRate]
         try? JSONSerialization.data(withJSONObject: obj).write(to: path)
+        // 0600, like the transcripts and the debug log. This file holds work authorization,
+        // pay expectations, availability and the job description — and it was landing
+        // world-readable (measured -rw-r--r--), so on a shared or managed Mac any other local
+        // account could read it. The app already protects everything else it writes; this
+        // writer and the settings one were simply missed.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
     }
 
     // MARK: - Settings
     func loadSettings() {
         let path = engine.appDataFolder.appendingPathComponent("settings.json")
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
         if let data = try? Data(contentsOf: path),
            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             mainWindowOpacity = obj["mainOpacity"] as? Double ?? 0.40
@@ -3487,6 +3498,7 @@ class MainViewModel {
                                   "stealthModeEnabled": stealthModeEnabled,
                                   "opacityDefaultV2Applied": true]
         try? JSONSerialization.data(withJSONObject: obj).write(to: path)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
     }
 
     // MARK: - Audio capture mode (Settings toggle)
