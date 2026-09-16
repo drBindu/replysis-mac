@@ -1049,6 +1049,7 @@ class MainViewModel {
             // describing something the interviewer is not looking at.
             capturingWholeScreen = true
             isScreenAnalyzing = true; isProcessing = true
+            startBusyWatchdog()
             answerEpoch += 1
             updateMicUI()
             Task { await _doScreenCapture(label: "👁 SCREEN") }
@@ -1066,6 +1067,7 @@ class MainViewModel {
         }
 
         isProcessing = true; showThinking = true; thinkingStep = 0
+        startBusyWatchdog()
         answerEpoch += 1   // new answer → scroll view jumps to top
         updateMicUI()
 
@@ -1220,6 +1222,7 @@ class MainViewModel {
 
     func stopThinkingUI() {
         showThinking = false; isProcessing = false; isScreenAnalyzing = false
+        busyWatchdog?.invalidate(); busyWatchdog = nil
         answerSettledAt = Date()
         updateMicUI(); thinkingText = "Thinking..."
         // Listening again is what makes Auto Mode continuous rather than single-shot.
@@ -1244,7 +1247,7 @@ class MainViewModel {
         answerIsBehavioral = false   // screen analysis isn't a behavioral question
         answerEpoch += 1             // new answer → scroll to top
         capturingWholeScreen = wholeScreen
-        isScreenAnalyzing = true; isProcessing = true; updateMicUI()
+        isScreenAnalyzing = true; isProcessing = true; startBusyWatchdog(); updateMicUI()
 
         Task { await _doScreenCapture(label: wholeScreen ? "MAIN SCREEN" : "THIS SCREEN") }
     }
@@ -1595,7 +1598,7 @@ class MainViewModel {
         thinkingText = "You scrolled — reading the rest…"
         answerEpoch += 1
         capturingWholeScreen = true
-        isScreenAnalyzing = true; isProcessing = true; updateMicUI()
+        isScreenAnalyzing = true; isProcessing = true; startBusyWatchdog(); updateMicUI()
         transcript = question
         Task { await _doScreenCapture(label: "AFTER SCROLL") }
     }
@@ -1933,6 +1936,39 @@ class MainViewModel {
     private let maxGapMergeWords = 120
     /// When the current answer finished arriving.
     private var answerSettledAt = Date.distantPast
+
+    // MARK: - An answer that never arrives
+    //
+    // While the app is "busy" it answers nothing automatically — every path is gated on
+    // isProcessing and isScreenAnalyzing — and the only thing that clears those is a request
+    // calling back. URLSession gives up after 60s idle or 300s total, so a stalled request
+    // can leave the app deaf for minutes with nothing on screen saying why. In an interview
+    // that is indistinguishable from the app being broken. No real answer takes this long:
+    // spoken answers finish in about a second, screen answers in ten.
+    private var busyWatchdog: Timer?
+    private var busyStartedAt = Date.distantPast
+    private let busyLimit: TimeInterval = 45
+
+    private func startBusyWatchdog() {
+        busyStartedAt = Date()
+        busyWatchdog?.invalidate()
+        busyWatchdog = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+            Task { @MainActor [weak self] in self?.checkBusyWatchdog() }
+        }
+    }
+
+    private func checkBusyWatchdog() {
+        guard isProcessing || isScreenAnalyzing else {
+            busyWatchdog?.invalidate(); busyWatchdog = nil
+            return
+        }
+        guard Date().timeIntervalSince(busyStartedAt) > busyLimit else { return }
+        dlog("WATCHDOG: \(Int(busyLimit))s with no answer — releasing so listening resumes", tag: "AUTO")
+        if Self.answerBody(aiAnswer).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            aiAnswer = "⚠ No answer came back — the connection stalled. Ask again."
+        }
+        stopThinkingUI()
+    }
     /// Speech that starts this soon after an answer lands began before anyone could read it.
     /// Was 1.5s, and measured too short: the second half of "What is the difference between
     /// ... an abstract class and an interface?" began 1.76s after a 0.45s answer and was
@@ -1987,9 +2023,13 @@ class MainViewModel {
         let consumed = consumedPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !consumed.isEmpty else { return full }
         guard full.hasPrefix(consumed) else {
-            dlog("TX: the recogniser rewrote text already answered — reading all of it again: '\(full.prefix(60))'", tag: "TX")
-            consumedPrefix = ""
-            return full
+            // Resynchronise by words rather than giving up. Returning the whole file here sent
+            // an already-answered question back through as new speech: measured, a question and
+            // a stall from a minute earlier were joined onto the next question and re-answered.
+            let fresh = AutoTurnDetector.newSpeech(full: full, consumed: consumed)
+            dlog("TX: the recogniser rewrote text already answered — keeping the new part: '\(fresh.prefix(60))'", tag: "TX")
+            consumedPrefix = fresh.count < full.count ? String(full.dropLast(fresh.count)) : ""
+            return fresh.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return String(full.dropFirst(consumed.count))
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2002,6 +2042,9 @@ class MainViewModel {
     /// applied to speech they have nothing to do with — the first thing said in Practice
     /// Auto was being glued onto a question asked in Interview Auto.
     private func resetAutoTurnState() {
+        // Cleared here too: a mode change or a new session must never inherit a latch that
+        // blocks answering.
+        autoTurnSubmitting = false
         autoDetector.forgetLastAnswered()
         lastAnsweredQuestion = ""
         lastAnsweredAt = .distantPast
@@ -2490,6 +2533,13 @@ class MainViewModel {
         // Staying open is also what makes firing early safe: if more of the question
         // arrives, it forms a new turn and supersedes this answer (see updateTranscript).
         Task { @MainActor [weak self] in
+            // RELEASED ON EVERY PATH OUT. The latch was cleared after the drain below, and the
+            // guard on the next line returns before that: switch to Manual during the 150-600ms
+            // drain and it stayed true forever. Both answer paths are gated on it, so auto mode
+            // would answer nothing again until the app was restarted, silently. That exact shape
+            // — a latch with one clear behind an early return — is what stopped auto mode on
+            // Windows for a whole interview.
+            defer { self?.autoTurnSubmitting = false }
             // Brief drain: recognition runs behind live speech, so the tail is still
             // arriving at the moment we decided the turn was over.
             try? await Task.sleep(nanoseconds: 150_000_000)
@@ -2506,7 +2556,6 @@ class MainViewModel {
                 try? await Task.sleep(nanoseconds: 150_000_000)
                 extraWaits += 1
             }
-            self.autoTurnSubmitting = false
             // Everything heard up to this instant is what we are about to answer. Record it
             // BEFORE answering, so whatever arrives next can be told apart from it without
             // clearing the file out from under a speaker who is still mid-sentence.

@@ -383,6 +383,52 @@ struct AutoTurnDetector {
         return parts.count == before ? text : parts.joined(separator: " ")
     }
 
+    /// The part of `full` that has NOT been answered yet, when the recogniser has rewritten
+    /// text it already gave us.
+    ///
+    /// The engine appends to one transcript file and revises it as it hears better; the app
+    /// remembers what it answered and subtracts that prefix. When a revision breaks the
+    /// prefix, the old behaviour was to give up and treat the WHOLE file as new speech — so a
+    /// question answered a minute earlier came back as fresh speech, was joined onto the
+    /// question being asked, and the model was sent both plus the candidate's stall. Measured
+    /// 2026-09-16 12:17: "Tell me about a time you handled a production outage. What is
+    /// Kubernetes? That's a good question. Give me a second to think about it."
+    ///
+    /// Compared by WORDS, because a revision changes a word or two and not the whole turn.
+    /// Whatever the two still share from the start is old; only what follows is new. With too
+    /// little in common the engine has genuinely started a fresh file, and all of it is new.
+    /// Never trims the end, so the caller can take the rest as an exact suffix.
+    static func newSpeech(full: String, consumed: String) -> String {
+        let fullWords = wordsWithRanges(full)
+        let consumedWords = wordsWithRanges(consumed).map { normalisedWord(full: consumed, $0) }
+        guard !consumedWords.isEmpty else { return full }
+        var shared = 0
+        while shared < fullWords.count, shared < consumedWords.count,
+              normalisedWord(full: full, fullWords[shared]) == consumedWords[shared] { shared += 1 }
+        // Half of what was answered has to still be there for this to be the same text revised.
+        guard shared >= max(2, consumedWords.count / 2) else { return full }
+        guard shared < fullWords.count else { return "" }
+        return String(full[fullWords[shared].lowerBound...])
+    }
+
+    private static func wordsWithRanges(_ s: String) -> [Range<String.Index>] {
+        var out: [Range<String.Index>] = []
+        var start: String.Index? = nil
+        var i = s.startIndex
+        while i < s.endIndex {
+            let isWord = s[i].isLetter || s[i].isNumber || s[i] == "'"
+            if isWord, start == nil { start = i }
+            if !isWord, let st = start { out.append(st..<i); start = nil }
+            i = s.index(after: i)
+        }
+        if let st = start { out.append(st..<s.endIndex) }
+        return out
+    }
+
+    private static func normalisedWord(full s: String, _ r: Range<String.Index>) -> String {
+        s[r].lowercased()
+    }
+
     /// The last sentence of what was heard.
     static func lastSentence(_ text: String) -> String { sentences(text).last ?? "" }
 
