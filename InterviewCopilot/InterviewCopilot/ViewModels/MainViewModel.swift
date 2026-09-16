@@ -1757,6 +1757,18 @@ class MainViewModel {
                 pendingSpeechBeganBeforeAnswer = isProcessing || showThinking
                     || Date().timeIntervalSince(answerSettledAt) < answerReadGrace
             }
+            // THE QUESTION IS OVER AND THE CANDIDATE HAS STARTED TALKING. The end of speech is
+            // reported only when the room goes quiet, and a candidate saying "good question,
+            // let me think" or starting their answer keeps it from going quiet, so the answer
+            // waited for them to stop. See AutoTurnDetector.questionBeforeCandidateTail. Not
+            // while an earlier answer is still coming: speech then is joined to that question
+            // (handleUtteranceEnd), and answering it alone here is the bug that fixed.
+            if autoModeEnabled, isListening, micCaptureActive, !isProcessing, !isScreenAnalyzing,
+               !autoTurnSubmitting, engine.isReady,
+               !(pendingSpeechStartedAt != nil && pendingSpeechBeganBeforeAnswer),
+               let question = AutoTurnDetector.questionBeforeCandidateTail(remainingSpeech(raw)) {
+                commitBeforeCandidateTail(question)
+            }
             // More arrived, so the ending was not the end. The new speech forms its own
             // turn and will be classified on its own utterance-end.
             if unclearDeadline != nil {
@@ -1783,18 +1795,49 @@ class MainViewModel {
                     if latest.isEmpty {
                         unclearDeadline = nil; unclearPendingText = ""; unclearChainStartedAt = .distantPast
                     } else {
+                    // It has BECOME a question. Every new word restarted the wait, so context
+                    // followed by "How would you debug a slow service?" was answered 4.4s after
+                    // the speaker stopped. A finished question needs no more waiting.
+                    if AutoTurnDetector.classifyTurnEnding(latest) == .finished,
+                       AutoTurnDetector.isLikelyCompleteQuestion(AutoTurnDetector.lastSentence(latest),
+                                                                 requireInterrogative: true) {
+                        unclearDeadline = nil; unclearPendingText = ""; unclearChainStartedAt = .distantPast
+                        commitAutomaticTurn(latest)
+                    } else {
                         unclearPendingText = latest
                         unclearDeadline = Date().addingTimeInterval(unclearSilence)
                         dlog("AUTO: more speech arrived — still holding '\(latest.suffix(40))'", tag: "AUTO")
                     }
+                    }
                 }
             }
         }
-        // Nothing more came, so the unclear ending really was the end.
+        // Nothing more came, so the unclear ending really was the end — unless the words now
+        // held plainly stop mid-sentence. Measured: "What is Java? Where" was answered as it
+        // stood, because this committed whatever the wait was holding without looking at it
+        // again, and "Where" had arrived since the wait began. The ceiling above still
+        // guarantees an answer, so waiting on a dangling word cannot hang.
         if let deadline = unclearDeadline, Date() >= deadline {
             let pending = unclearPendingText
-            unclearDeadline = nil; unclearPendingText = ""; unclearChainStartedAt = .distantPast
-            if !pending.isEmpty { commitAutomaticTurn(pending) }
+            if !pending.isEmpty,
+               AutoTurnDetector.classifyTurnEnding(pending) == .unfinished,
+               Date().timeIntervalSince(unclearChainStartedAt) < maxUnclearChain {
+                unclearDeadline = Date().addingTimeInterval(unclearSilence)
+                dlog("AUTO: the wait ran out mid-sentence — still waiting: '\(pending.suffix(40))'", tag: "AUTO")
+            } else {
+                unclearDeadline = nil; unclearPendingText = ""; unclearChainStartedAt = .distantPast
+                if !pending.isEmpty { commitAutomaticTurn(pending) }
+            }
+        }
+        // Context that never became a question. See the hold in handleUtteranceEnd. Stepped past
+        // only if nothing was said since; if something was, the next end of speech judges it all.
+        if let held = contextHeldSince, Date().timeIntervalSince(held) >= contextHold {
+            contextHeldSince = nil
+            if lastSpeechHeardAt <= held {
+                consumedPrefix = raw
+                pendingSpeechStartedAt = nil
+                dlog("AUTO: held context never became a question — stepping past it", tag: "AUTO")
+            }
         }
         let text = remainingSpeech(raw)
         transcriptLogTick += 1
@@ -1876,6 +1919,13 @@ class MainViewModel {
     /// finish, never five, and never runs to a paragraph.
     private let maxContinuations = 2
     private let maxContinuationWords = 60
+    /// A tail with no joining word ("C2C or W2 or full time.") follows its question within
+    /// seconds — the interviewer paused mid-sentence. Measured: fifteen seconds after an answer,
+    /// "Our team runs about 40 microservices on Kubernetes." was joined onto the question before
+    /// it, and the question it was really introducing was then answered without it. Speech that
+    /// began before the answer was up is not bound by this; it is the same question by
+    /// definition.
+    private let tailWindow: TimeInterval = 6
     /// Speech that began before its answer was on screen is the interviewer's question going
     /// on, not a tail, so it may run longer. maxContinuations still ends the chain, which is
     /// what stops talk in the room growing a question without limit.
@@ -1883,11 +1933,24 @@ class MainViewModel {
     /// When the current answer finished arriving.
     private var answerSettledAt = Date.distantPast
     /// Speech that starts this soon after an answer lands began before anyone could read it.
-    private let answerReadGrace: TimeInterval = 1.5
+    /// Was 1.5s, and measured too short: the second half of "What is the difference between
+    /// ... an abstract class and an interface?" began 1.76s after a 0.45s answer and was
+    /// answered on its own. Nobody reads an answer and gets a follow-up out of the
+    /// interviewer in three seconds.
+    private let answerReadGrace: TimeInterval = 3.0
     /// When the speech we have not answered yet began, and whether its answer was still
     /// loading at that moment. Cleared whenever that speech is answered or stepped past.
     private var pendingSpeechStartedAt: Date?
     private var pendingSpeechBeganBeforeAnswer = false
+    /// Between deciding a turn is over and taking the snapshot of what to answer (the 150ms
+    /// drain). Two triggers now exist — the recogniser's end of speech and a question
+    /// followed by the candidate talking — and both firing inside that window would answer
+    /// the same question twice.
+    private var autoTurnSubmitting = false
+    /// When finished speech that asks nothing began being held for a question to follow it.
+    private var contextHeldSince: Date?
+    /// How long context waits for its question before it is stepped past.
+    private let contextHold: TimeInterval = 4
 
     /// The part of latest.txt that has ALREADY been answered.
     ///
@@ -1912,6 +1975,7 @@ class MainViewModel {
         let consumed = consumedPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !consumed.isEmpty else { return full }
         guard full.hasPrefix(consumed) else {
+            dlog("TX: the recogniser rewrote text already answered — reading all of it again: '\(full.prefix(60))'", tag: "TX")
             consumedPrefix = ""
             return full
         }
@@ -1931,6 +1995,7 @@ class MainViewModel {
         lastAnsweredAt = .distantPast
         consumedPrefix = ""
         pendingSpeechStartedAt = nil
+        contextHeldSince = nil
         continuationChainStartedAt = .distantPast
         continuationCount = 0
         unclearDeadline = nil; unclearPendingText = ""; unclearChainStartedAt = .distantPast
@@ -1938,7 +2003,7 @@ class MainViewModel {
     }
 
     private func handleUtteranceEnd() {
-        guard autoModeEnabled, isListening, !isScreenAnalyzing, engine.isReady else { return }
+        guard autoModeEnabled, isListening, !isScreenAnalyzing, !autoTurnSubmitting, engine.isReady else { return }
         // Stamped here, before any of the deciding, because this is the moment the user
         // stopped talking and started waiting.
         lastUtteranceEndAt = Date()
@@ -1992,6 +2057,25 @@ class MainViewModel {
             return
         }
 
+        // The candidate talking — starting their answer, or talking about themselves — is not a
+        // question, and not more of one. See AutoTurnDetector.soundsLikeCandidate. Only with the
+        // microphone on: without it the candidate cannot be heard at all.
+        if micCaptureActive {
+            // Only the candidate's OWN words go. Measured: "With an example from Spring. Sure.
+            // Let me think." was dropped whole — the stall on the end made the lot read as the
+            // candidate — and the interviewer's addition to the question went with it.
+            let front = AutoTurnDetector.withoutCandidateTail(text)
+            if front != text, !front.isEmpty, !AutoTurnDetector.soundsLikeCandidate(front) {
+                dlog("AUTO: dropped the candidate's words off the end — keeping: '\(front.prefix(50))'", tag: "AUTO")
+                text = front
+            } else if AutoTurnDetector.soundsLikeCandidate(text) {
+                dlog("AUTO: the candidate talking, not a question — stepping past: '\(text.prefix(50))'", tag: "AUTO")
+                consumedPrefix = rawNow
+                pendingSpeechStartedAt = nil
+                return
+            }
+        }
+
         // SAID BEFORE THE ANSWER WAS UP. The owner, 2026-09-15: the question is asked, and
         // while the answer is still coming the interviewer adds one more line — and the app
         // answered that line alone and threw the question away. Speech that begins before
@@ -2013,7 +2097,7 @@ class MainViewModel {
         // Cleaned here as well as in extractLatestQuestion: a joined question is sent as it
         // stands, and never passes through there.
         let mergedCandidate = AutoTurnDetector.stripTrailingStalls(
-            AutoTurnDetector.collapseRepeats((lastAnsweredQuestion + " " + text)
+            AutoTurnDetector.collapseRepeats((lastAnsweredQuestion + " " + AutoTurnDetector.withoutCandidateTail(text))
                 .trimmingCharacters(in: .whitespacesAndNewlines)))
         let mergedWords = mergedCandidate.split(whereSeparator: { $0 == " " }).count
         if !lastAnsweredQuestion.isEmpty, sinceAnswer < continuationWindow,
@@ -2037,12 +2121,23 @@ class MainViewModel {
            !AutoTurnDetector.isEchoOfPrevious(text,
                                               lastQuestion: lastAnsweredQuestion,
                                               lastAnswer: lastAnsweredAnswer),
-           saidBeforeAnswer || Self.looksLikeContinuation(previous: lastAnsweredQuestion, next: text) {
+           saidBeforeAnswer
+            || (sinceAnswer < tailWindow
+                && Self.looksLikeContinuation(previous: lastAnsweredQuestion, next: text)) {
             // Joined on but not finished — "and also" then a breath. Answering now would ask
             // the question with a dangling "and also" on the end; the rest is on its way, and
             // this speech stays unanswered so it is joined again, whole, when it arrives.
             if AutoTurnDetector.classifyTurnEnding(mergedCandidate) == .unfinished {
                 dlog("AUTO: more of the question is still coming — waiting: '\(text.suffix(40))'", tag: "AUTO")
+                return
+            }
+            // Nothing new in it: "What is the CAP theorem?" plus "Good question." cleans back to
+            // the question already answered. Re-answering spends a credit and replaces the answer
+            // being read with the same words. Measured 2026-09-16, 01:09.
+            if AutoTurnDetector.repeatsQuestion(Self.questionText(from: mergedCandidate), lastAnsweredQuestion) {
+                dlog("AUTO: nothing new in what followed — not re-answering: '\(text.prefix(40))'", tag: "AUTO")
+                consumedPrefix = rawNow
+                pendingSpeechStartedAt = nil
                 return
             }
             continuationCount += 1
@@ -2139,7 +2234,13 @@ class MainViewModel {
             return
         }
 
-        guard AutoTurnDetector.isLikelyCompleteQuestion(AutoTurnDetector.normalize(text),
+        // Context and then the question is judged by its last sentence too. Judged whole, "We are
+        // building a payments platform ... fifty milliseconds. How would you design the database
+        // layer?" had full stops before any question word and read as background talk.
+        let endsOnQuestion = text.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?")
+            || AutoTurnDetector.isLikelyCompleteQuestion(AutoTurnDetector.lastSentence(text),
+                                                         requireInterrogative: true)
+        guard endsOnQuestion || AutoTurnDetector.isLikelyCompleteQuestion(AutoTurnDetector.normalize(text),
                                                         requireInterrogative: false) else {
             // IGNORING IS NOT ENOUGH. Rejected speech stays in the file and gets glued to the
             // next real question, and once the pile carries two full stops with no
@@ -2148,9 +2249,27 @@ class MainViewModel {
             // Practice Auto guarantees this: saying the answer out loud is the point of the
             // mode, none of it is a question, and paraphrasing means echo detection never
             // catches it either. So step past speech that is spent.
-            if AutoTurnDetector.isSpentSpeech(text) {
+            // HOLD CONTEXT BRIEFLY FIRST. An interviewer sets the scene and then asks: measured,
+            // "We are building a payments platform ... under fifty milliseconds." ended a turn, and
+            // "How would you design the database layer?" followed a breath later — answered
+            // without the context that made it answerable, because this stepped past it at once.
+            // Held for a few seconds it joins the question. Long speech is still stepped past
+            // straight away, so nothing can pile up (see isSpentSpeech).
+            let words = text.split(separator: " ").count
+            if words < 80 {
+                // EVERY leftover, not only the finished ones. Measured: "We are building a payment
+                // platform ... under fifty milliseconds" ended without a full stop, so it counted
+                // as unfinished, was neither held nor stepped past, and simply stayed — twenty-five
+                // seconds later the NEXT question was glued to it and answered as one. Held, it
+                // joins a question that follows within seconds and is stepped past if none does.
+                if contextHeldSince == nil {
+                    dlog("AUTO: no question in it yet — holding it \(Int(contextHold))s for one: '\(text.prefix(50))'", tag: "AUTO")
+                }
+                contextHeldSince = Date()   // each new burst restarts the hold
+            } else if AutoTurnDetector.isSpentSpeech(text) {
                 consumedPrefix = engine.readLatestTxt()
                 pendingSpeechStartedAt = nil
+                contextHeldSince = nil
                 transcript = ""
                 dlog("AUTO: not a question and finished — stepping past it so the next one stands alone: '\(text.prefix(50))'", tag: "AUTO")
             } else {
@@ -2189,11 +2308,48 @@ class MainViewModel {
             dlog("AUTO: ending unclear — giving it \(Int(wait * 1000))ms: '\(text.suffix(40))'", tag: "AUTO")
             return
         case .finished:
+            // A finished STATEMENT is often context with the question still to come. It gets the
+            // longest unclear wait rather than being answered alone; a statement that really is
+            // the question ("I'd like to hear about your Kafka work.") costs only that wait.
+            // "Hi, how are you?" is a finished question and gets answered with a pleasantry, so
+            // when the real question follows a breath later it arrives after the canned reply is
+            // already on screen. Measured: "Hi, how are you doing today? Tell me about yourself."
+            // answered "Doing really well, thanks!". A pleasantry waits like a statement does.
+            if !endsOnQuestion || PromptBuilder.shared.isGreetingOrSmallTalk(text) {
+                unclearPendingText = text
+                unclearDeadline = Date().addingTimeInterval(maxUnclearSilence)
+                if unclearChainStartedAt == .distantPast { unclearChainStartedAt = Date() }
+                dlog("AUTO: a statement, not a question — giving it \(Int(maxUnclearSilence * 1000))ms for one: '\(text.suffix(40))'", tag: "AUTO")
+                return
+            }
             // The upload overlaps the drain and the answer request, so by the time the
             // question is sent the picture is usually already there.
             if isWatchMode { Task { [weak self] in await self?.prepareScreenshotAhead() } }
             commitAutomaticTurn(text)
         }
+    }
+
+    /// Answer a finished question now, because the candidate has started talking after it.
+    /// See the call in updateTranscript. The words after the question are consumed with it, so
+    /// the end of speech that follows finds only the rest of the candidate's talking.
+    private func commitBeforeCandidateTail(_ question: String) {
+        let q = AutoTurnDetector.stripLeadingPleasantries(AutoTurnDetector.collapseRepeats(question))
+        // Never answer a pleasantry early — the question it precedes is usually a second behind.
+        guard !PromptBuilder.shared.isGreetingOrSmallTalk(q) else { return }
+        guard !AutoTurnDetector.repeatsQuestion(q, lastAnsweredQuestion),
+              !AutoTurnDetector.isEchoOfPrevious(q, lastQuestion: lastAnsweredQuestion,
+                                                 lastAnswer: lastAnsweredAnswer) else { return }
+        disarmScrollWatch()
+        unclearDeadline = nil; unclearPendingText = ""; unclearChainStartedAt = .distantPast
+        guard autoDetector.acceptUtterance(q) else { return }
+        dlog("AUTO: question over and the candidate has started talking — answering now: '\(q.prefix(60))'", tag: "AUTO")
+        lastUtteranceEndAt = Date()
+        if isWatchMode { Task { [weak self] in await self?.prepareScreenshotAhead() } }
+        lastAnsweredQuestion = q
+        lastAnsweredAt = Date()
+        continuationChainStartedAt = Date()
+        continuationCount = 0
+        submitAutomaticTurn(question: q)
     }
 
     /// The answer TEXT, without the "Q: <question>" header the answer pane is built with.
@@ -2213,6 +2369,20 @@ class MainViewModel {
         // later and re-answer something nobody is asking about any more.
         disarmScrollWatch()
         unclearDeadline = nil; unclearPendingText = ""; unclearChainStartedAt = .distantPast
+        // The question just answered, arriving again — the recogniser re-sending its final after
+        // the transcript was cleared, or with the start of a stall on it. acceptUtterance compares
+        // exact text, and measured, the same question was answered twice a second apart. Judged
+        // on the question this text would actually send.
+        let asked = AutoTurnDetector.withoutCandidateTail(AutoTurnDetector.stripTrailingStalls(
+            AutoTurnDetector.stripLeadingPleasantries(AutoTurnDetector.collapseRepeats(text))))
+        if !lastAnsweredQuestion.isEmpty,
+           Date().timeIntervalSince(lastAnsweredAt) < AutoTurnDetector.duplicateWindow,
+           AutoTurnDetector.repeatsQuestion(asked, lastAnsweredQuestion) {
+            dlog("AUTO: the question just answered, again — ignoring: '\(text.prefix(60))'", tag: "AUTO")
+            consumedPrefix = engine.readLatestTxt()
+            pendingSpeechStartedAt = nil
+            return
+        }
         guard autoDetector.acceptUtterance(text) else {
             dlog("AUTO: duplicate of the question just answered — ignoring", tag: "AUTO")
             return
@@ -2223,7 +2393,7 @@ class MainViewModel {
             isProcessing = false
             showThinking = false
         }
-        dlog("AUTO: speaker finished — answering", tag: "AUTO")
+        dlog("AUTO: speaker finished — answering: '\(text.prefix(70))'", tag: "AUTO")
         lastAnsweredQuestion = text
         lastAnsweredAt = Date()
         submitAutomaticTurn()
@@ -2247,9 +2417,15 @@ class MainViewModel {
     static func looksLikeContinuation(previous: String, next: String) -> Bool {
         let n = next.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         guard !n.isEmpty else { return false }
+        // A TAIL IS SHORT. Measured: "Our team runs about 40 microservices on Kubernetes." was
+        // joined onto a question asked fifteen seconds earlier — it asks nothing, so every test
+        // below called it a tail — and the question it was actually introducing was then
+        // answered without it. Windows caps a tail at eight words for the same reason.
+        let wordCount = n.split(whereSeparator: { $0 == " " }).count
         let joiners = ["and ", "or ", "also ", "plus ", "but ", "as well", "along with",
                        "versus ", "vs ", "compared to", "what about", "how about", "then "]
-        for j in joiners where n.hasPrefix(j) { return true }
+        for j in joiners where n.hasPrefix(j) { return wordCount <= 12 }
+        guard wordCount <= 8 else { return false }
 
         // FILLERS ARE NOT CONTINUATIONS, and this exclusion has to come first.
         //
@@ -2283,6 +2459,7 @@ class MainViewModel {
     private func submitAutomaticTurn(question: String? = nil) {
         guard isListening else { return }
         let forced = question
+        autoTurnSubmitting = true
         // DO NOT pause the engine here. Pausing made the app deaf for the whole time it
         // was answering, so anything said during that window was lost — and the person
         // asking does not stop talking just because we started thinking. Worse, when the
@@ -2295,6 +2472,7 @@ class MainViewModel {
             // Brief drain: recognition runs behind live speech, so the tail is still
             // arriving at the moment we decided the turn was over.
             try? await Task.sleep(nanoseconds: 150_000_000)
+            self?.autoTurnSubmitting = false
             guard let self, self.autoModeEnabled else { return }
             // Everything heard up to this instant is what we are about to answer. Record it
             // BEFORE answering, so whatever arrives next can be told apart from it without
@@ -2303,6 +2481,7 @@ class MainViewModel {
             let heard = self.remainingSpeech(raw)
             self.consumedPrefix = raw
             self.pendingSpeechStartedAt = nil
+            self.contextHeldSince = nil
             if let forced, !forced.isEmpty {
                 self.transcript = forced
                 self.lastAnsweredQuestion = forced
@@ -2315,13 +2494,16 @@ class MainViewModel {
             // triggered the turn — otherwise a continuation merges against a truncated copy
             // and re-asks half the question back to the model.
             if !heard.isEmpty {
-                self.transcript = heard
-                self.lastAnsweredQuestion = heard
+                let asked = Self.questionText(from: heard)
+                self.transcript = asked
+                self.lastAnsweredQuestion = asked
                 self.lastAnsweredAt = Date()
                 // A fresh question ends whatever chain preceded it, so the next continuation
                 // gets its own full budget rather than inheriting a spent one.
                 self.continuationChainStartedAt = Date()
                 self.continuationCount = 0
+                self.startAI(manualQuestion: asked)
+                return
             }
             self.startAI()
         }
@@ -3490,21 +3672,29 @@ class MainViewModel {
     }
 
     private func extractLatestQuestion(from text: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        Self.questionText(from: text)
+    }
+
+    /// What the model is actually asked, from whatever has been heard.
+    ///
+    /// Every path that answers goes through here, because they disagreed. The turn was decided
+    /// on cleaned text while the request was built from the raw transcript read 150ms later, so
+    /// the decision said "Tell me about a time you handled a production outage." and the model
+    /// was asked "... So in my last" — the candidate's first words, already starting to answer.
+    ///
+    /// In order: the doubled hearing collapses (speakers into the microphone), the greeting
+    /// goes, then a stall or the candidate's own words on the end. Capped, because a transcript
+    /// that has grown for a whole session must never be posted as one question.
+    static func questionText(from raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         if trimmed.lowercased().hasPrefix("[screen") { return trimmed }
-        // THE WHOLE QUESTION, not its last three sentences. This kept the final three
-        // "sentences" over four characters, and the recogniser puts full stops wherever the
-        // speaker breathes, so a question asked in pieces lost its front half — and a short
-        // piece like "JPA." was dropped outright for being under five characters. The owner,
-        // 2026-09-15: "it is taking that only one line, not the whole question". Every path
-        // that reaches here already holds only the speech of one turn (the listening turn in
-        // Manual, the unanswered remainder in Auto), so there is nothing old to trim. An
-        // opening greeting is still dropped, and a runaway transcript is still bounded.
-        let question = AutoTurnDetector.stripTrailingStalls(
-            AutoTurnDetector.collapseRepeats(AutoTurnDetector.stripLeadingPleasantries(trimmed)))
-        let words = question.split(separator: " ")
-        return words.count > 150 ? words.suffix(150).joined(separator: " ") : question
+        let cleaned = AutoTurnDetector.withoutCandidateTail(
+            AutoTurnDetector.stripTrailingStalls(
+                AutoTurnDetector.stripLeadingPleasantries(
+                    AutoTurnDetector.collapseRepeats(trimmed))))
+        let words = cleaned.split(separator: " ")
+        return words.count > 150 ? words.suffix(150).joined(separator: " ") : cleaned
     }
 
     /// Marker that separates the spoken answer from the glanceable depth notes (RULE 14).

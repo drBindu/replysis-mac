@@ -355,15 +355,42 @@ class PromptBuilder {
         return false
     }
 
+    /// Is this WHOLE utterance small talk — not a question that happens to contain the words?
+    ///
+    /// It used to ask whether the text CONTAINED "how are you", or contained "how" and "going"
+    /// anywhere at all. So "How would you handle a whole region going down?" was answered "Doing
+    /// really well, thanks! Excited to be here" — measured in sessions 77 to 83 — and "Hello, how
+    /// are you, what is Java" got the same, with the Java question thrown away. A rule that
+    /// matches the middle of a sentence cannot tell small talk from an interview question that
+    /// shares three ordinary words. The whole thing has to BE the pleasantry.
     func isSmallTalk(_ q: String) -> Bool {
-        let t = q.lowercased()
-        return t.contains("how are you") ||
-               (t.contains("how") && t.contains("going")) ||   // how's it going / how it going
-               t.contains("how you doing") || t.contains("how have you been") ||
-               t.contains("how's everything") || t.contains("how is everything") ||
-               t.contains("nice to meet") || t.contains("thanks for coming") ||
-               t.contains("pleasure to meet")
+        let phrases: Set<String> = [
+            "how are you", "how are you doing", "how r u", "how are u",
+            "how is it going", "how's it going", "hows it going", "how goes it",
+            "how you doing", "how are things", "how have you been", "how you been",
+            "how's everything", "how is everything", "how's your day", "how is your day",
+            "how is your day going", "how's your day going",
+            "nice to meet you", "good to meet you", "great to meet you", "pleasure to meet you",
+            "nice meeting you", "thanks for coming", "thank you for coming",
+            "thanks for joining", "thank you for joining", "thanks for having me",
+        ]
+        var words = q.lowercased()
+            .split(whereSeparator: { !$0.isLetter && $0 != "'" })
+            .map(String.init)
+        // A greeting in front and a politeness behind are part of the same pleasantry.
+        let openers: Set<String> = ["hi", "hello", "hey", "yo", "good", "morning", "afternoon",
+                                    "evening", "greetings", "there", "so", "okay", "ok", "um",
+                                    "uh", "well", "and", "oh"]
+        while let f = words.first, openers.contains(f) { words.removeFirst() }
+        let trailing: Set<String> = ["today", "sir", "maam", "ma'am", "man", "then", "please",
+                                     "though", "yeah", "okay", "ok", "now", "so", "well"]
+        while let l = words.last, trailing.contains(l) { words.removeLast() }
+        guard !words.isEmpty, words.count <= 5 else { return false }
+        return phrases.contains(words.joined(separator: " "))
     }
+
+    /// A pleasantry of either kind, so the answer path can wait for the real question behind it.
+    func isGreetingOrSmallTalk(_ q: String) -> Bool { isGreeting(q) || isSmallTalk(q) }
 
     func isOffTopic(_ q: String) -> Bool {
         let t = q.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
@@ -393,8 +420,30 @@ class PromptBuilder {
     }
 
     func getOffTopicResponse() -> String { "Sorry, could you say that again?" }
-    func getGreetingResponse() -> String { "Hey, great to be here, really looking forward to this conversation!" }
-    func getSmallTalkResponse() -> String { "Doing really well, thanks! Excited to be here and learn more about the role." }
+    // ROTATED, not fixed. One hard-coded sentence each meant every "how are you" in every
+    // interview produced the same words — which is exactly what a canned answer sounds like to
+    // the person listening, and the owner heard it come back identically every time.
+    private var greetingIndex = 0
+    private var smallTalkIndex = 0
+    func getGreetingResponse() -> String {
+        let options = [
+            "Hey, great to be here, really looking forward to this conversation!",
+            "Hi! Thanks for making the time, glad to be here.",
+            "Hello! Good to meet you, looking forward to it.",
+        ]
+        defer { greetingIndex += 1 }
+        return options[greetingIndex % options.count]
+    }
+    func getSmallTalkResponse() -> String {
+        let options = [
+            "Doing really well, thanks! Excited to be here and learn more about the role.",
+            "I'm good, thanks for asking. Looking forward to the conversation.",
+            "Doing great, thank you. Glad we could set this up.",
+            "All good here, thanks! Ready when you are.",
+        ]
+        defer { smallTalkIndex += 1 }
+        return options[smallTalkIndex % options.count]
+    }
 
     // MARK: - Question Classification
 

@@ -206,28 +206,42 @@ struct AutoTurnDetector {
     static func stripLeadingPleasantries(_ text: String) -> String {
         // Longest first: "how are you doing" must be tried before "how are you".
         let openers = ["good morning", "good afternoon", "good evening",
-                       "nice to meet you", "how are you doing", "how are you",
+                       "nice to meet you", "how are you doing today", "how are you today",
+                       "how is your day going", "how's your day going", "how is your day",
+                       "how's your day", "how are you doing", "how are you",
                        "how is it going", "hows it going", "thanks", "thank you",
                        "hello", "hi", "hey", "yeah", "okay", "ok", "so"]
-        var out = text
+        // The front is trimmed, never the end, and the words keep their own case. This used to
+        // trim both ends of a lowercased copy and return THAT, so the question went to the
+        // model as "today? tell me about yourself" — no capitals, and the question mark on
+        // its last word gone. Measured live, 2026-09-15.
+        let separators = CharacterSet(charactersIn: " .,!?-–—")
+        func trimmingFront(_ s: Substring) -> Substring {
+            s.drop(while: { $0.unicodeScalars.allSatisfy { separators.contains($0) } })
+        }
+        var out = trimmingFront(Substring(text))
         var changed = true
         while changed {
             changed = false
-            let lead = out.trimmingCharacters(in: CharacterSet(charactersIn: " .,!?-–—")).lowercased()
+            let lead = out.lowercased()
+            // Lowercasing can change the length of a few non-English letters, and the cut
+            // below counts characters, so only strip when the two line up.
+            guard lead.count == out.count else { break }
             for o in openers where lead.hasPrefix(o) {
                 // Only a word boundary counts: "hi" must not eat the front of "history".
                 let after = lead.dropFirst(o.count)
                 guard after.isEmpty || after.first == " " || after.first == "," ||
                       after.first == "." || after.first == "?" || after.first == "!" else { continue }
-                let candidate = String(after).trimmingCharacters(in: CharacterSet(charactersIn: " .,!?-–—"))
-                // Never strip everything: a pure greeting is a real thing to answer.
-                guard candidate.split(separator: " ").count >= 2 else { continue }
-                out = candidate
+                out = trimmingFront(out.dropFirst(o.count))
                 changed = true
                 break
             }
         }
-        return out.isEmpty ? text : out
+        // Never strip everything: a pure greeting is a real thing to answer. Judged on what
+        // is left once EVERY opener is gone — testing each step instead kept "how are you?"
+        // from "Hello, how are you?", which is still only a greeting, now cut in half.
+        let result = out.trimmingCharacters(in: .whitespacesAndNewlines)
+        return result.split(separator: " ").count >= 2 ? result : text
     }
 
     /// The candidate filling the silence while the answer loads — "good question", "let me
@@ -257,7 +271,16 @@ struct AutoTurnDetector {
         let fillers: Set<String> = ["um", "uh", "hmm", "mhm", "okay", "ok", "yeah", "yes", "yep",
                                     "so", "well", "right", "alright", "sure", "thanks", "and",
                                     "oh", "ah", "like", "that", "that's", "it", "is", "a"]
-        return s.split(separator: " ").allSatisfy { fillers.contains(String($0)) }
+        let left = s.split(separator: " ").map(String.init)
+        if left.allSatisfy({ fillers.contains($0) }) { return true }
+        // A stall cut in half by the recogniser. Measured: "Sure. Let me" went out with the
+        // question it followed, and the "think." that finished it arrived alone — joined onto
+        // the question and re-answered. Too short to be anything but the rest of a stall,
+        // and only words a stall is made of.
+        let stallWords: Set<String> = ["let", "me", "think", "thinking", "second", "sec", "moment",
+                                       "see", "question", "good", "great", "really", "give", "just",
+                                       "hold", "on", "recall", "one", "interesting", "about"]
+        return left.count <= 3 && left.allSatisfy { fillers.contains($0) || stallWords.contains($0) }
     }
 
     /// The same words twice in a row, kept once.
@@ -276,10 +299,10 @@ struct AutoTurnDetector {
         while i < words.count {
             var collapsed = false
             var len = min(i, words.count - i)
-            while len >= 2 {
+            while len >= 1 {
                 let first = (0..<len).map { key(words[i - len + $0]) }
                 let second = (0..<len).map { key(words[i + $0]) }
-                if first.contains(where: { !$0.isEmpty }), first == second {
+                if len >= 2, first.contains(where: { !$0.isEmpty }), first == second {
                     // Keep the question mark if only the second copy had one.
                     let end = words[i + len - 1]
                     words.removeSubrange(i..<(i + len))
@@ -293,6 +316,17 @@ struct AutoTurnDetector {
                 // only difference is one word's ending is still one sentence said twice. Keep
                 // the later copy, the fuller hearing. A different word is not an ending, so
                 // "tell me about Java, tell me about Python" is left alone.
+                // One long word said twice: "a production outage outage." A pair of short words
+                // repeating is ordinary speech ("very very", "bye bye"), so only words of six
+                // letters or more count, where a repeat is the recogniser and not the speaker.
+                if len == 1, first[0] == second[0], first[0].count >= 6 {
+                    let end = words[i]
+                    words.removeSubrange(i..<(i + 1))
+                    if let p = end.last, "?.!".contains(p),
+                       let q = words[i - 1].last, !"?.!".contains(q) { words[i - 1].append(p) }
+                    collapsed = true
+                    break
+                }
                 if len >= 4, Self.differsByOneEnding(first, second) {
                     words.removeSubrange((i - len)..<i)
                     i = max(1, i - len)
@@ -334,21 +368,106 @@ struct AutoTurnDetector {
     /// finished, so it arrived inside the same turn and was sent to the model as part of it.
     /// Only whole trailing sentences go, and never the last one standing.
     static func stripTrailingStalls(_ text: String) -> String {
-        var sentences: [String] = []
+        var parts = sentences(text)
+        let before = parts.count
+        while parts.count > 1, let last = parts.last, isStallPhrase(last) { parts.removeLast() }
+        return parts.count == before ? text : parts.joined(separator: " ")
+    }
+
+    /// The last sentence of what was heard.
+    static func lastSentence(_ text: String) -> String { sentences(text).last ?? "" }
+
+    /// Sentences, each with its own punctuation. A last one still being spoken is kept too.
+    private static func sentences(_ text: String) -> [String] {
+        var out: [String] = []
         var current = ""
         for ch in text {
             current.append(ch)
             if "?.!".contains(ch) {
-                let s = current.trimmingCharacters(in: .whitespaces)
-                if !s.isEmpty { sentences.append(s) }
+                let s = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !s.isEmpty { out.append(s) }
                 current = ""
             }
         }
-        let tail = current.trimmingCharacters(in: .whitespaces)
-        if !tail.isEmpty { sentences.append(tail) }
-        let before = sentences.count
-        while sentences.count > 1, let last = sentences.last, isStallPhrase(last) { sentences.removeLast() }
-        return sentences.count == before ? text : sentences.joined(separator: " ")
+        let tail = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !tail.isEmpty { out.append(tail) }
+        return out
+    }
+
+    /// The candidate talking, not the interviewer asking: about themselves, to nobody, and
+    /// not in the shape of a question. "So in my last project I used Java", "We had a
+    /// database failure", "What I usually do is check the dashboards".
+    ///
+    /// The microphone is always open in the one mode, and the candidate starts answering the
+    /// moment a question ends — often before the app has. Heard as a question it replaced the
+    /// answer with a reply to their own words; heard as more of the question it was glued on.
+    /// An interviewer talks about the listener ("you", "your") or asks outright, and the
+    /// first-person ways of asking ("I'd like to hear about...", "I want to know...") are
+    /// named so they are never mistaken for the candidate.
+    static func soundsLikeCandidate(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        let words = lower
+            .components(separatedBy: CharacterSet.alphanumerics.inverted.subtracting(CharacterSet(charactersIn: "'")))
+            .filter { !$0.isEmpty }
+        guard words.count >= 2, !text.contains("?") else { return false }
+        let asking = ["i want to know", "i'd like to know", "i would like to know", "i want to hear",
+                      "i'd like to hear", "i would like to hear", "i want to ask", "i wanted to ask",
+                      "i'd like to ask", "i would like to ask", "i want to understand",
+                      "i'd like to understand", "i'm curious", "i am curious", "i was wondering",
+                      "i wonder", "let me ask", "i have a question", "i have one more question"]
+        if asking.contains(where: { lower.contains($0) }) { return false }
+        let listener: Set<String> = ["you", "your", "you're", "yours", "yourself", "you've", "you'd", "you'll"]
+        if words.contains(where: { listener.contains($0) }) { return false }
+        // Singular only. "We" and "our" are how an interviewer describes the company — measured:
+        // "We are building a payments platform that handles 10,000 transactions per second" was
+        // stepped past as the candidate, and only the question after it was answered.
+        let speaker: Set<String> = ["i", "i'm", "im", "i've", "ive", "i'd", "id", "i'll", "my", "me",
+                                    "mine", "myself"]
+        let fillers: Set<String> = ["so", "okay", "ok", "and", "um", "uh", "well", "yeah", "yes", "hmm",
+                                    "like", "actually", "basically", "sure", "right", "alright"]
+        var rest = words[...]
+        while let f = rest.first, fillers.contains(f), rest.count > 1 { rest = rest.dropFirst() }
+        let whWords: Set<String> = ["what", "why", "how", "when", "where", "who", "which"]
+        let openers = whWords.union(["can", "could", "would", "will", "do", "does", "did", "are", "is",
+            "was", "were", "have", "has", "should", "tell", "explain", "describe", "walk", "share",
+            "discuss", "design", "implement", "compare", "define", "introduce", "summarize", "write",
+            "create", "build", "code", "program", "solve", "develop", "generate", "show", "give"])
+        if let first = rest.first, openers.contains(first) {
+            // "What I usually do is..." opens like a question and is an answer.
+            let second = rest.dropFirst().first
+            return whWords.contains(first) && second.map { speaker.contains($0) } == true
+        }
+        return words.contains(where: { speaker.contains($0) })
+    }
+
+    /// Trailing sentences that are the candidate — a stall, or the start of their answer —
+    /// taken off the end. Never the last one standing.
+    static func withoutCandidateTail(_ text: String) -> String {
+        var parts = sentences(text)
+        let before = parts.count
+        while parts.count > 1, let last = parts.last, isStallPhrase(last) || soundsLikeCandidate(last) {
+            parts.removeLast()
+        }
+        return parts.count == before ? text : parts.joined(separator: " ")
+    }
+
+    /// The finished question in front of the candidate starting to talk, or nil.
+    ///
+    /// The owner, 2026-09-15: "good question, let me think" after a question, and the answer
+    /// came a long time later. The recogniser only reports the end of speech when the ROOM
+    /// goes quiet, and the candidate talking keeps it from going quiet — so the answer waited
+    /// for them to stop, which is exactly when they needed it. When a finished question is
+    /// followed only by the candidate, the question is over and can be answered now.
+    /// Demands a real question form, so a statement is never answered early on a guess.
+    static func questionBeforeCandidateTail(_ text: String) -> String? {
+        let question = withoutCandidateTail(text)
+        // The last sentence counts too: context and then the question ("We use Kafka heavily.
+        // How would you scale it?") opens with "we", which alone reads as no question at all.
+        guard question != text,
+              classifyTurnEnding(question) == .finished,
+              isLikelyCompleteQuestion(question, requireInterrogative: true)
+                || isLikelyCompleteQuestion(lastSentence(question), requireInterrogative: true) else { return nil }
+        return question
     }
 
     private static func strippedForRepeat(_ s: String) -> String {
