@@ -1719,6 +1719,34 @@ class MainViewModel {
     private var autoBlockLogTick = 0
     private var lastEngineReady = false
     private func updateTranscript() {
+        // THE ROOM IS NOT QUIET ANY MORE. The microphone is shut, but the system-audio tap
+        // keeps running, so the interviewer starting to talk in Zoom is visible even now.
+        // Armed before a call that starts ten minutes late, the app stopped after three
+        // minutes and stayed stopped — silently, until somebody pressed Space, which is the
+        // one thing an automatic mode promises nobody has to do. Resuming only on REAL audio
+        // keeps the saving the stop exists for: a genuinely empty room stays quiet.
+        //
+        // It lives here, before the guard below, because stopForIdle() invalidates the meter
+        // timer — a check inside the meter tick could never fire once the thing it recovers
+        // from had happened. This timer runs for the life of the app.
+        if stoppedForIdle, autoModeEnabled, session.isLoggedIn, !isProcessing, engine.isRunning {
+            if #available(macOS 14.2, *), SystemAudioTapper.shared.secondsSinceAudio < 2 {
+                dlog("METER: audio in the room again — listening resumes on its own", tag: "METER")
+                stoppedForIdle = false
+                isMuted = false; isListening = true
+                justStartedListening = true; listenStartTicks = 0
+                resetAutoTurnState()
+                transcript = ""          // the answer on screen stays; only the heard text resets
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    self?.engine.clearLatestTxt()
+                    self?.engine.writeResetFlag()
+                    self?.engine.deletePauseFlag()
+                }
+                startListeningMeter()
+                showListeningNotice("LISTENING AGAIN")
+                updateMicUI()
+            }
+        }
         // Transcription can drop mid-interview — network, session timeout, engine crash —
         // and an automatic mode then quietly answers nothing while the header still looks
         // armed. This poll already runs; use it to notice the flip in BOTH directions, so
@@ -2892,7 +2920,12 @@ class MainViewModel {
         let patience = (heardAnythingThisSession || autoModeEnabled)
             ? idleListeningTimeout : silentSessionTimeout
         if now.timeIntervalSince(lastSpeechHeardAt) >= patience {
-            dlog(heardAnythingThisSession
+            // The WORDING follows the same condition as the wait. It used to be chosen by
+            // heardAnythingThisSession alone while the wait was chosen by that OR auto mode,
+            // so an automatic session that had heard nothing yet waited the full three
+            // minutes and then reported "nothing heard in 45s" — a log line that sent me
+            // looking for a bug in the timeout that was working correctly.
+            dlog(patience == idleListeningTimeout
                  ? "METER: no speech for \(Int(idleListeningTimeout / 60)) minutes — stopping the microphone"
                  : "METER: nothing heard in \(Int(silentSessionTimeout))s — stopping the microphone",
                  tag: "METER")
@@ -2927,9 +2960,13 @@ class MainViewModel {
         // with a message about the microphone — and it fired exactly then, because in an
         // automatic mode the mic stays open through the whole answer by design. The mic
         // going quiet is worth knowing and is not worth losing the answer over.
+        // ALWAYS say how to come back. "MIC OFF — NOTHING HEARD" was shown whenever nothing
+        // had been said yet — which in an automatic mode is the ordinary case of being armed
+        // before the call starts — and it told the user the one thing they did not need to
+        // know while leaving out the one thing they did.
         showListeningNotice(heardAnythingThisSession
             ? "MIC OFF AFTER \(Int(idleListeningTimeout / 60)) MIN QUIET — SPACE TO RESUME"
-            : "MIC OFF — NOTHING HEARD")
+            : "MIC OFF — NOTHING HEARD YET — SPACE TO RESUME")
         updateMicUI()
     }
 

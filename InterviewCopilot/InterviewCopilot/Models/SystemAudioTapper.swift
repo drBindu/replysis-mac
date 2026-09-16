@@ -58,6 +58,18 @@ nonisolated final class SystemAudioTapper {
     }
     private let pcmQueue = PCMQueue()
 
+    /// When real audio last came through the tap, as seconds since the reference date.
+    ///
+    /// The tap keeps running while the microphone is paused, so this is the one thing that
+    /// can tell an app that stopped listening on a quiet room that the room is no longer
+    /// quiet — the interviewer talking in Zoom shows up here with the mic still shut.
+    /// Written by the writer thread, read by the main actor: a plain Double is atomic enough
+    /// for a timestamp that only ever moves forward.
+    nonisolated(unsafe) private(set) var lastAudioAt: TimeInterval = 0
+    var secondsSinceAudio: TimeInterval {
+        lastAudioAt == 0 ? .greatestFiniteMagnitude : Date().timeIntervalSinceReferenceDate - lastAudioAt
+    }
+
     // MARK: - Core Audio helpers
     private static func sysObjectID(_ selector: AudioObjectPropertySelector) -> AudioObjectID {
         var addr = AudioObjectPropertyAddress(mSelector: selector,
@@ -320,7 +332,10 @@ nonisolated final class SystemAudioTapper {
                     }
                     if failed { break writeLoop }   // unexpected write error → reopen both
                     usleep(5_000)
-                    if peakThisSec > 300 { sawAudio = true }   // ~1% full-scale = real audio
+                    if peakThisSec > 300 {
+                        sawAudio = true                       // ~1% full-scale = real audio
+                        self.lastAudioAt = Date().timeIntervalSinceReferenceDate
+                    }
                     let now = Date(); let el = now.timeIntervalSince(lastLog)
                     if el >= 2.0 {
                         dlog(String(format: "in-app tap: peak=%.3f  rate=%.0fB/s  behind<=%.0fms  dropped=%.0fms",
