@@ -1718,6 +1718,11 @@ class MainViewModel {
     private var transcriptLogTick = 0
     private var autoBlockLogTick = 0
     private var lastEngineReady = false
+    /// Set while the "live transcription is paused" notice is on screen, with what the app was
+    /// doing before it appeared. Without these, the notice outlived the failure: see the
+    /// recovery in updateTranscript and handleSpeechKeyError.
+    private var keyErrorNoticeShowing = false
+    private var wasListeningBeforeKeyError = false
     private func updateTranscript() {
         // THE ROOM IS NOT QUIET ANY MORE. The microphone is shut, but the system-audio tap
         // keeps running, so the interviewer starting to talk in Zoom is visible even now.
@@ -1758,6 +1763,35 @@ class MainViewModel {
                 aiAnswerHint = engine.isReady
                     ? idleHintForCurrentMode
                     : "⚠ Reconnecting to the speech service — nothing is being heard right now."
+            }
+            // THE NOTICE MUST NOT OUTLIVE THE FAILURE. Measured 2026-09-16: the speech key was
+            // rejected at 14:31, the app re-fetched a good key and was ONLINE again at 14:41 —
+            // and the "live transcription is paused" notice stayed on screen for five hours,
+            // muted, while transcription worked. The line above is the only thing that clears
+            // the warning and it is gated on isListening, which handleSpeechKeyError had just
+            // set to false: a recovery behind the flag its own failure handler cleared.
+            if engine.isReady, keyErrorNoticeShowing {
+                keyErrorNoticeShowing = false
+                if aiAnswer.hasPrefix("⚠ Live transcription is paused") { aiAnswer = "" }
+                dlog("AUTO: the speech service is back — clearing the paused notice", tag: "AUTO")
+                if wasListeningBeforeKeyError, session.isLoggedIn, !isProcessing {
+                    wasListeningBeforeKeyError = false
+                    stoppedForIdle = false
+                    isMuted = false; isListening = true
+                    justStartedListening = true; listenStartTicks = 0
+                    resetAutoTurnState()
+                    transcript = ""
+                    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                        self?.engine.clearLatestTxt()
+                        self?.engine.writeResetFlag()
+                        self?.engine.deletePauseFlag()
+                    }
+                    startListeningMeter()
+                    showListeningNotice("TRANSCRIPTION IS BACK")
+                    aiAnswerHint = idleHintForCurrentMode
+                } else {
+                    aiAnswerHint = "Transcription is back. Press SPACE to listen."
+                }
             }
             updateMicUI()
         }
@@ -3767,6 +3801,10 @@ class MainViewModel {
     /// keep the app fully usable via typed questions + screen analysis. The engine keeps
     /// re-fetching in the background, so this clears itself the moment the key is fixed.
     private func handleSpeechKeyError() {
+        // Remembered so the recovery can put things back as they were, rather than leaving a
+        // muted app showing a warning about a service that has already come back.
+        wasListeningBeforeKeyError = isListening || (autoModeEnabled && !stoppedForIdle)
+        keyErrorNoticeShowing = true
         isListening = false; isMuted = true
         micStatus = "NO MIC"; micColor = Color(white: 0.42)
         // Two different failures arrive down this path and they are not the user's to
