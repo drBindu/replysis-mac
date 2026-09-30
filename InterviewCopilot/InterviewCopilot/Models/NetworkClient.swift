@@ -116,6 +116,9 @@ class NetworkClient {
     ///   • network blip / 5xx before the first token → retry once, automatically & silently.
     ///   • connection drop *mid-answer* → keep the partial answer instead of wiping it
     ///     with a scary error (a truncated answer beats a blank one in front of an interviewer).
+    /// How long to wait before the one silent retry of a failed answer request.
+    private static let answerRetryDelay: UInt64 = 250_000_000
+
     private func streamSSE(url: URL, body: Data?,
                            onToken: @escaping (String) -> Void,
                            onDone: @escaping () -> Void,
@@ -156,7 +159,10 @@ class NetworkClient {
                             onMain { onError("RATE_LIMIT:\(wait)") }; return
                         }
                         if !(200...299).contains(http.statusCode) {
-                            if attempt == 0 { continue }   // transient 5xx → one silent retry
+                            // Transient 5xx → ONE silent retry, after a beat. Straight away it can
+                            // hit the very same fault; 250 ms is Windows' measured wait, and safe
+                            // because nothing has streamed and the server has refunded.
+                            if attempt == 0 { try? await Task.sleep(nanoseconds: Self.answerRetryDelay); continue }
                             onMain { onError("Server error (\(http.statusCode))") }; return
                         }
                     }
@@ -178,12 +184,12 @@ class NetworkClient {
                     // Only call onDone when the server actually streamed tokens — an
                     // empty response (yielded=false) means the server sent nothing and
                     // should be retried or surfaced as an error, not a blank answer.
-                    if yielded { onMain { onDone() } } else if attempt == 0 { continue }
+                    if yielded { onMain { onDone() } } else if attempt == 0 { try? await Task.sleep(nanoseconds: Self.answerRetryDelay); continue }
                     else { onMain { onError("Server returned empty response. Please try again.") } }
                     return
                 } catch {
                     // Clean failure before a single token arrived → silent retry once.
-                    if attempt == 0 && !yielded { continue }
+                    if attempt == 0 && !yielded { try? await Task.sleep(nanoseconds: Self.answerRetryDelay); continue }
                     // Dropped mid-answer with text already on screen → keep the partial answer.
                     if yielded { onMain { onDone() } }
                     else { onMain { onError("Connection issue — please try again.") } }

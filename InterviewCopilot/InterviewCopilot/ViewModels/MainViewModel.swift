@@ -28,8 +28,15 @@ class MainViewModel {
     /// wrong there, and undermines trust in a mode whose entire promise is pressing nothing.
     var idleHintForCurrentMode: String {
         switch listeningMode {
-        case .manual: return "Ready. Press ⌥ SPACE to start listening, then ⌥ SPACE again to get your answer."
-        case .auto:   return "Listening. The answer appears when the question ends."
+        // In Interview mode the person must be told their own voice is not picked up: a
+        // tester who spoke to the app for minutes saw nothing and decided it was broken
+        // (Windows, 2026-09-29). Practice hears them, so it needs no such line.
+        case .manual: return practiceAudioOn
+            ? "Ready. Press ⌥ SPACE to start listening, then ⌥ SPACE again to get your answer."
+            : "Ready. Press ⌥ SPACE to start listening, then ⌥ SPACE again to get your answer. Interview mode does not pick up your own voice. To try it by speaking, choose Practice above."
+        case .auto:   return practiceAudioOn
+            ? "Listening. The answer appears when the question ends."
+            : "Auto is on. When the interviewer asks a question in your meeting, the answer appears here on its own. Interview mode does not pick up your own voice. To try it by speaking, choose Practice above. If an answer does not come, press ⌥ SPACE."
         }
     }
     var showThinking = false
@@ -921,11 +928,14 @@ class MainViewModel {
                 self?.engine.writeResetFlag()
                 self?.engine.deletePauseFlag()
             }
+            listenTurnID = UUID()
+            confirmCaptureResumed(listenTurnID)
             updateMicUI()
             // Wake the backend now (TLS + cold JVM) so the first answer isn't slow.
             NetworkClient.shared.warmUp()
         } else {
             dlog("⌥ SPACE: muting → sending to AI. transcript='\(transcript.prefix(80))'", tag: "SPACE")
+            listenTurnID = UUID()      // any recheck still running belongs to the turn that just ended
             isListening = false
             engine.writePauseFlag()
             isMuted = true
@@ -2118,6 +2128,7 @@ class MainViewModel {
             lastRawTranscript = raw
             lastSpeechHeardAt = Date()   // somebody is speaking — the room is not empty
             heardAnythingThisSession = true
+            heardEverThisRun = true
             if pendingSpeechStartedAt == nil, !lastAnsweredQuestion.isEmpty,
                !remainingSpeech(raw).isEmpty {
                 pendingSpeechStartedAt = Date()
@@ -3205,6 +3216,13 @@ class MainViewModel {
     static let listeningMeterInterval: TimeInterval = 5
 
     private let idleListeningTimeout: TimeInterval = 180
+    /// Auto's ONE idle rule: fifteen minutes of real silence (Windows AutoIdleListeningTimeout).
+    /// Auto listens by design and re-arms itself after every answer, so the Space-press
+    /// timeouts cannot apply to it. Now that listening is metered by speech, an open mic in a
+    /// quiet room costs the person nothing, so stopping it after three minutes only left the
+    /// next question unheard while the candidate was still answering.
+    private let autoIdleListeningTimeout: TimeInterval = 900
+    private var interviewSilentTipShown = false
     /// How long to wait when nothing has been said AT ALL.
     ///
     /// Three minutes is right for a pause inside a conversation, where somebody is thinking
@@ -3217,6 +3235,9 @@ class MainViewModel {
 
     /// Has anything been heard at all in the current listening session?
     private var heardAnythingThisSession = false
+    /// Anything at all heard since the app started. The 45-second Interview tip reads this,
+    /// not heardAnythingThisSession, which is reset every time listening restarts.
+    private var heardEverThisRun = false
 
     /// A passing state worth knowing about, shown in the header beside the other passing
     /// states — never in the answer panel. See stopForIdle.
@@ -3339,8 +3360,27 @@ class MainViewModel {
         // seconds later contradicts the thing they just asked for: armed before a call that
         // has not started yet is the ordinary case, not a mistake. Three minutes still
         // catches the app left open on an empty room, which is what the waste actually is.
-        let patience = (heardAnythingThisSession || autoModeEnabled)
-            ? idleListeningTimeout : silentSessionTimeout
+        let patience = autoModeEnabled
+            ? autoIdleListeningTimeout
+            : (heardAnythingThisSession ? idleListeningTimeout : silentSessionTimeout)
+
+        // INTERVIEW MODE HEARS THE MEETING ONLY, never the person's own voice, by design, and
+        // nothing said so. After 45 seconds with nothing heard at all, say it once and offer
+        // the switch (Windows ListeningMeterTick, 2026-09-29).
+        // Measured on the SESSION clock, as Windows does (_sessionSeconds >= 45). An earlier
+        // version measured from listeningSince, which this tick re-stamps every five seconds,
+        // so the condition could never be true and the tip never appeared.
+        if !heardEverThisRun, !interviewSilentTipShown, !practiceAudioOn,
+           sessionSeconds >= 45, alertTitle.isEmpty {
+            interviewSilentTipShown = true
+            dlog("MODE: Interview mode heard nothing for 45s; offered a switch to Practice", tag: "MODE")
+            showAlert(title: "Nothing heard yet",
+                      body: "Interview mode listens to your meeting only, so your own voice is not picked up. If you are speaking yourself, switch to Practice.",
+                      actionLabel: "Switch to Practice") { [weak self] in
+                self?.selectAudioSource(practice: true)
+            }
+        }
+
         if now.timeIntervalSince(lastSpeechHeardAt) >= patience {
             // The WORDING follows the same condition as the wait. It used to be chosen by
             // heardAnythingThisSession alone while the wait was chosen by that OR auto mode,
@@ -3409,6 +3449,8 @@ class MainViewModel {
     /// - Parameter synchronously: block briefly for the send. Used on app termination,
     ///   where an async Task would be killed with the process before it reached the wire.
     func flushListeningMeterOnExit(synchronously: Bool = false) {
+        // The last answer must be on disk before the process can end.
+        if synchronously { Self.drainSessionLog() }
         if let since = listeningSince {
             // Speech time here too. This is the last place the wall clock was still being
             // billed, so an app quit while listening to a silent room charged for the wait.
@@ -3568,30 +3610,48 @@ class MainViewModel {
         AppUpdater.shared.setInterviewActive(false)
     }
 
+    /// One serial queue for every transcript write: the file work happens off the main thread
+    /// (it used to run there once per answer) and entries still land in the order they were
+    /// made. Windows moved its writer the same way after it was found decrypting and
+    /// re-encrypting the whole file on the UI thread per answer.
+    private static let sessionLogQueue = DispatchQueue(label: "replysis.session-log", qos: .utility)
+
+    /// Wait for queued transcript writes to reach the disk. Finish and quit call this, so the
+    /// last answer is in the file before anything reads it back or the process ends.
+    nonisolated static func drainSessionLog(timeout: TimeInterval = 5) {
+        let done = DispatchSemaphore(value: 0)
+        sessionLogQueue.async { done.signal() }
+        _ = done.wait(timeout: .now() + timeout)
+    }
+
     private func appendToSessionLog(q: String, a: String) {
         syncTurnToCloud(q: q, a: a)
         guard let path = sessionLogPath else { return }
         let entry = "Q: \(q)\nA: \(a)\n\n"
-        do {
-            if !FileManager.default.fileExists(atPath: path.path) {
-                // Lazy creation: write header + first entry atomically so empty
-                // sessions never produce files that clutter Past Sessions view.
-                let fmt = DateFormatter()
-                fmt.dateFormat = "yyyy-MM-dd HH:mm"
-                let resumeName = ResumeParser.extractName(resumeText)
-                let header = "SESSION \(sessionNumber) | ai | \(fmt.string(from: Date())) | RESUME: \(resumeName)\n\n"
-                try (header + entry).write(to: path, atomically: true, encoding: .utf8)
-                // Interview transcripts hold the questions asked plus every AI answer built
-                // from the resume — lock to owner-only, same as the resume itself.
-                try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
-                return
+        // Everything the write needs is read HERE, on the main actor; the queue touches none of it.
+        let header: String = {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd HH:mm"
+            return "SESSION \(sessionNumber) | ai | \(fmt.string(from: Date())) | RESUME: \(ResumeParser.extractName(resumeText))\n\n"
+        }()
+        Self.sessionLogQueue.async {
+            do {
+                if !FileManager.default.fileExists(atPath: path.path) {
+                    // Lazy creation: write header + first entry atomically so empty
+                    // sessions never produce files that clutter Past Sessions view.
+                    try (header + entry).write(to: path, atomically: true, encoding: .utf8)
+                    // Interview transcripts hold the questions asked plus every AI answer built
+                    // from the resume — lock to owner-only, same as the resume itself.
+                    try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
+                    return
+                }
+                let handle = try FileHandle(forWritingTo: path)
+                try handle.seekToEnd()
+                try handle.write(contentsOf: entry.data(using: .utf8) ?? Data())
+                try handle.close()
+            } catch {
+                dlog("Session log write failed: \(error)", tag: "SESSION")
             }
-            let handle = try FileHandle(forWritingTo: path)
-            try handle.seekToEnd()
-            try handle.write(contentsOf: entry.data(using: .utf8) ?? Data())
-            try handle.close()
-        } catch {
-            dlog("Session log write failed: \(error)", tag: "SESSION")
         }
     }
 
@@ -3720,6 +3780,34 @@ class MainViewModel {
             await self.fetchCredits()
             if await self.session.fetchSpeechmaticsKeyAsync(forceRefresh: true, userInitiated: true) {
                 if !self.engine.isRunning { self.engine.start(smKey: self.session.speechmaticsKey) }
+            }
+        }
+    }
+
+    // ── Unmute must be CONFIRMED ──────────────────────────────────────────────────────
+    //
+    // Deleting the pause flag is the real "microphone on" operation; the booleans only update
+    // the screen. A restart or a late write can put the flag back a moment after the delete,
+    // and the result is a split state: the window says LISTENING while every engine heartbeat
+    // stays paused, until the person tries Space again a minute later. Windows saw exactly
+    // that in a live run (16:42:23). So: look again at 40, 100, 250 and 500 ms, remove a late
+    // flag, stop at once if this turn has already ended, and if it never clears, say so.
+    private var listenTurnID = UUID()
+
+    private func confirmCaptureResumed(_ turn: UUID) {
+        Task { [weak self] in
+            for delayMs in [40, 100, 250, 500] {
+                try? await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000)
+                guard let self, self.listenTurnID == turn, self.isListening else { return }
+                if FileManager.default.fileExists(atPath: self.engine.pauseFlagPath.path) {
+                    dlog("MIC: the pause flag came back \(delayMs)ms after unmuting — clearing it", tag: "MIC")
+                    self.engine.deletePauseFlag()
+                }
+            }
+            guard let self, self.listenTurnID == turn, self.isListening else { return }
+            if FileManager.default.fileExists(atPath: self.engine.pauseFlagPath.path) {
+                dlog("MIC: the pause flag would not clear — the engine is still paused", tag: "MIC")
+                self.showListeningNotice("MICROPHONE COULD NOT START. PRESS SPACE TO RETRY")
             }
         }
     }

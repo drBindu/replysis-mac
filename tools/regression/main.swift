@@ -264,11 +264,6 @@ check(AutoTurnDetector.latestQuestionIfMultiple("Our team runs about 40 microser
 check(AutoTurnDetector.latestQuestionIfMultiple("What is Java?") == nil, "a single question stays whole")
 check(AutoTurnDetector.latestQuestionIfMultiple("We are building a payments platform that handles ten thousand transactions per second. How would you design the database layer?") == nil, "long context plus one question stays whole")
 
-enum UserSessionRetryPolicy {
-    static func noConnection(_ failures: Int) -> Double {
-        switch failures { case ...1: return 2; case 2: return 4; case 3: return 8; case 4: return 15; default: return 30 }
-    }
-}
 // ── Plans and wording (briefing section 2, Windows PlanFacts.cs) ──────────────────────
 // Customers never see "credits", "minutes", "hours" or the old numbers. Every string
 // PlanFacts can produce, across every account state, is checked here.
@@ -389,8 +384,10 @@ check(detect(net: true) == .noNetwork, "no network")
 check(detect(status: 429, listening: true) == .noListeningTime, "a listening refusal outlives a later rate limit")
 check(detect(status: 429, answers: true) == .noAnswers, "an answers refusal outlives a later rate limit")
 check(detect(status: 429, waiting: true) == .waitingToReconnect, "a bare rate limit is a passing reconnect")
-check(UserSessionRetryPolicy.noConnection(1) == 2 && UserSessionRetryPolicy.noConnection(2) == 4 && UserSessionRetryPolicy.noConnection(3) == 8
-      && UserSessionRetryPolicy.noConnection(4) == 15 && UserSessionRetryPolicy.noConnection(9) == 30, "no-connection retry waits 2, 4, 8, 15, then 30 seconds")
+check([1, 2, 3, 4, 5, 9].map(RecoveryPolicy.keyRetryAfterNoConnection) == [2, 4, 8, 15, 30, 30], "no-connection retry waits 2, 4, 8, 15, then 30 seconds")
+check([0, 1, 2, 3, 4, 20].map { RecoveryPolicy.credentialRenewalWait(attempt: $0) } == [5, 15, 30, 60, 60, 60], "rejected credentials renew after 5, 15, 30 seconds, then every minute")
+check(RecoveryPolicy.credentialRenewalWait(attempt: 5, mintsInLastHour: 10) == 600, "past ten tokens an hour the fast retries stop, to protect the twelve-an-hour allowance")
+check(RecoveryPolicy.credentialRenewalWait(attempt: 5, mintsInLastHour: 9) == 60, "under the cap the retries stay fast")
 
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

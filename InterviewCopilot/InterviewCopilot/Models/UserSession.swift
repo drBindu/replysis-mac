@@ -367,10 +367,6 @@ class UserSession {
     private(set) var speechRetryAfter = Date.distantPast
     private var keyNoConnectionFailures = 0
 
-    /// Waits 2, 4, 8, 15 then 30 seconds after "no connection" (Windows RecoveryPolicy).
-    static func keyRetryAfterNoConnection(_ failures: Int) -> TimeInterval {
-        switch failures { case ...1: return 2; case 2: return 4; case 3: return 8; case 4: return 15; default: return 30 }
-    }
     /// How long a definite refusal (402) is remembered. Windows measured why: the server
     /// allows a signed-in account 12 key requests an hour, and retrying every 30 seconds
     /// used them all in six minutes, after which every reply was a rate limit that hid the
@@ -595,7 +591,7 @@ class UserSession {
             // screen: it is no longer the latest thing that happened. Nothing reached the
             // server, so nothing counts against its limits.
             keyNoConnectionFailures += 1
-            let wait = Self.keyRetryAfterNoConnection(keyNoConnectionFailures)
+            let wait = RecoveryPolicy.keyRetryAfterNoConnection(keyNoConnectionFailures)
             speechRetryAfter = Date().addingTimeInterval(wait)
             speechKeyLastStatus = 0
             dlog("SM key fetch: no connection (\(error.localizedDescription)) — trying again in \(Int(wait))s", tag: "AUTH")

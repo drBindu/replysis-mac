@@ -103,6 +103,10 @@ class SpeechmaticsEngine {
     private var retryTimer: Timer?
     private var engineCancelled = false
     private var authErrorHandled = false
+    /// How many times in a row the credentials were rejected without a session getting online,
+    /// and when the fast retries last minted a token (see RecoveryPolicy.credentialRenewalWait).
+    private var credentialRecoveryAttempt = 0
+    private var recoveryMintTimes: [Date] = []
     private var selectedDeviceId = -1
     private var capturesMicrophone = false
     private var inputRoute = AudioInputRouteTracker()
@@ -554,6 +558,7 @@ class SpeechmaticsEngine {
                     self?.isReady = true
                     self?.offlineSince = nil      // live again; the offline clock stops
                     self?.offlineRestarts = 0
+                    self?.credentialRecoveryAttempt = 0
                 }
             }
             // A dropped session is NOT the same event as a crashed process, and handling
@@ -691,12 +696,18 @@ class SpeechmaticsEngine {
         // attempt per ten minutes keeps the loop the comment above guards against impossible;
         // the ten-minute timer is still there if this one fails, and it stands down by itself
         // once the engine is running again.
-        if !balanceExhausted, Date().timeIntervalSince(lastQuickKeyRecoveryAt) > 600 {
+        if !balanceExhausted {
+            // 5, 15, 30 seconds, then every minute — never permanent (RecoveryPolicy).
+            recoveryMintTimes.removeAll { Date().timeIntervalSince($0) > 3600 }
+            let wait = RecoveryPolicy.credentialRenewalWait(attempt: credentialRecoveryAttempt,
+                                                            mintsInLastHour: recoveryMintTimes.count)
+            credentialRecoveryAttempt += 1
             lastQuickKeyRecoveryAt = Date()
-            dlog("SM: key rejected — one immediate re-fetch, since an expired token is the usual cause", tag: "SM")
+            dlog("SM: key rejected — renewing it in \(Int(wait))s (attempt \(credentialRecoveryAttempt))", tag: "SM")
             Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
                 guard let self, !self.isRunning, !self.stoppedByUser else { return }
+                self.recoveryMintTimes.append(Date())
                 if await UserSession.shared.fetchSpeechmaticsKeyAsync(), !self.isRunning, !self.stoppedByUser {
                     self.start(smKey: UserSession.shared.speechmaticsKey)
                 }
