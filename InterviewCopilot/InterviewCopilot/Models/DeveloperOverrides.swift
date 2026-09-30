@@ -27,10 +27,15 @@ enum DeveloperOverrides {
     static let backendURL: String? = loopback("REPLYSIS_BACKEND_URL")
     /// REPLYSIS_TOKEN_URL=http://127.0.0.1:18081/token  (where a sign-in refresh goes)
     static let tokenURL: String? = loopback("REPLYSIS_TOKEN_URL")
+    /// REPLYSIS_FLOW_SCRIPT="start:6,back:4,start:6,finish:4": presses the app's own controls on a
+    /// timer, so the window and view transitions can be exercised without accessibility tools.
+    /// Debug builds only. Unlike the two above it involves no network, so it needs no loopback.
+    static let flowScript: String? = ProcessInfo.processInfo.environment["REPLYSIS_FLOW_SCRIPT"]
     /// REPLYSIS_TEST_SESSION=stale  -> a fake signed-in user whose token is "stale-token".
     static let testSession: String? =
         backendURL == nil ? nil : ProcessInfo.processInfo.environment["REPLYSIS_TEST_SESSION"]
     #else
+    static let flowScript: String? = nil
     static let backendURL: String? = nil
     static let tokenURL: String? = nil
     static let testSession: String? = nil

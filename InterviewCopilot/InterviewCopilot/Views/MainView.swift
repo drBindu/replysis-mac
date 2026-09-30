@@ -14,7 +14,6 @@ struct MainView: View {
     @Environment(MainViewModel.self) var vm
     @State private var resumeCollapsed = false
     @State private var showSettings    = false
-    @State private var showSessions    = false
     @State private var showLogin       = false
     @State private var showSignOutConfirm = false
     @State private var showDebugLog    = false
@@ -30,6 +29,11 @@ struct MainView: View {
     @State private var dropTargeted = false   // resume drop-zone hover highlight
     @State private var didAutoSlide = false    // one-shot: auto-collapse the setup panel when the interview starts
 
+    /// Setup is drawn SOLID. The glass backdrop exists to make the window hard to see during a
+    /// call; Setup is never on screen during one, and the same transparency there only makes
+    /// the page hard to read against whatever is behind it (Windows EnterSetupStep).
+    private var setupOpacity: Double { vm.inSetup ? 1.0 : vm.mainWindowOpacity }
+
     var body: some View {
         // ── Outer glass container — matches original #B3080C14 border with CornerRadius 14
         ZStack {
@@ -42,8 +46,8 @@ struct MainView: View {
             RoundedRectangle(cornerRadius: 14)
                 .fill(LinearGradient(
                     colors: [
-                        Color(red: 3/255,  green: 7/255,  blue: 18/255).opacity(vm.mainWindowOpacity),
-                        Color(red: 5/255,  green: 15/255, blue: 30/255).opacity(vm.mainWindowOpacity)
+                        Color(red: 3/255,  green: 7/255,  blue: 18/255).opacity(setupOpacity),
+                        Color(red: 5/255,  green: 15/255, blue: 30/255).opacity(setupOpacity)
                     ],
                     startPoint: .topLeading, endPoint: .bottomTrailing))
 
@@ -68,12 +72,23 @@ struct MainView: View {
                 // the message lasted, tidying itself when the message timed out. A separate
                 // row cannot squeeze the controls, and the message is easier to read.
                 transientMessageRow
-                bodyArea
+                if vm.inSetup { setupPage } else { bodyArea }
             }
+            if vm.showOnboarding { onboardingOverlay }
         }
         .ignoresSafeArea()
+        .onChange(of: vm.appStep) {
+            // Starting the interview tucks the resume column away, as Windows does. NOT animated:
+            // this is a whole-page swap, and animating the column's width at the same moment
+            // made the hosting view resize the window every frame until AppKit's layout-pass
+            // limit aborted the process (crash on Start interview, 2026-09-30).
+            var t = Transaction(); t.disablesAnimations = true
+            withTransaction(t) { resumeCollapsed = vm.appStep == .interview }
+        }
         .onAppear {
             vm.onAppear()
+            vm.showOnboardingIfFirstRun()
+            vm.runFlowScriptIfAny()
             // Start collapsed if already filled — don't make the user hide it manually
             resumeOpen = vm.resumeText.isEmpty
         }
@@ -102,7 +117,7 @@ struct MainView: View {
         // Pressing Space (or tapping the mic) while signed out routes here → open sign-in.
         .onReceive(NotificationCenter.default.publisher(for: .showLogin)) { _ in showLogin = true }
         .sheet(isPresented: $showSettings)  { SettingsView() }
-        .sheet(isPresented: $showSessions)  { SessionsView() }
+        .sheet(isPresented: Bindable(vm).sessionsOpen)  { SessionsView() }
         .sheet(isPresented: $showLogin)     { LoginView() }
         .sheet(isPresented: $showDebugLog)  { DebugLogView() }
         // First-run permission explainer (fixed-size sheet so it can never stretch the
@@ -144,11 +159,17 @@ struct MainView: View {
         // to: the brand strapline first, then the brand wordmark, then the mic hint. Each
         // rung is a complete layout; ViewThatFits picks the first that fits honestly rather
         // than squeezing one that does not.
-        ViewThatFits(in: .horizontal) {
-            headerRow(.full)
-            headerRow(.noStrapline)
-            headerRow(.iconBrand)
-            headerRow(.minimal)
+        Group {
+            if vm.inSetup {
+                setupHeaderRow
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    headerRow(.full)
+                    headerRow(.noStrapline)
+                    headerRow(.iconBrand)
+                    headerRow(.minimal)
+                }
+            }
         }
         .padding(.horizontal, 18)
         .frame(height: 64)
@@ -361,7 +382,20 @@ struct MainView: View {
             // profile dropdown (Settings/Sessions/Sign Out) on click, which felt wrong —
             // clicking specifically the credits number shouldn't dump you into the whole
             // account menu. Now opens its own small popover with just the credits card.
-            if vm.showCreditsBadge {
+            creditsBadgeView
+
+            }
+
+            headerSeparator
+
+            accountAndCloseControls
+        }
+    }
+
+    /// The answers badge. Shared by the interview header and the Setup header.
+    @ViewBuilder
+    var creditsBadgeView: some View {
+        if vm.showCreditsBadge {
                 Button(action: { vm.askAgainNow(); showCreditsPopover.toggle() }) {
                     Text(vm.creditsText)
                         .font(.system(size: 12, weight: .semibold))
@@ -380,11 +414,11 @@ struct MainView: View {
                         .background(Color(hex: "#0b1018"))
                 }
             }
+    }
 
-            }
-
-            headerSeparator
-
+    /// Profile (or Sign In) and Close. Shared by the interview header and the Setup header.
+    @ViewBuilder
+    var accountAndCloseControls: some View {
             // Profile / account  → opens rich dropdown
             if vm.showProfile {
                 profileButton
@@ -408,7 +442,6 @@ struct MainView: View {
                 NSApplication.shared.terminate(nil)
             }
             .padding(.leading, 2)
-        }
     }
 
     /// One hairline used between header groups, so the spacing reads as deliberate
@@ -698,7 +731,7 @@ struct MainView: View {
                 }
                 menuRow(icon: "clock.arrow.circlepath", title: "Past Sessions",
                         subtitle: "Review previous interviews") {
-                    showProfileMenu = false; showSessions = true
+                    showProfileMenu = false; vm.sessionsOpen = true
                 }
                 // A guest (free trial, no account) previously had NO way to reach the
                 // sign-in screen except clicking "Sign Out" — confusing, since they never
@@ -1286,26 +1319,19 @@ struct MainView: View {
 
                     // Action buttons
                     HStack(spacing: 6) {
-                        // Answer length: Concise ⇄ Detailed
-                        Button(action: { vm.conciseAnswers.toggle(); vm.saveSettings() }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: vm.conciseAnswers ? "bolt.fill" : "text.alignleft")
-                                    .font(.system(size: 10, weight: .semibold))
-                                Text(vm.conciseAnswers ? "Concise" : "Detailed")
-                                    .font(.system(size: 11, weight: .semibold))
-                            }
-                            .foregroundColor(vm.conciseAnswers ? Color(hex: "#fbbf24") : Color(hex: "#94A3B8"))
-                            .padding(.horizontal, 9).padding(.vertical, 5)
-                            .background(vm.conciseAnswers ? Color(hex: "#241a06") : Color(hex: "#1A1F2E"))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(
-                                vm.conciseAnswers ? Color(hex: "#fbbf24").opacity(0.4) : Color.white.opacity(0.2),
-                                lineWidth: 1))
-                            .cornerRadius(8)
+                        // Answer length, as on the Setup page: Short or Detailed. Shows what is
+                        // ON NOW; the old button showed the state it would switch TO, which read
+                        // as "Detailed" while answers were at their default length.
+                        Button(action: { vm.setAnswerDetailed(!vm.answerDetailed) }) {
+                            Text(vm.answerDetailed ? "Detailed" : "Short")
+                                .font(.system(size: 11, weight: .semibold))
+                                .lineLimit(1).fixedSize()
                         }
-                        .buttonStyle(.plain)
-                        .help(vm.conciseAnswers
-                              ? "Concise — short, spoken-length answers. Tap for detailed."
-                              : "Detailed — full structured answers. Tap for concise.")
+                        .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
+                                                      minHeight: 28, horizontalPadding: 11, verticalPadding: 3))
+                        .help(vm.answerDetailed
+                              ? "Detailed answers: fuller, with an example, about a minute to say. Tap for short."
+                              : "Short answers: fit the question, easy to say fast. Tap for detailed.")
 
                         // Step back through this session's answers. Instant, local, and it
                         // never calls the model: the answer a stray voice replaced is one
@@ -1314,6 +1340,28 @@ struct MainView: View {
 
                         ghostBtn("📋 Copy") { copyAnswer() }
                         ghostBtn("✕ Clear") { vm.clearAnswer() }
+                        // Back to the Setup page without ending the session, and Finish: save,
+                        // and review this interview in Past sessions.
+                        Button(action: { vm.backToSetup() }) {
+                            Text("Setup").font(.system(size: 11, weight: .semibold)).lineLimit(1).fixedSize()
+                        }
+                        .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
+                                                      minHeight: 28, horizontalPadding: 11, verticalPadding: 3))
+                        .accessibilityLabel("Setup")
+                        .help("Return to interview setup")
+
+                        Button(action: { Task { _ = await vm.finishInterview() } }) {
+                            Text(vm.finishing ? "Saving..." : "Finish")
+                                .font(.system(size: 11, weight: .semibold)).lineLimit(1).fixedSize()
+                                .foregroundColor(Color(hex: "#0B0F17"))
+                                .padding(.horizontal, 13).frame(minHeight: 28)
+                                .background(RoundedRectangle(cornerRadius: 6).fill(Color(hex: "#EBF2FF")))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(vm.finishing)
+                        .accessibilityLabel("Finish")
+                        .help("Finish, save, and review this interview in Past Sessions.")
+
                         Button(action: { vm.newSession() }) {
                             HStack(spacing: 6) {
                                 Image(systemName: "plus")
@@ -1944,6 +1992,367 @@ struct ReadScreenButtonLabel: View {
             Text("F8")
                 .font(.system(size: 9, weight: .semibold))
                 .opacity(0.55)
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// SETUP PAGE — the first thing a person sees (Windows 3665daa, 2026-09-28).
+//
+// A full page, not the narrow side panel: the person's context on the left (resume, role,
+// what they want), how the app should listen on the right, and one pinned bar with the single
+// action that starts the interview. Copy is Windows' word for word, so the two apps read the
+// same. Nothing here listens or watches the screen (see MainViewModel.AppStep).
+// ══════════════════════════════════════════════════════════════════════════
+extension MainView {
+
+    // Windows palette, all neutral silver: no green accents (the owner's rule).
+    private var setupTitle:  Color { Color(hex: "#FAFBFD") }
+    private var setupMuted:  Color { Color(hex: "#8294AB") }
+    private var setupLabel:  Color { Color(hex: "#7E90A8") }
+    private var setupBody:   Color { Color(hex: "#93A4BA") }
+
+    var setupPage: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                HStack(alignment: .top, spacing: 0) {
+                    setupContextColumn
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    Rectangle().fill(Color.white.opacity(0.08)).frame(width: 1)
+                        .padding(.horizontal, 28)
+                    setupListeningColumn
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                .padding(.horizontal, 32).padding(.top, 22).padding(.bottom, 26)
+            }
+            startInterviewBar
+        }
+    }
+
+    // ── Header: brand, answers, account. No microphone and no screen tools on this page. ──
+    var setupHeaderRow: some View {
+        HStack(spacing: 13) {
+            brandView(.full)
+            Spacer(minLength: 12)
+            creditsBadgeView
+            Button(action: { vm.replayIntro() }) {
+                Image(systemName: "questionmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .frame(width: 26, height: 26)
+                    .foregroundColor(Color(hex: "#cbd5e1"))
+                    .background(Circle().fill(Color.white.opacity(0.06)))
+                    .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .help("Replay the quick intro")
+            headerSeparator
+            accountAndCloseControls
+        }
+    }
+
+    // ── Left: the person's context ──────────────────────────────────────────────────────
+    var setupContextColumn: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Interview setup")
+                    .font(.system(size: 19, weight: .bold)).foregroundColor(setupTitle)
+                Text("Prepare your context once. Replysis keeps it available throughout the interview.")
+                    .font(.system(size: 11)).foregroundColor(setupMuted)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                setupSectionTitle("Upload your resume", "Answers use your real experience, projects and tools.")
+                resumeSetupCard
+                savedResumesButton
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                setupSectionTitle("Add the company and role", "Tailors answers to this role.")
+                setupTextField("e.g. Google, Stripe, Amazon", text: Bindable(vm).companyName, focus: .company) { scheduleJobSave() }
+                setupFieldLabel("JOB DESCRIPTION")
+                jobDescriptionEditor
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                setupFieldLabel("WORK AUTHORIZATION")
+                HStack(spacing: 7) {
+                    screeningPicker("Work type", MainViewModel.workTypeOptions, Bindable(vm).workType)
+                    screeningPicker("Authorization", MainViewModel.workAuthOptions, Bindable(vm).workAuth)
+                }
+                HStack(spacing: 7) {
+                    screeningPicker("Can start", MainViewModel.canStartOptions, Bindable(vm).canStart)
+                    screeningPicker("Where", MainViewModel.locationOptions, Bindable(vm).workLocation)
+                }
+                setupFieldLabel("What you want")
+                setupTextField("e.g. $65/hr on C2C, or $140k base", text: Bindable(vm).payRate, focus: .pay) { scheduleJobSave() }
+                Text("Left blank, the app stays vague instead of guessing a number for you.")
+                    .font(.system(size: 10.5)).foregroundColor(setupMuted)
+            }
+        }
+    }
+
+    var jobDescriptionEditor: some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.05))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.12), lineWidth: 1))
+            if vm.jobDescription.isEmpty {
+                Text("Paste the title, must-have skills, tech stack and seniority.")
+                    .font(.system(size: 12)).foregroundColor(Color(hex: "#64748b"))
+                    .padding(14).allowsHitTesting(false)
+            }
+            TextEditor(text: Bindable(vm).jobDescription)
+                .font(.system(size: 12)).foregroundColor(Color(hex: "#CBD5E1"))
+                .scrollContentBackground(.hidden).background(Color.clear)
+                .padding(8)
+                .focused($focusedField, equals: .job)
+                .onChange(of: vm.jobDescription) { scheduleJobSave() }
+        }
+        .frame(height: 132)
+    }
+
+    var savedResumesButton: some View {
+        Group {
+            if !vm.savedResumes.isEmpty || !vm.resumeText.isEmpty {
+                Button(action: { showResumeLibrary.toggle() }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "clock.arrow.circlepath").font(.system(size: 12, weight: .semibold))
+                        Text("Previous resumes").font(.system(size: 12, weight: .semibold))
+                        Spacer()
+                    }
+                    .foregroundColor(GlassMaterial.text)
+                    .padding(.horizontal, 12).padding(.vertical, 9)
+                    .frame(maxWidth: .infinity)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(GlassMaterial.fill(GlassMaterial.surface, windowOpacity: vm.mainWindowOpacity)))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(GlassMaterial.fill(GlassMaterial.stroke, windowOpacity: vm.mainWindowOpacity), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $showResumeLibrary, arrowEdge: .bottom) { resumeLibraryPopover() }
+            }
+        }
+    }
+
+    // ── Right: how the app listens ──────────────────────────────────────────────────────
+    var setupListeningColumn: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Listening controls")
+                    .font(.system(size: 17, weight: .bold)).foregroundColor(setupTitle)
+                Text("Choose how answers trigger and which audio Replysis should hear. You can change both later.")
+                    .font(.system(size: 11)).foregroundColor(setupMuted)
+            }
+
+            setupChoiceGroup("WHEN TO ANSWER") {
+                setupChoiceCard(icon: "bolt.fill", title: "Auto",
+                                selected: vm.listeningMode == .auto,
+                                action: { vm.setListeningMode(.auto) }) {
+                    Text("Answers after each complete question.")
+                }
+                setupChoiceCard(icon: "keyboard", title: "Manual",
+                                selected: vm.listeningMode == .manual,
+                                action: { vm.setListeningMode(.manual) }) {
+                    Text("Press Space to listen, then Space to answer.")
+                }
+            }
+
+            setupChoiceGroup("WHAT IT HEARS") {
+                setupChoiceCard(icon: "video.fill", title: "Interview",
+                                selected: !vm.practiceAudioOn,
+                                tag: ("Recommended for real interviews", Color(hex: "#5FC98E")),
+                                action: { vm.selectAudioSource(practice: false) }) {
+                    Text("Hears ") + Text("system audio only").fontWeight(.semibold).foregroundColor(Color(hex: "#DDE4EE"))
+                        + Text(" from the meeting. Your microphone stays off, preventing your answer from becoming a new question.")
+                }
+                setupChoiceCard(icon: "mic.fill", title: "Practice",
+                                selected: vm.practiceAudioOn,
+                                tag: ("Practice environment only", Color(hex: "#D99B7C")),
+                                action: { vm.selectAudioSource(practice: true) }) {
+                    Text("Hears ") + Text("system audio and microphone").fontWeight(.semibold).foregroundColor(Color(hex: "#DDE4EE"))
+                        + Text(" together, ideal for rehearsing aloud or practising with someone nearby.")
+                }
+            }
+
+            setupChoiceGroup("ANSWER LENGTH") {
+                setupChoiceCard(icon: "text.alignleft", title: "Short",
+                                selected: !vm.answerDetailed,
+                                action: { vm.setAnswerDetailed(false) }) {
+                    Text("Fits the question. Quick ones get a sentence or two, easy to say fast.")
+                }
+                setupChoiceCard(icon: "text.justify", title: "Detailed",
+                                selected: vm.answerDetailed,
+                                action: { vm.setAnswerDetailed(true) }) {
+                    Text("Fuller answers with more depth and an example, about a minute to say.")
+                }
+            }
+
+            captureProtectionCard
+        }
+    }
+
+    var captureProtectionCard: some View {
+        let state = CaptureProtection.current()
+        return HStack(alignment: .top, spacing: 11) {
+            setupChip("lock.shield")
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Check capture protection before the call")
+                    .font(.system(size: 12.5, weight: .semibold)).foregroundColor(Color(hex: "#E9EFF7"))
+                Text("Hides the app from screen sharing. Support varies, so check it in your meeting app first.")
+                    .font(.system(size: 11)).foregroundColor(setupBody).fixedSize(horizontal: false, vertical: true)
+                Text(CaptureProtection.summary(state))
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundColor(state == .hidden ? Color(hex: "#5FC98E") : Color(hex: "#D99B7C"))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(13)
+        .background(RoundedRectangle(cornerRadius: 11).fill(Color.white.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 11).stroke(Color.white.opacity(0.08), lineWidth: 1))
+    }
+
+    // ── Pinned bar: the one action ──────────────────────────────────────────────────────
+    var startInterviewBar: some View {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Ready for the interview?")
+                    .font(.system(size: 13.5, weight: .semibold)).foregroundColor(Color(hex: "#E9EFF7"))
+                Text("Your setup stays available if you need to come back.")
+                    .font(.system(size: 11)).foregroundColor(Color(hex: "#718298"))
+            }
+            Spacer()
+            Button(action: { vm.startInterview() }) {
+                HStack(spacing: 8) {
+                    Text("Start interview").font(.system(size: 13, weight: .semibold))
+                    Image(systemName: "arrow.right").font(.system(size: 11, weight: .bold))
+                }
+                .foregroundColor(Color(hex: "#0B0F17"))
+                .padding(.horizontal, 22).frame(minHeight: 38)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color(hex: "#EBF2FF")))
+            }
+            .buttonStyle(.plain)
+            .disabled(vm.finishing)
+            .accessibilityLabel("Start interview")
+        }
+        .padding(.horizontal, 32).padding(.vertical, 14)
+        .background(Color.white.opacity(0.04))
+        .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1) }
+    }
+
+    // ── Pieces ──────────────────────────────────────────────────────────────────────────
+    func setupSectionTitle(_ title: String, _ sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.system(size: 14, weight: .semibold)).foregroundColor(setupTitle)
+            Text(sub).font(.system(size: 11)).foregroundColor(setupMuted)
+        }
+    }
+
+    func setupFieldLabel(_ text: String) -> some View {
+        Text(text).font(.system(size: 9.5, weight: .bold)).foregroundColor(setupLabel)
+    }
+
+    func setupTextField(_ placeholder: String, text: Binding<String>, focus: FocusField,
+                        onChange: @escaping () -> Void) -> some View {
+        TextField(placeholder, text: text)
+            .textFieldStyle(.plain)
+            .font(.system(size: 13)).foregroundColor(.white)
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.05)))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.12), lineWidth: 1))
+            .focused($focusedField, equals: focus)
+            .onChange(of: text.wrappedValue) { onChange() }
+    }
+
+    func setupChip(_ symbol: String) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(Color(hex: "#C7D4E5"))
+            .frame(width: 30, height: 30)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.10)))
+    }
+
+    func setupChoiceGroup<Content: View>(_ label: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            setupFieldLabel(label)
+            VStack(spacing: 8) { content() }
+        }
+    }
+
+    func setupChoiceCard(icon: String, title: String, selected: Bool,
+                         tag: (String, Color)? = nil,
+                         action: @escaping () -> Void,
+                         @ViewBuilder body: () -> Text) -> some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 11) {
+                setupChip(icon)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(selected ? GlassMaterial.text : Color(hex: "#B9C4D6"))
+                    body()
+                        .font(.system(size: 11)).foregroundColor(setupBody)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let tag {
+                        Text(tag.0).font(.system(size: 10, weight: .semibold)).foregroundColor(tag.1)
+                    }
+                }
+                Spacer(minLength: 0)
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 15))
+                    .foregroundColor(selected ? GlassMaterial.text : Color.white.opacity(0.25))
+            }
+            .padding(13)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 11)
+                .fill(selected ? GlassMaterial.fill(GlassMaterial.selectedSegment, windowOpacity: 1) : Color.white.opacity(0.03)))
+            .overlay(RoundedRectangle(cornerRadius: 11)
+                .stroke(selected ? GlassMaterial.fill(GlassMaterial.stroke, windowOpacity: 1) : Color.white.opacity(0.08), lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 11))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    // ── First-run welcome ───────────────────────────────────────────────────────────────
+    var onboardingOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.55).ignoresSafeArea()
+                .onTapGesture { vm.dismissOnboarding() }
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Welcome to Replysis AI").font(.system(size: 19, weight: .bold)).foregroundColor(setupTitle)
+                    Text("Your live interview workspace. Here's how it works.")
+                        .font(.system(size: 12)).foregroundColor(setupMuted)
+                }
+                onboardingStep("doc.text", "Upload your resume", "Answers use your real experience, projects and tools.")
+                onboardingStep("briefcase", "Add the company & role", "Tailors answers to this role.")
+                onboardingStep("lock.shield", "Check capture protection before the call",
+                               "Hides the app from screen sharing. Support varies, so check it in your meeting app first.")
+                onboardingStep("keyboard", "Use SPACE here, ⌥ SPACE in other apps", "Press once to listen, again to answer. Works from any app.")
+                HStack {
+                    Text("Reopen anytime from the ? button").font(.system(size: 10.5)).foregroundColor(Color(hex: "#718298"))
+                    Spacer()
+                    Button(action: { vm.dismissOnboarding() }) {
+                        Text("Get Started").font(.system(size: 12.5, weight: .semibold))
+                            .foregroundColor(Color(hex: "#0B0F17"))
+                            .padding(.horizontal, 20).frame(minHeight: 34)
+                            .background(RoundedRectangle(cornerRadius: 8).fill(Color(hex: "#EBF2FF")))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Get Started")
+                }
+            }
+            .padding(26).frame(width: 470)
+            .background(RoundedRectangle(cornerRadius: 16).fill(Color(hex: "#0F1520")))
+            .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.14), lineWidth: 1))
+        }
+    }
+
+    func onboardingStep(_ symbol: String, _ title: String, _ body: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            setupChip(symbol)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 12.5, weight: .semibold)).foregroundColor(Color(hex: "#E9EFF7"))
+                Text(body).font(.system(size: 11)).foregroundColor(setupBody).fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }

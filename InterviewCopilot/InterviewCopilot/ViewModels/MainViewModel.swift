@@ -52,7 +52,6 @@ class MainViewModel {
     // MARK: - Job context & answer style
     var companyName = ""
     var jobDescription = ""
-    var conciseAnswers = false      // when true, answers are short & spoken-length
     // ── Screening details ─────────────────────────────────────────────────────
     //
     // "Are you looking for C2C or W2 or full time?" is asked in the first two minutes of
@@ -795,7 +794,8 @@ class MainViewModel {
     /// sheet separately: while it's up the user isn't signed in yet, so Space already
     /// passes through and types into the email/password fields.)
     func refreshHotkeyGate() {
-        let editing = isEditingText || needsPermissionSetup
+        // On the Setup page Space is for typing, not for listening.
+        let editing = isEditingText || needsPermissionSetup || appStep == .setup
         hotkey?.updateGate(loggedIn: session.isLoggedIn, editing: editing)
     }
 
@@ -811,6 +811,11 @@ class MainViewModel {
     func handleSpacePress(source: String = "KEYBOARD") {
         refreshHotkeyGate()   // keep the tap's editing/login mirror fresh
         if isEditingText { return }
+        // The Setup page is for preparing, not for listening. Start interview is the one way in.
+        if appStep == .setup {
+            dlog("⌥ SPACE from \(source): on the Setup page — ignoring", tag: "SPACE")
+            return
+        }
 
         if !session.isLoggedIn {
             // BUG-5 FIX: if async restore is still in flight, swallow the press — the user
@@ -1131,7 +1136,7 @@ class MainViewModel {
 
         let messages = builder.buildMessages(resumeFacts: resumeFacts, currentQuestion: q,
                                              qTypeHint: qType, drillDownHint: isDrill,
-                                             jobContext: jobContext, concise: conciseAnswers,
+                                             jobContext: jobContext,
                                              hints: liveHints, screening: screeningContext)
         let provider = Self.providerLabel
         // Amber at two answers left or fewer, in answers, never credits.
@@ -1248,6 +1253,152 @@ class MainViewModel {
 
     /// Set by the kill chord so the quit confirmation is skipped for that one path.
     nonisolated(unsafe) static var quitWithoutAsking = false
+
+    // ── First-run flow: Setup, Interview, Finish, Past sessions ────────────────────────
+    //
+    // The window opens on a full-page Setup, then moves to the Interview view. Ported from
+    // Windows (3665daa, 2026-09-28), with the rules that cost it real bugs:
+    //   1. Picking Auto on Setup does NOT start listening. Listening begins only after the
+    //      step changes to Interview.
+    //   2. No screen capture on Setup, on Past sessions, or after Finish. Windows kept
+    //      capturing the desktop behind Past sessions after Finish.
+    //   3. Watch Screen stays ON by default (the owner's decision, 2026-09-17).
+    //   4. Finish stops the mic WITHOUT sending the partial sentence, waits up to 5 s for the
+    //      transcript writer, then opens Past sessions. It refuses while an answer streams.
+    //   5. Starting again from Setup creates a fresh session file.
+    enum AppStep { case setup, interview }
+    var appStep: AppStep = .setup
+    /// Start interview has been pressed at least once this session; the screen-preparation
+    /// timer runs only once it has, and never on Setup.
+    private(set) var interviewStarted = false
+    /// Past sessions is on screen.
+    var sessionsOpen = false
+    /// Shows "Saving..." on the Finish button.
+    private(set) var finishing = false
+    var inSetup: Bool { appStep == .setup }
+
+    /// May the screen be captured on a timer? Only in a live interview, and never behind Past
+    /// sessions. On-demand reads (F7, F8, F9, Read screen) are the person's own action.
+    var screenPreparationAllowed: Bool { appStep == .interview && interviewStarted && !sessionsOpen }
+
+    /// Short or Detailed answers (Setup page, Settings). Short is the long-standing behaviour.
+    var answerDetailed = false
+    func setAnswerDetailed(_ detailed: Bool) {
+        guard answerDetailed != detailed else { return }
+        answerDetailed = detailed
+        PromptBuilder.shared.detailedAnswers = detailed
+        saveSettings()
+        dlog("Answer length -> \(detailed ? "Detailed" : "Short")", tag: "SETTINGS")
+    }
+
+    // ── First-run welcome ─────────────────────────────────────────────────────────────
+    var showOnboarding = false
+    private var onboardingSeenURL: URL { engine.appDataFolder.appendingPathComponent("onboarding_seen") }
+
+    /// DEBUG builds only: "start:6,back:4,finish:4" runs each step, waiting N seconds after it.
+    func runFlowScriptIfAny() {
+        guard let script = DeveloperOverrides.flowScript, !script.isEmpty else { return }
+        var delay: TimeInterval = 8          // let the window settle first
+        for part in script.split(separator: ",") {
+            let bits = part.split(separator: ":")
+            let action = String(bits.first ?? ""), wait = TimeInterval(bits.dropFirst().first ?? "3") ?? 3
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self else { return }
+                dlog("FLOWSCRIPT: \(action)", tag: "FLOW")
+                switch action {
+                case "start":  self.startInterview()
+                case "back":   self.backToSetup()
+                case "finish": Task { _ = await self.finishInterview() }
+                case "closesessions": self.sessionsOpen = false
+                default: break
+                }
+            }
+            delay += wait
+        }
+    }
+
+    func showOnboardingIfFirstRun() {
+        if !FileManager.default.fileExists(atPath: onboardingSeenURL.path) { showOnboarding = true }
+    }
+    func dismissOnboarding() {
+        showOnboarding = false
+        try? "1".write(to: onboardingSeenURL, atomically: true, encoding: .utf8)
+    }
+    func replayIntro() { showOnboarding = true }
+
+    func startInterview() {
+        guard appStep == .setup, !finishing else { return }
+        sessionsOpen = false
+        // Finish closes the previous session before showing Past sessions, so starting again
+        // prepares a fresh transcript instead of reusing the finished file.
+        let needsFreshSession = !isRecording
+        if needsFreshSession {
+            transcript = ""; aiAnswer = ""; answerEpoch += 1
+            liveHints = ""; saveHints()
+        }
+        appStep = .interview
+        interviewStarted = true
+        problemsShown.removeAll()
+        stoppedForIdle = false
+        heardEverThisRun = false; interviewSilentTipShown = false
+        if needsFreshSession { prepareSession() }
+        beginInterviewClock()
+        aiAnswerHint = idleHintForCurrentMode
+        refreshHotkeyGate()
+        updateMicUI()
+        dlog("INTERVIEW: started (\(autoModeEnabled ? "Auto" : "Manual"), \(practiceAudioOn ? "Practice" : "Interview") audio)", tag: "FLOW")
+    }
+
+    /// Back to Setup without ending the session. The microphone is closed: a listening app
+    /// with the mic controls out of sight would be listening to nobody who could see it.
+    func backToSetup() {
+        guard appStep == .interview else { return }
+        stopListeningForSetup()
+        appStep = .setup
+        refreshHotkeyGate()
+        dlog("INTERVIEW: back to Setup (session kept)", tag: "FLOW")
+    }
+
+    private func stopListeningForSetup() {
+        guard isListening else { return }
+        stopListeningMeter()
+        isListening = false; isMuted = true
+        autoTurnSubmitting = false
+        resetAutoTurnState()
+        engine.writePauseFlag()
+        updateMicUI()
+    }
+
+    /// Finish the interview and open Past sessions, so the last answer and the duration are
+    /// always in it. Returns a reason when it refuses, for the caller to show.
+    func finishInterview() async -> String? {
+        guard !finishing else { return nil }
+        if isProcessing || isScreenAnalyzing {
+            showAlert(title: "Answer still finishing",
+                      body: "Wait for the current answer to finish, then choose Finish again so the complete turn is saved.")
+            return "busy"
+        }
+        finishing = true
+        defer { finishing = false }
+        // Finishing is not the same action as submitting a question. If the microphone is
+        // open, stop capture WITHOUT sending the partial sentence to the model.
+        stopListeningForSetup()
+        let hadSession = isRecording
+        let number = sessionNumber
+        endSession()
+        // Wait off the main thread so Past sessions never opens on a file whose final answer
+        // is still queued behind the writer.
+        let saved = await Task.detached(priority: .userInitiated) { () -> Bool in
+            MainViewModel.drainSessionLog(timeout: 5)
+            return true
+        }.value
+        _ = saved
+        appStep = .setup            // Start interview begins a fresh session from here
+        sessionsOpen = true
+        refreshHotkeyGate()
+        if hadSession { dlog("INTERVIEW: session \(number) finished and opened in Past sessions", tag: "FLOW") }
+        return nil
+    }
 
     // ── Answers you can go back to ─────────────────────────────────────────────
     //
@@ -1647,7 +1798,18 @@ class MainViewModel {
 
     /// Driven from the always-running transcript poll, so it needs no timer of its own and
     /// cannot be left running by a mode change.
+    private var preparingShotsActive = false
+
     private func tickPreparedShots() {
+        // Said once per change, so the log shows WHEN the screen is being watched and when it
+        // stops. The captures themselves only log when the picture changed.
+        let allowed = screenPreparationAllowed
+        if allowed != preparingShotsActive {
+            preparingShotsActive = allowed
+            dlog(allowed ? "SCREEN: preparing screenshots started (interview under way)"
+                         : "SCREEN: preparing screenshots stopped (Setup, Past sessions or finished)", tag: "SCREEN")
+        }
+        guard allowed else { return }
         let now = Date()
         if isListening { lastMicLiveAt = now }
         guard isWatchMode, session.isLoggedIn, !preparingScreenshot, !isProcessing, !isScreenAnalyzing else { return }
@@ -1665,7 +1827,7 @@ class MainViewModel {
     /// re-sent a still screen constantly and doubled the token cost of every question. A
     /// coarse 16x16 sixteen-grey signature tells scrolling from a ticking counter.
     private func prepareScreenshotAhead() async {
-        guard isWatchMode, session.isLoggedIn, !preparingScreenshot else { return }
+        guard isWatchMode, session.isLoggedIn, !preparingScreenshot, screenPreparationAllowed else { return }
         guard Date().timeIntervalSince(lastMicLiveAt) <= Self.prepareShotsAfterMicWithin || isListening else { return }
         preparingScreenshot = true
         defer { preparingScreenshot = false }
@@ -2037,7 +2199,7 @@ class MainViewModel {
         // It lives here, before the guard below, because stopForIdle() invalidates the meter
         // timer — a check inside the meter tick could never fire once the thing it recovers
         // from had happened. This timer runs for the life of the app.
-        if stoppedForIdle, autoModeEnabled, session.isLoggedIn, !isProcessing, engine.isRunning {
+        if stoppedForIdle, autoModeEnabled, appStep == .interview, session.isLoggedIn, !isProcessing, engine.isRunning {
             if #available(macOS 14.2, *), SystemAudioTapper.shared.secondsSinceAudio < 2 {
                 dlog("METER: audio in the room again — listening resumes on its own", tag: "METER")
                 stoppedForIdle = false
@@ -3032,6 +3194,8 @@ class MainViewModel {
     /// answers exactly one question and then silently stops being automatic.
     private func rearmAutoModeIfNeeded() {
         guard autoModeEnabled, session.isLoggedIn, !isProcessing else { return }
+        // Setup is not an interview. Picking Auto there must not open the microphone.
+        guard appStep == .interview else { return }
         // The mic gave up on a silent room. Re-arming here would reopen it seconds later
         // and spend the time the stop just saved — and the message on screen says Space.
         guard !stoppedForIdle else {
@@ -3371,7 +3535,7 @@ class MainViewModel {
         // version measured from listeningSince, which this tick re-stamps every five seconds,
         // so the condition could never be true and the tip never appeared.
         if !heardEverThisRun, !interviewSilentTipShown, !practiceAudioOn,
-           sessionSeconds >= 45, alertTitle.isEmpty {
+           appStep == .interview, sessionSeconds >= 45, alertTitle.isEmpty {
             interviewSilentTipShown = true
             dlog("MODE: Interview mode heard nothing for 45s; offered a switch to Practice", tag: "MODE")
             showAlert(title: "Nothing heard yet",
@@ -3554,14 +3718,20 @@ class MainViewModel {
 
     // MARK: - Session
     func startNewSession() {
+        prepareSession()
+        // In the Interview step a new session starts the interview clock at once (New Session
+        // button). On the Setup page it only prepares the file: nothing listens, nothing counts.
+        if appStep == .interview { beginInterviewClock() }
+    }
+
+    /// A session file and number, ready for the first answer. Does NOT start listening, the
+    /// timer, or anything that watches the screen: on the Setup page none of that may run.
+    private func prepareSession() {
         // BUG FIX: refresh the global-hotkey gate now that we're logged in. Session restore
         // is async, so the gate was seeded as "signed out" at launch and Space wasn't being
         // handled globally until the user first interacted with the app (e.g. opened the
         // debug log) — the "Space does nothing / had to press F12 first" bug.
         refreshHotkeyGate()
-        // Don't let a background "Update available" alert pop up over an active interview —
-        // see AppUpdater.setInterviewActive for why. Resumed in endSession().
-        AppUpdater.shared.setInterviewActive(true)
         resumeLocked = false
         stoppedForIdle = false   // a new session is a deliberate fresh start
         PromptBuilder.shared.clearHistory()
@@ -3572,9 +3742,15 @@ class MainViewModel {
         sessionLogPath = dir.appendingPathComponent("interview_\(num).txt")
         cloudTurns = []; cloudSessionId = nil
         isRecording = true
+    }
+
+    /// The interview is under way: the clock runs, update checks stand down, and Auto begins
+    /// listening rather than waiting for a keypress that Auto exists to remove.
+    private func beginInterviewClock() {
+        // Don't let a background "Update available" alert pop up over an active interview —
+        // see AppUpdater.setInterviewActive for why. Resumed in endSession().
+        AppUpdater.shared.setInterviewActive(true)
         sessionSeconds = 0; sessionTimerVisible = true
-        // If Auto Mode was left on, begin listening with the session rather than waiting
-        // for a keypress that Auto Mode exists to remove.
         if autoModeEnabled { DispatchQueue.main.async { [weak self] in self?.rearmAutoModeIfNeeded() } }
         sessionTimerObj?.invalidate()
         sessionTimerObj = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -4141,7 +4317,10 @@ class MainViewModel {
            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             mainWindowOpacity = obj["mainOpacity"] as? Double ?? 0.40
             overlayOpacity = obj["overlayOpacity"] as? Double ?? 0.90
-            conciseAnswers = obj["concise"] as? Bool ?? false
+            // Short by default. The old Concise brevity mode is gone (Windows has none), so a
+            // saved "concise" choice simply becomes Short.
+            answerDetailed = (obj["answerLength"] as? String) == "detailed"
+            PromptBuilder.shared.detailedAnswers = answerDetailed
             // Default ON: system audio + the user's own voice, so Space captures both out
             // of the box. Users who want to stay fully invisible in a real interview can
             // switch to system-audio-only in Settings.
@@ -4180,7 +4359,7 @@ class MainViewModel {
     func saveSettings() {
         let path = engine.appDataFolder.appendingPathComponent("settings.json")
         let obj: [String: Any] = ["mainOpacity": mainWindowOpacity,
-                                  "overlayOpacity": overlayOpacity, "concise": conciseAnswers,
+                                  "overlayOpacity": overlayOpacity, "answerLength": answerDetailed ? "detailed" : "short",
                                   "micCaptureEnabled": micCaptureEnabled,
                                   "transcriptLanguage": transcriptLanguage,
                                   "cloudSyncEnabled": cloudSyncEnabled,

@@ -66,7 +66,7 @@ check(PromptBuilder.stripMarkdownPreservingCode(code) == code, "code multiplicat
 check(PromptBuilder.stripMarkdownPreservingCode("**Summary**") == "Summary", "prose emphasis cleaned")
 for i in 0..<85 { builder.addToHistory(question: "Question \(i)", answer: "Answer \(i)") }
 check(builder.history.count == 80, "history memory bounded")
-let messages = builder.buildMessages(resumeFacts: "Synthetic candidate. Five years of Swift.", currentQuestion: "What is an actor?", jobContext: "Mobile engineer", concise: true)
+let messages = builder.buildMessages(resumeFacts: "Synthetic candidate. Five years of Swift.", currentQuestion: "What is an actor?", jobContext: "Mobile engineer")
 check(messages.count == 26, "only twelve prior turns sent to model")
 check(messages.last?["content"]?.contains("QUESTION: What is an actor?") == true, "latest question reaches prompt")
 check(messages.first?["content"]?.contains("Synthetic candidate") == true, "resume reaches prompt")
@@ -388,6 +388,29 @@ check([1, 2, 3, 4, 5, 9].map(RecoveryPolicy.keyRetryAfterNoConnection) == [2, 4,
 check([0, 1, 2, 3, 4, 20].map { RecoveryPolicy.credentialRenewalWait(attempt: $0) } == [5, 15, 30, 60, 60, 60], "rejected credentials renew after 5, 15, 30 seconds, then every minute")
 check(RecoveryPolicy.credentialRenewalWait(attempt: 5, mintsInLastHour: 10) == 600, "past ten tokens an hour the fast retries stop, to protect the twelve-an-hour allowance")
 check(RecoveryPolicy.credentialRenewalWait(attempt: 5, mintsInLastHour: 9) == 60, "under the cap the retries stay fast")
+
+// ── Answer length: Short or Detailed (Windows PromptBuilder.WidenForDetailedAnswers) ──
+func formatLine(_ question: String, detailed: Bool) -> String {
+    let pb = PromptBuilder.shared
+    pb.clearHistory(); pb.detailedAnswers = detailed
+    let msgs = pb.buildMessages(resumeFacts: "Pavan, Gen AI engineer. Python, Kafka, Docker.", currentQuestion: question)
+    pb.detailedAnswers = false
+    return msgs.last?["content"] ?? ""
+}
+let widening = "the candidate chose Detailed answers"
+check(!formatLine("Tell me about yourself.", detailed: false).contains(widening), "Short never carries the Detailed rule")
+check(formatLine("Tell me about yourself.", detailed: true).contains("160 to 230 words"), "Detailed widens an open question to 160 to 230 words")
+check(formatLine("What is Docker?", detailed: true).contains("160 to 230 words"), "Detailed widens a definition")
+check(formatLine("Do you know Kafka?", detailed: true).contains("60 to 90 words"), "Detailed gives a yes/no question 60 to 90 words, not a page")
+for q in ["What are your salary expectations?", "When can you start?", "Are you authorized to work in the US?", "Will you relocate?",
+          "Where are you located?", "Write a function that reverses a string in Python.", "Do you have any questions for me?", "Thank you for your time today, we'll be in touch."] {
+    check(!formatLine(q, detailed: true).contains(widening), "Detailed never widens: \(q)")
+}
+check(formatLine("Tell me about yourself.", detailed: false).contains(PromptBuilder.easyToSayRule), "every spoken answer carries the easy-to-say rule")
+check(formatLine("What is Docker?", detailed: true).contains(PromptBuilder.easyToSayRule), "...in Detailed too")
+check(!formatLine("Write a function that reverses a string in Python.", detailed: false).contains(PromptBuilder.easyToSayRule), "code does not carry the easy-to-say rule")
+check(PromptBuilder.easyToSayRule.contains("no semicolons, brackets or symbols"), "easy-to-say rule text")
+check(!formatLine("Tell me about yourself.", detailed: false).contains("BREVITY MODE"), "the old brevity mode is gone")
 
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

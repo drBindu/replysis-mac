@@ -1224,8 +1224,11 @@ class PromptBuilder {
         return false
     }
 
-    private func buildFormatReminder(qType: QuestionType, question: String, isDrillDown: Bool, concise: Bool = false, hasResume: Bool = true, resumeFacts: String = "") -> String {
+    private func buildFormatReminder(qType: QuestionType, question: String, isDrillDown: Bool, hasResume: Bool = true, resumeFacts: String = "") -> String {
         var reminder = baseFormatReminder(qType: qType, question: question, isDrillDown: isDrillDown, resumeFacts: resumeFacts)
+        if detailedAnswers { reminder = widenForDetailedAnswers(rule: reminder, qType: qType, question: question, isDrillDown: isDrillDown) }
+        // Last words above every spoken answer, where the model looks hardest. Code has its own shape.
+        if qType != .coding { reminder += " " + Self.easyToSayRule }
         // WITHOUT A RESUME THERE ARE NO REAL NUMBERS TO CITE. The reminders below ask for a
         // metric, and this text is the last thing the model reads, so it outranked the
         // no-fabrication rule in the system prompt and the model duly invented one —
@@ -1234,16 +1237,56 @@ class PromptBuilder {
         if !hasResume {
             reminder += " CRITICAL — YOU HAVE NO RESUME: never claim a language, framework, cloud or database as YOUR OWN background unless the interviewer named it first — stay stack-neutral ('the services I work on') rather than inventing a stack, though you still answer any technology question in full depth. Never state a specific percentage, millisecond, dollar amount, team size, or company name as a real result you personally achieved. Describe the impact qualitatively instead ('noticeably faster', 'a lot more reliable') and focus on your APPROACH and trade-offs, which reads as more credible anyway. An invented statistic falls apart the moment the interviewer drills in."
         }
-        if concise {
-            // Brevity mode is explicitly "just the spoken answer" — no depth section.
-            return "BREVITY MODE (this is a SPOKEN answer — keep it under ~15 seconds, at most 2-3 short sentences, no lists, cut all preamble): " + reminder
-        }
         // THE DEPTH SECTION HAS TO BE STATED HERE, not only as a rule thousands of
         // characters earlier. This reminder is the last thing the model reads before the
         // question, and it ends with "NO bullet symbols" and "don't pad" — which read as a
         // direct contradiction of the depth section and won, so MORE TO SAY never appeared.
         guard needsDepthSection(qType) else { return reminder }
         return reminder + "\n\nTHEN, after the spoken answer, add a blank line and this exact marker on its own line:\nMORE TO SAY\nUnder it, 2 or 3 SEPARATE points, each on its own line starting with the • character. Each stands alone (a trade-off, an edge case, a decision and why, what you'd do differently) and invents nothing: no number, employer or project that is not in the verified facts. These are glance-notes if the interviewer pushes — NOT spoken, so terse fragments are fine. The 'no bullets' rule above applies ONLY to the spoken answer, never to this section."
+    }
+
+    // ── Answer length: Short or Detailed (Setup page and Settings) ────────────────────
+    //
+    // Ported from Windows PromptBuilder (2026-09-28). Short is the long-standing behaviour:
+    // the length follows the question, so a quick or factual one gets a sentence or two. A
+    // tester read that as "it only gives two lines" and the owner asked for a way to get more.
+    // Detailed widens the length rule for questions that have room for depth. Questions whose
+    // answer must stay short in any interview (logistics, availability, salary, closings, a
+    // locked-fact correction, work authorization) and code (which has its own shape) keep
+    // their rule either way.
+    //
+    // This replaces the Mac's old Concise toggle. That was a brevity mode (a spoken answer
+    // under ~15 seconds) whose button read "Detailed" in its default state, and Windows has no
+    // such mode; a saved "concise" choice simply becomes Short.
+    var detailedAnswers = false
+
+    /// Last words above every spoken answer, where the model looks hardest.
+    static let easyToSayRule =
+        "It will be read aloud from the screen, so keep it easy to say: short sentences, everyday words, " +
+        "technical terms explained in plain words, and no semicolons, brackets or symbols."
+
+    func widenForDetailedAnswers(rule: String, qType: QuestionType, question: String, isDrillDown: Bool) -> String {
+        let q = question.lowercased()
+        if hasLockedConflict(for: question) { return rule }
+        switch qType {
+        case .coding, .availability, .logistics, .salary, .interviewClosing, .candidateQuestions, .contextStatement:
+            return rule
+        case .yesNo where Self.isWorkAuthorizationQuestion(q) || q.contains("relocat") || q.contains("background") || q.contains("drug"):
+            return rule
+        default: break
+        }
+        // A firm word count, and said to override. "Go further than that length" was measured
+        // against the live model on Windows and was not reliably longer: "Tell me about
+        // yourself" came back at 77 words in Detailed against 121 in Short.
+        if isDrillDown || qType == .yesNo || qType == .preference || qType == .memoryRecall {
+            return rule + " LENGTH: the candidate chose Detailed answers, and this overrides any length above. " +
+                "Answer in 60 to 90 words: the direct answer first, then the specifics behind it. " +
+                "Never invent facts to fill the space."
+        }
+        return rule + " LENGTH: the candidate chose Detailed answers, and this overrides any length above. " +
+            "Answer in 160 to 230 words, in 2 or 3 spoken paragraphs, about 60 to 90 seconds aloud, with more of " +
+            "the how and why and one concrete example where the verified facts support it. Every rule above about " +
+            "facts still applies: never invent a project, result or tool."
     }
 
     /// Which questions deserve depth notes. Greetings, yes/no and logistics are complete in
@@ -1347,7 +1390,7 @@ class PromptBuilder {
 
     func buildMessages(resumeFacts: String, currentQuestion: String,
                        qTypeHint: QuestionType? = nil, drillDownHint: Bool? = nil,
-                       jobContext: String = "", concise: Bool = false,
+                       jobContext: String = "",
                        hints: String = "", screening: String = "") -> [[String: String]] {
         let qType = qTypeHint ?? detectType(currentQuestion)
         let drillDown = drillDownHint ?? isDrillDown(currentQuestion)
@@ -1376,7 +1419,7 @@ class PromptBuilder {
         let hasResumeFacts = !resumeFacts.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && resumeFacts != "[NO RESUME]"
         let formatReminder = buildFormatReminder(qType: qType, question: currentQuestion,
-                                                 isDrillDown: drillDown, concise: concise,
+                                                 isDrillDown: drillDown,
                                                  hasResume: hasResumeFacts, resumeFacts: resumeFacts)
         let contextNote = buildContextNote()
 
