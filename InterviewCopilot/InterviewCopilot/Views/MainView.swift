@@ -378,7 +378,7 @@ struct MainView: View {
                         .overlay(Capsule().stroke(vm.creditsColor.opacity(0.35), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
-                .help("Credits remaining — click for details")
+                .help(vm.creditsTooltip)
                 .popover(isPresented: $showCreditsPopover, arrowEdge: .bottom) {
                     creditsCard
                         .padding(14)
@@ -712,7 +712,7 @@ struct MainView: View {
                 // "Upgrade to Pro" link only makes sense once there's an actual account.
                 if vm.session.isGuestSession {
                     menuRow(icon: "person.crop.circle.badge.checkmark", title: "Sign In",
-                            subtitle: "Save your progress & unlock more credits", accent: Color(hex: "#38bdf8")) {
+                            subtitle: "Save your sessions across devices", accent: Color(hex: "#38bdf8")) {
                         showProfileMenu = false; showLogin = true
                     }
                 } else if !vm.session.isPaidPlan {
@@ -721,17 +721,17 @@ struct MainView: View {
                     // is paid but still metered — an upsell to a LOWER tier than the one
                     // they are on.
                     menuRow(icon: "bolt.fill", title: "Upgrade to Pro",
-                            subtitle: "Unlimited answers", accent: Color(hex: "#a78bfa")) {
+                            subtitle: PlanFacts.allowanceText(plan: "pro", signedIn: true), accent: Color(hex: "#a78bfa")) {
                         showProfileMenu = false
                         NSWorkspace.shared.open(URL(string: "https://replysis.com/pricing")!)
                     }
                 } else if !vm.session.isUnlimited {
-                    // Paid but metered: the useful action is more credits, not a new plan.
-                    menuRow(icon: "creditcard.fill", title: "Top up credits",
-                            subtitle: "\(vm.session.plan.capitalized) plan, \(vm.session.credits) left",
+                    // Paid but metered: the useful action is more answers, not a new plan.
+                    menuRow(icon: "creditcard.fill", title: "Get more answers",
+                            subtitle: "\(vm.session.plan.capitalized) plan, \(PlanFacts.answersLabel(vm.session.credits)) left",
                             accent: Color(hex: "#34E08A")) {
                         showProfileMenu = false
-                        NSWorkspace.shared.open(URL(string: "https://replysis.com/pricing")!)
+                        NSWorkspace.shared.open(PlanFacts.addAnswersURL)
                     }
                 }
             }
@@ -780,10 +780,12 @@ struct MainView: View {
                         .font(.system(size: 16))
                         .foregroundColor(creditsAccent)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("\(vm.session.credits) credits")
+                        Text(PlanFacts.answersLabel(vm.session.credits))
                             .font(.system(size: 14, weight: .bold))
                             .foregroundColor(creditsAccent)
-                        Text(vm.session.isGuestSession ? "Free trial" : "\(vm.session.plan.capitalized) plan")
+                        Text(vm.onFreeTrial
+                             ? "Free trial, \(PlanFacts.allowanceText(plan: vm.session.plan, signedIn: false)). Not refreshed"
+                             : "\(vm.session.plan.capitalized) plan, \(PlanFacts.allowanceText(plan: vm.session.plan, signedIn: true))")
                             .font(.system(size: 10))
                             .foregroundColor(Color(hex: "#64748b"))
                     }
@@ -798,10 +800,10 @@ struct MainView: View {
                         if vm.session.isGuestSession {
                             showLogin = true
                         } else {
-                            NSWorkspace.shared.open(URL(string: "https://replysis.com/pricing")!)
+                            NSWorkspace.shared.open(PlanFacts.addAnswersURL)
                         }
                     }) {
-                        Text(vm.session.isGuestSession ? "Sign In" : "Top up")
+                        Text(vm.session.isGuestSession ? "Sign In" : "Get more")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 12).padding(.vertical, 6)
@@ -818,8 +820,8 @@ struct MainView: View {
 
     var creditsAccent: Color {
         let c = vm.session.credits
-        if c > 20 { return Color(hex: "#4ade80") }
-        if c > 5  { return Color(hex: "#f59e0b") }
+        if !PlanFacts.isLow(c)  { return Color(hex: "#4ade80") }
+        if !PlanFacts.isEmpty(c) { return Color(hex: "#f59e0b") }
         return Color(hex: "#ef4444")
     }
 
@@ -1172,7 +1174,7 @@ struct MainView: View {
                 Text("SCREENING ANSWERS")
                     .font(.system(size: 10, weight: .bold)).tracking(0.9)
                     .foregroundColor(Color(hex: "#94A3B8"))
-                Text("asked in the first two minutes")
+                Text("asked at the start of the call")
                     .font(.system(size: 9)).foregroundColor(Color(hex: "#4b5563"))
                 Spacer()
             }

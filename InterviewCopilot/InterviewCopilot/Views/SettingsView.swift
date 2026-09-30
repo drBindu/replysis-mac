@@ -207,8 +207,8 @@ struct SettingsView: View {
                                 infoRow("Backend", AppConfig.backendUrl)
                                 if UserSession.shared.isGuestSession {
                                     infoRow("Account", "Free trial (not signed in)")
-                                    infoRow("Credits", "\(UserSession.shared.credits) left")
-                                    Button("Sign in for more credits") {
+                                    infoRow("Answers", "\(PlanFacts.answersLabel(UserSession.shared.credits)) left, not refreshed")
+                                    Button("Sign in to save your sessions") {
                                         NotificationCenter.default.post(name: .showLogin, object: nil)
                                     }
                                     .font(.system(size: 11, weight: .medium))
@@ -216,7 +216,7 @@ struct SettingsView: View {
                                     .buttonStyle(.plain)
                                 } else if UserSession.shared.isLoggedIn {
                                     infoRow("Account", UserSession.shared.email)
-                                    infoRow("Plan", "\(UserSession.shared.plan) / \(UserSession.shared.credits) credits")
+                                    infoRow("Plan", "\(UserSession.shared.plan.capitalized), \(PlanFacts.answersLabel(UserSession.shared.credits)) left")
                                 }
                                 Button("Check for Updates…") { AppUpdater.shared.checkForUpdates() }
                                     .font(.system(size: 11, weight: .medium))

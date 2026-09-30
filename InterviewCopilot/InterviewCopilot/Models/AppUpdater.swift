@@ -32,7 +32,13 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
     }()
 
     func feedURLString(for updater: SPUUpdater) -> String? {
-        "https://raw.githubusercontent.com/moto123a/interview-copilot-mac/main/appcast.xml?cachebust=\(Int(Date().timeIntervalSince1970))"
+        // THE NEW ACCOUNT. This override replaces SUFeedURL on every single check, so it is
+        // the address that actually decides where updates come from. UPDATE_FEED_MIGRATION.md
+        // moved SUFeedURL to drBindu in 1.0.245 and this line was left on moto123a, which
+        // cancelled the move: every build through 1.0.246 kept polling the old feed.
+        // Existing users still reach this build through the OLD feed (the bridge release
+        // goes into both appcasts); from this build on they poll here.
+        "https://raw.githubusercontent.com/drBindu/replysis-mac/main/appcast.xml?cachebust=\(Int(Date().timeIntervalSince1970))"
     }
 
     func checkForUpdates() {

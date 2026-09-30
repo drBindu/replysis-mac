@@ -336,7 +336,8 @@ class MainViewModel {
         engine.onConcurrencyLimit = { [weak self] in
             guard let self else { return }
             self.listeningNotice = "Another session is already running"
-            self.aiAnswer = "⚠ Speechmatics says this account already has the maximum number of live sessions.\n\nClose any other copy of Replysis (including one on another machine), then wait about a minute — a session that was force-quit keeps its slot until the server times it out.\n\nListening will resume by itself once a slot frees up."
+            // No provider names and no durations in customer text (owner's copy rules).
+            self.aiAnswer = "Replysis is already listening somewhere else.\n\nClose any other copy of Replysis, including one on another Mac. A copy that was force quit can keep its place for a short while.\n\nListening starts again by itself as soon as it is free."
             self.updateMicUI()
         }
         // No audio source is permitted — say so loudly rather than capturing something the
@@ -1090,8 +1091,10 @@ class MainViewModel {
             updateMicUI(); return
         }
         guard session.isLoggedIn else { aiAnswer = "⚠ Please sign in to use AI answers."; return }
-        guard session.isUnlimited || session.credits > 0 else {
-            aiAnswer = "⚠ 0 credits remaining. Visit replysis.com to top up."; return
+        // Blocked below ONE answer, not below one credit: 1 to 4 credits buys nothing, and
+        // letting it through only earns a refusal from the server mid-question.
+        guard session.isUnlimited || !PlanFacts.isEmpty(session.credits) else {
+            showOutOfAnswers(); return
         }
 
         isProcessing = true; showThinking = true; thinkingStep = 0
@@ -1120,8 +1123,9 @@ class MainViewModel {
                                              jobContext: jobContext, concise: conciseAnswers,
                                              hints: liveHints, screening: screeningContext)
         let provider = Self.providerLabel
-        let lowBanner = (!session.isUnlimited && session.credits > 0 && session.credits < 5)
-            ? "⚠ Only \(session.credits) credit(s) remaining.\n\n" : ""
+        // Amber at two answers left or fewer, in answers, never credits.
+        let lowBanner = (!session.isUnlimited && PlanFacts.isLow(session.credits) && !PlanFacts.isEmpty(session.credits))
+            ? PlanFacts.lowWarning(credits: session.credits, freeTrial: onFreeTrial) + "\n\n" : ""
 
         aiAnswer = "Q: \(q)\n\n\(lowBanner)"
         var accumulated = ""
@@ -1177,14 +1181,7 @@ class MainViewModel {
             onError: { [weak self] err in
                 guard let self = self, self.answerEpoch == epoch else { return }
                 if err == "NO_CREDITS" {
-                    if self.session.isGuestSession {
-                        // A guest has no account to buy more credits on — the only next
-                        // step that makes sense is signing in for a real (paid) plan.
-                        self.aiAnswer = "⚠ Your 100 free credits are used up.\n\nSign in to buy more and keep going — your account is where credits are purchased."
-                        NotificationCenter.default.post(name: .showLogin, object: nil)
-                    } else {
-                        self.aiAnswer = "⚠ Not enough credits. Visit replysis.com/pricing."
-                    }
+                    self.showOutOfAnswers()
                 }
                 else if err == "SESSION_EXPIRED" { self.engine.stop(); self.session.clear(); self.setLoggedOutUI() }
                 else if err.hasPrefix("RATE_LIMIT") {
@@ -1204,7 +1201,7 @@ class MainViewModel {
                 // for SESSION_EXPIRED — the session is cleared there, so there's nothing to
                 // save into.
                 if err != "SESSION_EXPIRED" {
-                    let reason = err == "NO_CREDITS" ? "out of credits" : "connection issue"
+                    let reason = err == "NO_CREDITS" ? "no answers left" : "connection issue"
                     self.appendToSessionLog(q: q, a: "[No answer — \(reason). Question preserved.]")
                 }
                 self.stopThinkingUI()
@@ -1516,9 +1513,9 @@ class MainViewModel {
             onError: { [weak self] err in
                 guard let self = self, self.answerEpoch == epoch else { return }
                 dlog("Screen analysis error: \(err)", tag: "SCREEN")
-                if err == "NO_CREDITS" && self.session.isGuestSession {
-                    self.aiAnswer = "⚠ Your 100 free credits are used up.\n\nSign in to buy more and keep going — your account is where credits are purchased."
-                    NotificationCenter.default.post(name: .showLogin, object: nil)
+                if err == "NO_CREDITS" {
+                    // A screen read uses an answer too, so it says exactly the same thing.
+                    self.showOutOfAnswers()
                 } else if err.hasPrefix("SERVER_MSG:") {
                     self.aiAnswer = "⏳ " + String(err.dropFirst("SERVER_MSG:".count))
                 } else if err.hasPrefix("RATE_LIMIT") {
@@ -3152,6 +3149,28 @@ class MainViewModel {
     // and his promise to customers, and it has to land on both platforms at once: a Mac
     // user and a Windows user billed differently for the same interview is its own problem.
     enum ListeningBilling {
+        /// How long after words stop arriving the meter keeps counting. Long enough that a
+        /// pause between two sentences is not a gap, short enough that a silent room is not
+        /// billed. Windows ListeningBilling.SpeechWindow.
+        static let speechWindow: TimeInterval = 6
+
+        /// The part of an interval that counts as listening.
+        ///
+        /// LISTENING TIME IS SPEECH TIME (owner, 2026-09-29): an open microphone that hears
+        /// nobody costs the user nothing. It was mic-open time, and Auto keeps the mic open
+        /// for the whole sitting, so an hour of Auto with twenty questions billed about sixty
+        /// minutes and the hidden fair use allowance was gone in one sitting; after that
+        /// the app refused to listen. Now that same hour bills about five.
+        ///
+        /// The interval [start, now] counts in full when words arrived in it, or in the
+        /// speechWindow before it; otherwise it counts for nothing. `lastWords` is when a
+        /// NON-EMPTY transcript last arrived, so an empty result from a silent room never
+        /// starts the clock. nil means nothing has been heard yet.
+        static func countableSeconds(start: Date, now: Date, lastWords: Date?) -> Double {
+            guard now > start, let lastWords = lastWords else { return 0 }
+            return lastWords > start.addingTimeInterval(-speechWindow) ? now.timeIntervalSince(start) : 0
+        }
+
         /// Mid-turn: whole minutes only, remainder carried forward.
         static func minutesFromTick(unreported: Double) -> (report: Int, carry: Double) {
             guard unreported >= 60 else { return (0, unreported) }
@@ -3280,7 +3299,8 @@ class MainViewModel {
     private func stopListeningMeter() {
         listeningMeterTimer?.invalidate(); listeningMeterTimer = nil
         if let since = listeningSince {
-            unreportedListeningSeconds += Date().timeIntervalSince(since)
+            unreportedListeningSeconds += ListeningBilling.countableSeconds(
+                start: since, now: Date(), lastWords: heardAnythingThisSession ? lastSpeechHeardAt : nil)
             listeningSince = nil
         }
         // Anything past half a minute still counts. Rounding every short turn down to
@@ -3334,7 +3354,8 @@ class MainViewModel {
         }
 
         if let since = listeningSince {
-            unreportedListeningSeconds += now.timeIntervalSince(since)
+            unreportedListeningSeconds += ListeningBilling.countableSeconds(
+                start: since, now: now, lastWords: heardAnythingThisSession ? lastSpeechHeardAt : nil)
             listeningSince = now
         }
         let (minutes, carry) = ListeningBilling.minutesFromTick(unreported: unreportedListeningSeconds)
@@ -3367,11 +3388,11 @@ class MainViewModel {
         var wakesOnAudio = false
         if #available(macOS 14.2, *) { wakesOnAudio = autoModeEnabled }
         if wakesOnAudio {
-            showListeningNotice("STANDBY — WAKES WHEN SOMEONE SPEAKS")
+            showListeningNotice("STANDBY. WAKES WHEN SOMEONE SPEAKS")
         } else {
             showListeningNotice(heardAnythingThisSession
-                ? "MIC OFF AFTER \(Int(idleListeningTimeout / 60)) MIN QUIET — ⌥ SPACE TO RESUME"
-                : "MIC OFF — NOTHING HEARD YET — ⌥ SPACE TO RESUME")
+                ? "MIC OFF AFTER A QUIET STRETCH. ⌥ SPACE TO RESUME"
+                : "MIC OFF, NOTHING HEARD YET. ⌥ SPACE TO RESUME")
         }
         updateMicUI()
     }
@@ -3387,7 +3408,10 @@ class MainViewModel {
     ///   where an async Task would be killed with the process before it reached the wire.
     func flushListeningMeterOnExit(synchronously: Bool = false) {
         if let since = listeningSince {
-            unreportedListeningSeconds += Date().timeIntervalSince(since)
+            // Speech time here too. This is the last place the wall clock was still being
+            // billed, so an app quit while listening to a silent room charged for the wait.
+            unreportedListeningSeconds += ListeningBilling.countableSeconds(
+                start: since, now: Date(), lastWords: heardAnythingThisSession ? lastSpeechHeardAt : nil)
             listeningSince = nil
         }
         let minutes = ListeningBilling.minutesAtSessionEnd(unreported: unreportedListeningSeconds)
@@ -3421,11 +3445,14 @@ class MainViewModel {
 
     /// Warns BEFORE the allowance runs out. Transcription stopping without warning in the
     /// middle of an interview is the worst possible way to learn a limit exists.
+    ///
+    /// Only when it is reached, and in words. Listening is a hidden fair use guard, not a
+    /// meter: counting its minutes down on screen (it used to say "12 minutes of listening
+    /// time left") turns a guard into a number people shop by, and no customer text may
+    /// state minutes or hours. Same words as Windows ListeningProblems.NoListeningTime.
     private func warnIfListeningTimeLow() {
-        guard audioMinutesRemaining >= 0, audioMinutesRemaining <= 15 else { return }
-        aiAnswerHint = audioMinutesRemaining <= 0
-            ? "⚠ Your listening time for this month is used up. Transcription will not start until it resets."
-            : "⚠ \(audioMinutesRemaining) minutes of listening time left this month."
+        guard audioMinutesRemaining == 0 else { return }
+        aiAnswerHint = "You have reached this month's fair use limit for listening. You still have answers left, but nothing more can be heard until the limit renews or you upgrade. Reading your screen with F8 still works."
     }
 
     /// Current allowance without reporting anything, so the badge is honest before the
@@ -3439,11 +3466,6 @@ class MainViewModel {
         }
     }
 
-    static func formatListeningTime(_ minutes: Int) -> String {
-        if minutes < 60 { return "\(minutes)m" }
-        let h = minutes / 60, m = minutes % 60
-        return m == 0 ? "\(h)h" : "\(h)h \(m)m"
-    }
 
     // MARK: - Thinking Animation
     private func startThinkingTimer() {
@@ -3615,34 +3637,65 @@ class MainViewModel {
         }
     }
 
-    private func updateCreditsUI(credits: Int, plan: String, isUnlimited: Bool) {
-        showCreditsBadge = true; creditsPlanText = plan
-        if isUnlimited {
-            creditsText = "∞  Pro"
-            creditsColor = Color(red: 167/255, green: 139/255, blue: 250/255)
-            creditsPlanText = "Unlimited"; creditsIcon = "👑"
-        } else {
-            creditsIcon = ""
-            if credits == 0 {
-                creditsText = "0 credits"; creditsPlanText = "Tap to top up"
-                creditsColor = Color(red: 239/255, green: 68/255, blue: 68/255)
-            } else {
-                let display = credits >= 1000 ? String(format: "%.1fk", Double(credits)/1000.0) : "\(credits)"
-                creditsText = "⚡ \(display)"
-                creditsColor = credits > 20
-                    ? Color(red: 74/255, green: 222/255, blue: 128/255)
-                    : credits > 5
-                        ? Color(red: 245/255, green: 158/255, blue: 11/255)
-                        : Color(red: 239/255, green: 68/255, blue: 68/255)
-            }
+    // ── Answers, as a customer sees them ───────────────────────────────────────
+    //
+    // Customers never see the word "credits", and never see listening time. The badge
+    // used to read "⚡ 1.5k   ⏱ 9h 49m": a credit balance nobody can price against an
+    // interview, next to a fair use guard that was never meant to be a meter. It says
+    // answers now, rounded DOWN so it never overstates. Words and numbers: PlanFacts.
+
+    /// On the one-time free answers rather than a paid plan. A guest counts.
+    var onFreeTrial: Bool {
+        !session.isUnlimited &&
+        PlanFacts.isFreeTrial(plan: session.plan, signedIn: session.isLoggedIn && !session.isGuestSession)
+    }
+
+    /// The hover text on the answers badge.
+    var creditsTooltip: String {
+        if session.isUnlimited { return "Unlimited answers.\nClick for details." }
+        return PlanFacts.tooltip(credits: session.credits, freeTrial: onFreeTrial,
+                                 listeningLimitReached: audioMinutesRemaining == 0)
+    }
+
+    /// Out of answers: say so in words, and offer the one next step that fixes it.
+    /// A free trial reads as the end of a trial (what Pro gives), a paid plan as answers
+    /// that renew. The button opens the account page, where answers can be added without
+    /// a subscription, and the plans are offered too.
+    func showOutOfAnswers() {
+        let m = PlanFacts.outOfAnswers(freeTrial: onFreeTrial)
+        aiAnswer = "\(m.title)\n\n\(m.body)"
+        showAlert(title: m.title, body: m.body, actionLabel: "Get more answers") {
+            NSWorkspace.shared.open(PlanFacts.addAnswersURL)
         }
-        if audioMinutesRemaining >= 0 {
-            creditsText += "   ⏱ \(Self.formatListeningTime(audioMinutesRemaining))"
-            // The colour follows whichever limit is actually about to stop them.
-            if audioMinutesRemaining <= 15 {
-                creditsColor = Color(red: 248/255, green: 113/255, blue: 113/255)
-            }
-            if audioMinutesRemaining == 0 { creditsPlanText = "No listening time left" }
+        dlog("Out of answers — told the user (free trial=\(onFreeTrial))", tag: "CREDITS")
+    }
+
+    private func updateCreditsUI(credits: Int, plan: String, isUnlimited: Bool) {
+        showCreditsBadge = true
+        creditsIcon = ""
+        if isUnlimited {
+            // A retired unlimited account. Nobody can buy this now; it still has to read right.
+            creditsText = "Unlimited"
+            creditsColor = Color(red: 167/255, green: 139/255, blue: 250/255)
+            creditsPlanText = "Unlimited"
+            return
+        }
+        creditsText = PlanFacts.badgeText(credits)
+        let free = PlanFacts.isFreeTrial(plan: plan, signedIn: session.isLoggedIn && !session.isGuestSession)
+        creditsPlanText = free ? "Free trial" : "\(plan.capitalized) plan"
+        if PlanFacts.isEmpty(credits) {
+            creditsColor = Color(red: 239/255, green: 68/255, blue: 68/255)
+            creditsPlanText = "Get more answers"
+        } else if PlanFacts.isLow(credits) {
+            creditsColor = Color(red: 245/255, green: 158/255, blue: 11/255)
+        } else {
+            creditsColor = Color(red: 74/255, green: 222/255, blue: 128/255)
+        }
+        // Listening time is deliberately NOT shown: it is a hidden fair use guard, not a
+        // meter. Reaching it is explained in words (tooltip, and the listening message).
+        if audioMinutesRemaining == 0 {
+            creditsColor = Color(red: 245/255, green: 158/255, blue: 11/255)
+            creditsPlanText = "Listening limit reached"
         }
     }
 

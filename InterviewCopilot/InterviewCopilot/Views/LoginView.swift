@@ -69,9 +69,31 @@ struct LoginView: View {
                         Text("Replysis")
                             .font(.system(size: 24, weight: .bold))
                             .foregroundColor(.white)
-                        Text("Your AI-powered interview assistant")
-                            .font(.system(size: 13))
-                            .foregroundColor(Color(hex: "#6b7280"))
+                        // The tagline that stood here ("Your AI-powered interview assistant") is
+                        // gone: the owner reads taglines as AI-generated. What belongs here is
+                        // the one thing a new person is deciding on: what they get for free.
+                        HStack(spacing: 10) {
+                            Text("\(PlanFacts.answers(PlanFacts.freeCredits))")
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundColor(.white)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("FREE ANSWERS TO TRY IT")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(Color(hex: "#e5e7eb"))
+                                Text("Included with every new account")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(Color(hex: "#9ca3af"))
+                            }
+                            Text("NO CARD")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundColor(Color(hex: "#9ca3af"))
+                                .padding(.horizontal, 6).padding(.vertical, 3)
+                                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(0.18), lineWidth: 1))
+                        }
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.05)))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.10), lineWidth: 1))
+                        .padding(.top, 4)
                     }
                     .padding(.top, 36)
                     .padding(.bottom, 20)

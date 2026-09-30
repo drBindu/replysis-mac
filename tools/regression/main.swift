@@ -264,5 +264,88 @@ check(AutoTurnDetector.latestQuestionIfMultiple("Our team runs about 40 microser
 check(AutoTurnDetector.latestQuestionIfMultiple("What is Java?") == nil, "a single question stays whole")
 check(AutoTurnDetector.latestQuestionIfMultiple("We are building a payments platform that handles ten thousand transactions per second. How would you design the database layer?") == nil, "long context plus one question stays whole")
 
+// ── Plans and wording (briefing section 2, Windows PlanFacts.cs) ──────────────────────
+// Customers never see "credits", "minutes", "hours" or the old numbers. Every string
+// PlanFacts can produce, across every account state, is checked here.
+let bannedInCustomerText = ["credit", "minute", "hour", "100 free", "$29.99", "$49.99", "yearly", "annual"]
+func clean(_ text: String, _ label: String) {
+    let low = text.lowercased()
+    for w in bannedInCustomerText where low.contains(w) {
+        check(false, "customer text must not contain '\(w)': \(label) -> \(text.prefix(80))")
+        return
+    }
+    check(true, "clean: \(label)")
+}
+check(PlanFacts.answerCost == 5, "one answer costs 5 credits, in one place")
+check(PlanFacts.answers(12) == 2, "12 credits is 2 answers, rounded down")
+check(PlanFacts.answers(4) == 0, "under 5 credits buys nothing")
+check(PlanFacts.answers(25) == 5, "the free plan is 5 answers")
+check(PlanFacts.answers(PlanFacts.proCredits) == 500, "Pro is 500 answers")
+check(PlanFacts.answers(PlanFacts.maxCredits) == 1500, "Max is 1,500 answers")
+check(PlanFacts.answersShort(7500) == "1.5k", "1,500 answers reads 1.5k on the badge")
+check(PlanFacts.badgeText(60) == "12 answers", "badge: 12 answers")
+check(PlanFacts.badgeText(5) == "1 answer", "badge: 1 answer, singular")
+check(PlanFacts.badgeText(0) == "0 answers", "badge: 0 answers")
+check(PlanFacts.badgeText(7500) == "1.5k answers", "badge: 1.5k answers")
+check(PlanFacts.isFreeTrial(plan: "free", signedIn: true), "a signed-in free account is on the trial")
+check(PlanFacts.isFreeTrial(plan: "pro", signedIn: false), "a guest is on the trial whatever the plan says")
+check(!PlanFacts.isFreeTrial(plan: "pro", signedIn: true), "Pro is not the trial")
+check(!PlanFacts.isFreeTrial(plan: "max", signedIn: true), "Max is not the trial")
+check(PlanFacts.allowanceText(plan: "free", signedIn: true) == "5 answers, one time", "Free is one time")
+check(PlanFacts.allowanceText(plan: "pro", signedIn: true) == "500 answers each month", "Pro allowance")
+check(PlanFacts.allowanceText(plan: "max", signedIn: true) == "1,500 answers each month", "Max allowance")
+check(PlanFacts.refreshText(plan: "free", signedIn: true) == "Not refreshed", "Free never refreshes")
+check(PlanFacts.isLow(10) && !PlanFacts.isLow(11), "amber at two answers or fewer")
+check(PlanFacts.isEmpty(4) && !PlanFacts.isEmpty(5), "blocked below one answer")
+check(PlanFacts.addAnswersURL.absoluteString == "https://replysis.com/account#add-answers", "add-answers link")
+check(PlanFacts.tooltip(credits: 15, freeTrial: true).contains("Free answers do not refresh"), "free tooltip says they do not refresh")
+check(!PlanFacts.tooltip(credits: 15, freeTrial: true).contains("this month"), "free tooltip never says this month")
+check(PlanFacts.tooltip(credits: 55, freeTrial: false).contains("this month"), "paid tooltip says this month")
+check(PlanFacts.outOfAnswers(freeTrial: true).title == "Your free answers are used", "free trial out-of-answers title")
+for free in [true, false] {
+    let m = PlanFacts.outOfAnswers(freeTrial: free)
+    clean(m.title, "out of answers title free=\(free)"); clean(m.body, "out of answers body free=\(free)")
+    check(m.body.rangeOfCharacter(from: .decimalDigits) == nil, "out-of-answers words carry no number (free=\(free))")
+}
+for credits in [0, 4, 5, 10, 11, 25, 60, 2500, 7500, 12345] {
+    for free in [true, false] {
+        clean(PlanFacts.badgeText(credits), "badge \(credits)")
+        clean(PlanFacts.tooltip(credits: credits, freeTrial: free), "tooltip \(credits) free=\(free)")
+        clean(PlanFacts.lowWarning(credits: credits, freeTrial: free), "low warning \(credits) free=\(free)")
+        clean(PlanFacts.answersLabel(credits), "label \(credits)")
+    }
+}
+for plan in ["free", "pro", "max", "lifetime", "teams", "", "weird"] {
+    for signedIn in [true, false] {
+        clean(PlanFacts.allowanceText(plan: plan, signedIn: signedIn), "allowance \(plan) signedIn=\(signedIn)")
+        clean(PlanFacts.refreshText(plan: plan, signedIn: signedIn), "refresh \(plan) signedIn=\(signedIn)")
+    }
+}
+check(PlanFacts.tooltip(credits: 5, freeTrial: true).contains("About 1 free answer left"), "tooltip: 1 free answer is singular")
+check(!PlanFacts.tooltip(credits: 5, freeTrial: true).contains("1 free answers"), "tooltip never says '1 free answers'")
+check(PlanFacts.tooltip(credits: 0, freeTrial: true).hasPrefix("No free answers left"), "tooltip: none left is a fact, not 'about 0'")
+check(PlanFacts.tooltip(credits: 4, freeTrial: false).hasPrefix("No answers left this month"), "tooltip: under one answer reads as none")
+// ── Listening is metered by SPEECH, not by how long the mic is open (Windows ListeningBilling) ──
+// The rule is inlined here as the pure function it is, checked against the sittings the owner
+// described: an hour of Auto with about twenty questions must bill minutes, not an hour.
+func countable(_ start: Double, _ now: Double, _ lastWords: Double?) -> Double {
+    guard now > start, let lw = lastWords else { return 0 }
+    return lw > start - 6 ? now - start : 0
+}
+check(countable(0, 5, nil) == 0, "nothing heard yet: an open mic costs nothing")
+check(countable(0, 5, 3) == 5, "words inside the interval: the whole interval counts")
+check(countable(10, 15, 8) == 5, "words within the 6s window before it: counts")
+check(countable(10, 15, 3) == 0, "words long before it: a silent room costs nothing")
+check(countable(10, 10, 9) == 0, "an empty interval is zero")
+var billedSeconds = 0.0, lastWordAt: Double? = nil
+// one hour of Auto, ticking every 5s, with twenty 15-second questions spread through it
+let questionStarts = stride(from: 120.0, to: 3600.0, by: 174.0).prefix(20)
+for tick in stride(from: 0.0, to: 3600.0, by: 5.0) {
+    if questionStarts.contains(where: { tick >= $0 && tick < $0 + 15 }) { lastWordAt = tick }
+    billedSeconds += countable(tick, tick + 5, lastWordAt)
+}
+check(billedSeconds < 900, "an hour of Auto with 20 questions bills well under 15 minutes (was 60): \(Int(billedSeconds / 60)) min")
+check(billedSeconds > 60, "...but a real interview is not free: \(Int(billedSeconds / 60)) min")
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)
