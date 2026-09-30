@@ -213,15 +213,13 @@ struct MainView: View {
     // ── Brand (left) ───────────────────────────────────────────────
     func brandView(_ tier: HeaderTier) -> some View {
         HStack(spacing: 9) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 9)
-                    .fill(LinearGradient(colors: [Color(hex: "#0e3a5a"), Color(hex: "#0a2236")],
-                                         startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: 34, height: 34)
-                Image(systemName: "brain.head.profile")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(Color(hex: "#38bdf8"))
-            }
+            // The real Replysis mark, as-is. The blue head-and-brain tile that stood here was
+            // the previous brand.
+            Image("ReplysisMark")
+                .resizable().interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 34, height: 34)
+                .accessibilityLabel("Replysis")
             // The strapline is the first thing to go: it is decoration, and it costs more
             // width than the wordmark it sits under. The wordmark goes next; the mark itself
             // always stays, so the window is still identifiably the app.
@@ -231,12 +229,8 @@ struct MainView: View {
                         .font(.system(size: 13, weight: .bold))
                         .foregroundColor(.white)
                         .lineLimit(1).fixedSize(horizontal: true, vertical: false)
-                    if tier == .full {
-                        Text("INTERVIEW INTELLIGENCE")
-                            .font(.system(size: 7, weight: .semibold)).tracking(1.0)
-                            .foregroundColor(Color(hex: "#5b6b7f"))
-                            .lineLimit(1).fixedSize(horizontal: true, vertical: false)
-                    }
+                    // No strapline: a tagline in tiny tracked capitals reads as generated, and the
+                    // owner's copy rules ban taglines and fake letter-spacing. The wordmark is enough.
                 }
             }
         }

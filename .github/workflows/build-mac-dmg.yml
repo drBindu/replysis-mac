@@ -287,11 +287,39 @@ jobs:
           DMG_CONTENT=$(mktemp -d)
           cp -R "$RUNNER_TEMP/export/InterviewCopilot.app" "$DMG_CONTENT/"
           ln -s /Applications "$DMG_CONTENT/Applications"
+          # The mounted disk shows the real Replysis icon, built from the same PNGs as the app
+          # icon (one source of truth). A folder holding .VolumeIcon.icns with the custom-icon
+          # flag set becomes the icon of the volume it is made into.
+          ICONSET=$(mktemp -d)/Replysis.iconset
+          mkdir -p "$ICONSET"
+          ASSET="InterviewCopilot/InterviewCopilot/Assets.xcassets/AppIcon.appiconset"
+          cp "$ASSET/icon_16.png"   "$ICONSET/icon_16x16.png"
+          cp "$ASSET/icon_32.png"   "$ICONSET/icon_16x16@2x.png"
+          cp "$ASSET/icon_32.png"   "$ICONSET/icon_32x32.png"
+          cp "$ASSET/icon_64.png"   "$ICONSET/icon_32x32@2x.png"
+          cp "$ASSET/icon_128.png"  "$ICONSET/icon_128x128.png"
+          cp "$ASSET/icon_256.png"  "$ICONSET/icon_128x128@2x.png"
+          cp "$ASSET/icon_256.png"  "$ICONSET/icon_256x256.png"
+          cp "$ASSET/icon_512.png"  "$ICONSET/icon_256x256@2x.png"
+          cp "$ASSET/icon_512.png"  "$ICONSET/icon_512x512.png"
+          cp "$ASSET/icon_1024.png" "$ICONSET/icon_512x512@2x.png"
+          iconutil -c icns "$ICONSET" -o "$DMG_CONTENT/.VolumeIcon.icns"
+          # The custom-icon flag has to be set on the MOUNTED volume: setting it on the source
+          # folder does not carry over (tried, and the disk kept the generic icon). So build a
+          # writable image, mount it, set the flag, then compress it.
           hdiutil create \
-            -volname "Interview Copilot" \
+            -volname "Replysis" \
             -srcfolder "$DMG_CONTENT" \
-            -ov -format UDBZ \
-            "$RUNNER_TEMP/InterviewCopilot-raw.dmg"
+            -ov -format UDRW \
+            "$RUNNER_TEMP/InterviewCopilot-rw.dmg"
+          RW_MOUNT=$(mktemp -d)
+          hdiutil attach "$RUNNER_TEMP/InterviewCopilot-rw.dmg" -nobrowse -mountpoint "$RW_MOUNT"
+          SetFile -a C "$RW_MOUNT" || echo "::warning::could not set the custom-icon flag; the disk shows the default icon"
+          sync
+          hdiutil detach "$RW_MOUNT"
+          hdiutil convert "$RUNNER_TEMP/InterviewCopilot-rw.dmg" \
+            -format UDBZ -ov \
+            -o "$RUNNER_TEMP/InterviewCopilot-raw.dmg"
           IDENTITY=$(security find-identity -v -p codesigning "$RUNNER_TEMP/build.keychain" \
             | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.+)"/\1/')
           codesign --force --sign "$IDENTITY" \
@@ -384,7 +412,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.VERSION }}
-          name: Interview Copilot v${{ steps.version.outputs.VERSION }}
+          name: Replysis v${{ steps.version.outputs.VERSION }}
           body: |
             ## Install on macOS
             **First time?** Download **InterviewCopilot-mac.dmg** → drag to Applications.

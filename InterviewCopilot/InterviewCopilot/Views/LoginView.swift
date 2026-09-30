@@ -58,14 +58,13 @@ struct LoginView: View {
 
                     // ── Logo + Brand ──────────────────────────────────
                     VStack(spacing: 10) {
-                        ZStack {
-                            Circle()
-                                .fill(Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.15))
-                                .frame(width: 64, height: 64)
-                            Image(systemName: "brain.head.profile")
-                                .font(.system(size: 30))
-                                .foregroundColor(Color(hex: "#38bdf8"))
-                        }
+                        // The real Replysis mark (the same file as the website and the Windows
+                        // app). It used to be a blue head-and-brain symbol from an earlier brand.
+                        Image("ReplysisMark")
+                            .resizable().interpolation(.high)
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 64, height: 64)
+                            .accessibilityLabel("Replysis")
                         Text("Replysis")
                             .font(.system(size: 24, weight: .bold))
                             .foregroundColor(.white)
