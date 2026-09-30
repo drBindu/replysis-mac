@@ -264,6 +264,11 @@ check(AutoTurnDetector.latestQuestionIfMultiple("Our team runs about 40 microser
 check(AutoTurnDetector.latestQuestionIfMultiple("What is Java?") == nil, "a single question stays whole")
 check(AutoTurnDetector.latestQuestionIfMultiple("We are building a payments platform that handles ten thousand transactions per second. How would you design the database layer?") == nil, "long context plus one question stays whole")
 
+enum UserSessionRetryPolicy {
+    static func noConnection(_ failures: Int) -> Double {
+        switch failures { case ...1: return 2; case 2: return 4; case 3: return 8; case 4: return 15; default: return 30 }
+    }
+}
 // ── Plans and wording (briefing section 2, Windows PlanFacts.cs) ──────────────────────
 // Customers never see "credits", "minutes", "hours" or the old numbers. Every string
 // PlanFacts can produce, across every account state, is checked here.
@@ -346,6 +351,46 @@ for tick in stride(from: 0.0, to: 3600.0, by: 5.0) {
 }
 check(billedSeconds < 900, "an hour of Auto with 20 questions bills well under 15 minutes (was 60): \(Int(billedSeconds / 60)) min")
 check(billedSeconds > 60, "...but a real interview is not free: \(Int(billedSeconds / 60)) min")
+
+// ── ListeningProblems: every failure is explained in words (Windows ListeningProblems.cs) ──
+for kind in ListeningProblems.Kind.allCases {
+    for free in [true, false] {
+        let d = ListeningProblems.describe(kind, freeTrial: free)
+        check(!d.title.isEmpty && !d.body.isEmpty && !d.label.isEmpty, "problem \(kind) has a title, words and a label")
+        clean(d.title, "problem title \(kind)"); clean(d.body, "problem body \(kind) free=\(free)")
+        // Key names (F8) are not plan numbers; everything else with a digit in it is.
+        let withoutKeyNames = d.body.replacingOccurrences(of: #"\bF\d{1,2}\b"#, with: "", options: .regularExpression)
+        check(withoutKeyNames.rangeOfCharacter(from: .decimalDigits) == nil, "problem \(kind) states no number")
+        check(!d.body.contains("Speechmatics") && !d.body.contains("Deepgram") && !d.body.contains("Sarvam"), "problem \(kind) names no provider")
+    }
+}
+check(ListeningProblems.describe(.noAnswers, freeTrial: true).title == "Your free answers are used", "free trial: the trial has ended")
+check(ListeningProblems.describe(.noAnswers, freeTrial: false).title == "No answers left this month", "paid: answers renew")
+check(ListeningProblems.describe(.noAnswers, freeTrial: true).step == .moreAnswers, "out of answers offers Get more answers")
+check(ListeningProblems.describe(.noListeningTime).step == .seePlans, "listening limit offers the plans")
+check(ListeningProblems.describe(.noListeningTime).body.contains("You still have answers left"), "listening limit says answers are fine")
+func detect(online: Bool = false, status: Int = 0, listening: Bool = false, answers: Bool = false,
+            waiting: Bool = false, mic: Bool = false, stalled: Bool = false, net: Bool = false) -> ListeningProblems.Kind? {
+    ListeningProblems.detect(engineOnline: online, speechStatusCode: status, outOfListeningTime: listening,
+                             outOfAnswers: answers, waitingToRetry: waiting, fatalNoMicrophone: mic,
+                             connectionStalled: stalled, noNetwork: net)
+}
+check(detect(online: true, status: 402, listening: true) == nil, "nothing is wrong while the engine is online")
+check(detect() == nil, "no evidence, no problem")
+check(detect(status: 402) == .noAnswers, "402 alone reads as no answers")
+check(detect(status: 401) == .signInExpired, "401 reads as sign in again")
+check(detect(status: 503) == .serviceUnavailable, "503 reads as the service being busy")
+check(detect(waiting: true) == .waitingToReconnect, "waiting to retry reads as reconnecting")
+check(detect(mic: true) == .noMicrophone, "no microphone")
+check(detect(stalled: true) == .noSpeechService, "connection stalled")
+check(detect(net: true) == .noNetwork, "no network")
+// THE case that hid the reason on Windows: refused, then the app kept asking, hit the hourly
+// limit, and the newest status became 429 ("too many requests"). The refusal must outlive it.
+check(detect(status: 429, listening: true) == .noListeningTime, "a listening refusal outlives a later rate limit")
+check(detect(status: 429, answers: true) == .noAnswers, "an answers refusal outlives a later rate limit")
+check(detect(status: 429, waiting: true) == .waitingToReconnect, "a bare rate limit is a passing reconnect")
+check(UserSessionRetryPolicy.noConnection(1) == 2 && UserSessionRetryPolicy.noConnection(2) == 4 && UserSessionRetryPolicy.noConnection(3) == 8
+      && UserSessionRetryPolicy.noConnection(4) == 15 && UserSessionRetryPolicy.noConnection(9) == 30, "no-connection retry waits 2, 4, 8, 15, then 30 seconds")
 
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

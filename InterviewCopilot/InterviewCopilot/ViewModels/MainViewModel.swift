@@ -1,4 +1,5 @@
 import SwiftUI
+import Network
 import AppKit
 import Observation
 import AVFoundation
@@ -2012,6 +2013,7 @@ class MainViewModel {
     private var keyErrorNoticeShowing = false
     private var wasListeningBeforeKeyError = false
     private func updateTranscript() {
+        tickListeningProblem()
         tickPreparedShots()
         checkAudioSourceTip()
         renewSpeechTokenIfExpiring()
@@ -3657,6 +3659,71 @@ class MainViewModel {
                                  listeningLimitReached: audioMinutesRemaining == 0)
     }
 
+    // ── Saying WHY nothing is being heard ─────────────────────────────────────────────
+    //
+    // Every one of these used to be a small coloured label and nothing else. The words live
+    // in ListeningProblems, where a test fails if a problem has none.
+    private var problemsShown = Set<ListeningProblems.Kind>()
+    private var lastProblemCheckAt = Date.distantPast
+    private(set) var currentProblem: ListeningProblems.Kind?
+    /// Whether the Mac has a network path at all. Owned by a small class of its own, because
+    /// this view model is @Observable and cannot hold a lazily-started monitor.
+    private let network = NetworkReachability.shared
+
+    /// How long an engine may take to connect before it counts as stalled (Windows: 25s).
+    private static let connectPatience: TimeInterval = 25
+
+    private func tickListeningProblem() {
+        let now = Date()
+        guard now.timeIntervalSince(lastProblemCheckAt) >= 2 else { return }
+        lastProblemCheckAt = now
+        guard session.isLoggedIn else { currentProblem = nil; return }
+
+        let stalled = !engine.isReady && engine.isRunning &&
+            (engine.startedAt.map { now.timeIntervalSince($0) > Self.connectPatience } ?? false)
+        let problem = ListeningProblems.detect(
+            engineOnline: engine.isReady,
+            speechStatusCode: session.speechKeyLastStatus,
+            outOfListeningTime: session.speechOutOfListeningTime,
+            outOfAnswers: session.speechOutOfAnswers,
+            waitingToRetry: now < session.speechRetryAfter,
+            fatalNoMicrophone: micCaptureEnabled && micStatus == "NO MIC" && AVCaptureDevice.authorizationStatus(for: .audio) == .denied,
+            connectionStalled: stalled,
+            noNetwork: !network.isUp)
+        currentProblem = problem
+        if let problem { showProblemOnce(problem) } else { problemsShown.removeAll() }
+    }
+
+    /// Said once per occurrence, in words. A problem that clears and comes back is said again.
+    private func showProblemOnce(_ kind: ListeningProblems.Kind) {
+        guard problemsShown.insert(kind).inserted else { return }
+        let d = ListeningProblems.describe(kind, freeTrial: onFreeTrial)
+        dlog("Problem shown to the user: \(kind)", tag: "MODE")
+        let action: (label: String, run: () -> Void)?
+        switch d.step {
+        case .moreAnswers: action = ("Get more answers", { NSWorkspace.shared.open(PlanFacts.addAnswersURL) })
+        case .seePlans:    action = ("See plans", { NSWorkspace.shared.open(PlanFacts.pricingURL) })
+        case .none:        action = nil
+        }
+        showAlert(title: d.title, body: d.body, actionLabel: action?.label ?? "", action: action?.run)
+    }
+
+    /// Clicking the answers badge asks again at once. Someone who just upgraded or added
+    /// answers must not sit behind a refusal the app remembers for five minutes.
+    func askAgainNow() {
+        guard session.isLoggedIn else { return }
+        session.forgetRefusal()
+        problemsShown.removeAll()
+        dismissAlert()
+        Task { [weak self] in
+            guard let self else { return }
+            await self.fetchCredits()
+            if await self.session.fetchSpeechmaticsKeyAsync(forceRefresh: true, userInitiated: true) {
+                if !self.engine.isRunning { self.engine.start(smKey: self.session.speechmaticsKey) }
+            }
+        }
+    }
+
     /// Out of answers: say so in words, and offer the one next step that fixes it.
     /// A free trial reads as the end of a trial (what Pro gives), a paid plan as answers
     /// that renew. The button opens the account page, where answers can be added without
@@ -4445,7 +4512,7 @@ class MainViewModel {
         Task {
             // The user is retrying BECAUSE something was refused, so bypass the cache. This
             // is the one path that should spend a fresh token from the hourly allowance.
-            let ok = await session.fetchSpeechmaticsKeyAsync(forceRefresh: true)
+            let ok = await session.fetchSpeechmaticsKeyAsync(forceRefresh: true, userInitiated: true)
             if ok {
                 engine.start(smKey: session.speechmaticsKey)
                 micStatus = "READY"

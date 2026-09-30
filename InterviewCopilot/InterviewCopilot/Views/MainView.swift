@@ -368,7 +368,7 @@ struct MainView: View {
             // clicking specifically the credits number shouldn't dump you into the whole
             // account menu. Now opens its own small popover with just the credits card.
             if vm.showCreditsBadge {
-                Button(action: { showCreditsPopover.toggle() }) {
+                Button(action: { vm.askAgainNow(); showCreditsPopover.toggle() }) {
                     Text(vm.creditsText)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(vm.creditsColor)

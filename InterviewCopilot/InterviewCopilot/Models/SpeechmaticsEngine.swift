@@ -8,6 +8,8 @@ class SpeechmaticsEngine {
     static let shared = SpeechmaticsEngine()
 
     var isRunning = false
+    /// When the current engine process was launched, for "connection stalled".
+    private(set) var startedAt: Date?
     var statusText = "READY"
 
     /// True once the Python engine has finished its (slow, ~10s) cold start and is actually
@@ -150,6 +152,7 @@ class SpeechmaticsEngine {
     private var concurrencyBlockedUntil: Date?
 
     func start(smKey: String) {
+        startedAt = Date()
         // The gate lives HERE because six places in MainViewModel call start() directly and
         // none of them consult engineCancelled. After a concurrency refusal each of those
         // paths spawned another engine, and every engine opened another session against an

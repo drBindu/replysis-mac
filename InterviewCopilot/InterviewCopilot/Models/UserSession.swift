@@ -17,6 +17,7 @@ private enum Keychain {
     /// launch read a day-old key, called it expired and spent a fresh one.
     @discardableResult
     static func save(_ data: Data, account: String) -> OSStatus {
+        if DeveloperOverrides.active { return errSecSuccess }   // a test run never writes the real Keychain
         let base: [String: Any] = [
             kSecClass as String:       kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -40,6 +41,7 @@ private enum Keychain {
     }
 
     static func load(account: String) -> Data? {
+        if DeveloperOverrides.active { return nil }             // ...and never reads it
         let query: [String: Any] = [
             kSecClass as String:       kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -62,6 +64,7 @@ private enum Keychain {
     /// out goes through here too, and a refused delete there would have left the login behind.
     @discardableResult
     static func delete(account: String) -> OSStatus {
+        if DeveloperOverrides.active { return errSecSuccess }   // ...and never deletes from it
         let query: [String: Any] = [
             kSecClass as String:       kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -171,6 +174,17 @@ class UserSession {
     }
 
     func tryLoadFromDisk() -> Bool {
+        if let mode = DeveloperOverrides.testSession {
+            // DEBUG + loopback only. A fake signed-in person, in memory, so the real app can be
+            // run against a fake server. "stale" believes its token is fine and the server
+            // does not; "expired" knows it is old and must refresh first.
+            email = "scenario@example.test"; name = "Scenario"; userId = "scenario-user"
+            idToken = "stale-token"; refreshToken = "refresh-1"
+            tokenSavedAt = mode == "expired" ? Date(timeIntervalSinceNow: -3 * 3600) : Date()
+            isLoggedIn = true
+            dlog("Session: TEST session (\(mode)) against the fake server", tag: "AUTH")
+            return true
+        }
         dlog("Session: trying to load from Keychain", tag: "AUTH")
         var blob = Keychain.load(account: "session")
         // One-time migration: if there's an old plaintext session.json, import it then delete it.
@@ -248,7 +262,8 @@ class UserSession {
 
         let task = Task<Bool, Never> { [weak self] in
             guard let self,
-                  let url = URL(string: "https://securetoken.googleapis.com/v1/token?key=\(AppConfig.firebaseApiKey)")
+                  let url = URL(string: DeveloperOverrides.tokenURL
+                                ?? "https://securetoken.googleapis.com/v1/token?key=\(AppConfig.firebaseApiKey)")
             else { return false }
 
             var req = URLRequest(url: url)
@@ -336,6 +351,37 @@ class UserSession {
     /// was fetched, and would have renewed every five minutes — twelve mints an hour, the
     /// whole allowance. What the engine is actually using is what this must describe.
     var speechKeyExpiresAt: Date? { speechKeyExpiry }
+
+    // ── Why the speech key could not be had ───────────────────────────────────────────
+    //
+    // Until 2026-09-30 a failed key request left nothing behind but "false", so the app
+    // could only show a bare NO MIC and had no way to say WHY. A Free tester on Windows with
+    // no listening time spoke to a silent app for minutes and decided her laptop was broken.
+    // These are what ListeningProblems reads to say it in words.
+    private(set) var speechKeyLastStatus = 0
+    /// A 402 because the fair use guard on listening was reached (credits are fine).
+    private(set) var speechOutOfListeningTime = false
+    /// A 402 because the answers are used up.
+    private(set) var speechOutOfAnswers = false
+    /// Earliest time the AUTOMATIC paths may ask again. A definite refusal is remembered.
+    private(set) var speechRetryAfter = Date.distantPast
+    private var keyNoConnectionFailures = 0
+
+    /// Waits 2, 4, 8, 15 then 30 seconds after "no connection" (Windows RecoveryPolicy).
+    static func keyRetryAfterNoConnection(_ failures: Int) -> TimeInterval {
+        switch failures { case ...1: return 2; case 2: return 4; case 3: return 8; case 4: return 15; default: return 30 }
+    }
+    /// How long a definite refusal (402) is remembered. Windows measured why: the server
+    /// allows a signed-in account 12 key requests an hour, and retrying every 30 seconds
+    /// used them all in six minutes, after which every reply was a rate limit that hid the
+    /// real reason from the person. The badge and the mic ask again on demand.
+    static let refusalMemory: TimeInterval = 300
+
+    /// Someone who just upgraded must not be stuck behind a remembered refusal.
+    func forgetRefusal() {
+        speechRetryAfter = .distantPast
+        speechOutOfAnswers = false; speechOutOfListeningTime = false; speechKeyLastStatus = 0
+    }
     private var speechKeyExpiry: Date?
 
     private var speechKeyOwner: String {
@@ -445,9 +491,16 @@ class UserSession {
 
     /// - Parameter forceRefresh: skip the cache and mint a new token. Only for a deliberate
     ///   user retry, never for the automatic paths — that is what spends the allowance.
-    func fetchSpeechmaticsKeyAsync(forceRefresh: Bool = false) async -> Bool {
+    /// - Parameter userInitiated: the person asked (clicked the mic or the answers badge), so
+    ///   a remembered refusal does not apply. Automatic paths wait it out.
+    func fetchSpeechmaticsKeyAsync(forceRefresh: Bool = false, userInitiated: Bool = false) async -> Bool {
         guard !idToken.isEmpty || isGuestSession else {
             dlog("SM key fetch: no idToken and not a guest session — not logged in", tag: "AUTH")
+            return false
+        }
+        if userInitiated { forgetRefusal() }
+        if !userInitiated, Date() < speechRetryAfter, loadCachedSpeechKey() == nil {
+            dlog("SM key fetch: holding off \(Int(speechRetryAfter.timeIntervalSinceNow))s more (last answer HTTP \(speechKeyLastStatus))", tag: "AUTH")
             return false
         }
         if forceRefresh { discardCachedSpeechKey() }
@@ -468,13 +521,32 @@ class UserSession {
         let urlStr = "\(AppConfig.backendUrl)/api/v1/stt/key"
         dlog("SM key fetch: GET \(urlStr)", tag: "AUTH")
         guard let url = URL(string: urlStr) else { return false }
-        var req = URLRequest(url: url)
-        req.timeoutInterval = 10
-        req.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
-        req.setValue(DeviceIdentity.current, forHTTPHeaderField: "X-Device-Id")
+        // REFRESH THE SIGN-IN FIRST. The answer path always did; this one sent whatever was
+        // stored. A laptop that slept two hours woke, asked for a speech key with a token an
+        // hour past expiry, was told 401, and the 401 was read as "signed out" — the plan
+        // gone and no answer, in the middle of an interview (Windows, 2026-09-29).
+        if !isGuestSession, !refreshToken.isEmpty, tokenNeedsRefresh {
+            _ = await tryRefreshAsync()
+        }
+        func makeRequest() -> URLRequest {
+            var r = URLRequest(url: url)
+            r.timeoutInterval = 10
+            r.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
+            r.setValue(DeviceIdentity.current, forHTTPHeaderField: "X-Device-Id")
+            return r
+        }
         do {
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            var (data, resp) = try await URLSession.shared.data(for: makeRequest())
+            var statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            // The stored timestamp is only a guess at "still valid": wrong after a long sleep,
+            // a clock change, or a session revoked elsewhere. A 401 for someone signed in is
+            // worth ONE forced refresh and ONE more try before it is called a sign-out.
+            if statusCode == 401, !isGuestSession, !refreshToken.isEmpty, await tryRefreshAsync() {
+                dlog("SM key fetch: 401 on a stale sign-in — refreshed it and asked again", tag: "AUTH")
+                (data, resp) = try await URLSession.shared.data(for: makeRequest())
+                statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            }
+            keyNoConnectionFailures = 0        // an answer of any kind means the connection is back
             dlog("SM key fetch: HTTP \(statusCode)", tag: "AUTH")
             if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let key = obj["key"] as? String, !key.isEmpty {
@@ -491,13 +563,42 @@ class UserSession {
                 // The server says how long it is good for; Windows clamps the same way.
                 let ttl = TimeInterval(min(max(obj["expiresIn"] as? Int ?? 3600, 60), 86_400))
                 self.cacheSpeechKey(key, ttl: ttl)
+                forgetRefusal()
                 dlog("SM key fetch: SUCCESS — key length=\(key.count)", tag: "AUTH")
                 return true
             }
-            let raw = String(data: data, encoding: .utf8) ?? "(empty)"
-            dlog("SM key fetch: no key in response — \(raw)", tag: "AUTH")
+            if !(200...299).contains(statusCode) {
+                speechKeyLastStatus = statusCode
+                if statusCode == 402 {
+                    // The server names which limit was hit; anything else is the answers.
+                    let body = (String(data: data, encoding: .utf8) ?? "").lowercased()
+                    let listeningLimit = body.contains("audio-limit") || body.contains("listening time")
+                    speechOutOfListeningTime = listeningLimit
+                    speechOutOfAnswers = !listeningLimit
+                    dlog(listeningLimit ? "SM key: 402, fair use limit on listening reached" : "SM key: 402, no answers left", tag: "AUTH")
+                    speechRetryAfter = Date().addingTimeInterval(Self.refusalMemory)
+                } else if statusCode == 429 {
+                    let hinted = TimeInterval((resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After") ?? "") ?? 60
+                    speechRetryAfter = Date().addingTimeInterval(min(max(hinted, 15), 300))
+                } else {
+                    speechRetryAfter = Date().addingTimeInterval(30)
+                }
+                // Status code only. The body of a refusal can carry account detail.
+                dlog("SM key fetch: refused, HTTP \(statusCode)", tag: "AUTH")
+            } else {
+                speechRetryAfter = Date().addingTimeInterval(30)
+                dlog("SM key fetch: 200 but no key in the response", tag: "AUTH")
+            }
         } catch {
-            dlog("SM key fetch error: \(error.localizedDescription)", tag: "AUTH")
+            // Could not even ask: no network, no DNS (a laptop waking, Wi-Fi switching). Try
+            // again within seconds, not half a minute, and drop any earlier refusal from the
+            // screen: it is no longer the latest thing that happened. Nothing reached the
+            // server, so nothing counts against its limits.
+            keyNoConnectionFailures += 1
+            let wait = Self.keyRetryAfterNoConnection(keyNoConnectionFailures)
+            speechRetryAfter = Date().addingTimeInterval(wait)
+            speechKeyLastStatus = 0
+            dlog("SM key fetch: no connection (\(error.localizedDescription)) — trying again in \(Int(wait))s", tag: "AUTH")
         }
         return false
     }
@@ -505,7 +606,7 @@ class UserSession {
 
 // MARK: - App Config
 enum AppConfig {
-    static let backendUrl         = "https://replysis.com"   // Oracle Cloud — the only backend (coopilotxai.com retired)
+    static let backendUrl         = DeveloperOverrides.backendURL ?? "https://replysis.com"   // the only backend (coopilotxai.com retired)
     static let firebaseApiKey     = "AIzaSyAGGmuFpR0qkCHLI3q2cPv_o3cQlbIU8lE"
     static let googleClientId     = "745433477203-lvqmnnip9pb241vkfp628qmue8313cre.apps.googleusercontent.com"
     // Baked into Info.plist at build time from the GOOGLE_CLIENT_SECRET GitHub Actions
