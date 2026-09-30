@@ -49,7 +49,7 @@ struct DebugLogView: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    Text(logText.isEmpty ? "No log entries yet.\n\nTry pressing SPACE, signing in, or using screen capture." : logText)
+                    Text(logText.isEmpty ? "No log entries yet.\n\nTry pressing ⌥ SPACE, signing in, or using screen capture." : logText)
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(logText.isEmpty ? Color(hex: "#374151") : Color(hex: "#d1d5db"))
                         .frame(maxWidth: .infinity, alignment: .leading)

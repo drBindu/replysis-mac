@@ -40,6 +40,24 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
         controller.checkForUpdates(nil)
     }
 
+    // Every outcome is logged separately. Windows found its check saying "You are up to
+    // date" when the check had FAILED; Sparkle's own UI already tells these apart, and
+    // the log now does too, so a report can say which one happened.
+    func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
+        dlog("AppUpdater: check finished — up to date", tag: "UPDATE")
+    }
+
+    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        dlog("AppUpdater: update available — \(item.displayVersionString) (build \(item.versionString))", tag: "UPDATE")
+    }
+
+    func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
+        let code = (error as NSError).code
+        // SUNoUpdateError (1001) is how Sparkle reports "nothing newer"; it is not a failure.
+        if code == 1001 { return }
+        dlog("AppUpdater: check FAILED — \(error.localizedDescription) (code \(code))", tag: "UPDATE")
+    }
+
     var canCheckForUpdates: Bool {
         controller.updater.canCheckForUpdates
     }

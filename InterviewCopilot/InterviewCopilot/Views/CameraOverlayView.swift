@@ -33,7 +33,7 @@ class AnswerOverlayWindow: NSPanel {
             panel.backgroundColor    = .clear
             panel.level              = .floating
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            panel.isMovableByWindowBackground = true
+            panel.isMovableByWindowBackground = false
             panel.hasShadow          = true
             panel.hidesOnDeactivate  = false
 
@@ -75,6 +75,11 @@ class AnswerOverlayWindow: NSPanel {
 // MARK: — Eye Mode SwiftUI view
 // ══════════════════════════════════════════════════════════════
 
+private struct EyeTranscriptHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 private struct EyeAnswerHeightKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
@@ -86,6 +91,8 @@ struct AnswerOverlayView: View {
     // Measured height of the answer content, so the box shrinks to fit a short answer
     // (no more giant empty black rectangle) and scrolls only once it exceeds the cap.
     @State private var answerContentHeight: CGFloat = 0
+    @State private var transcriptContentHeight: CGFloat = 0
+    @State private var dragOrigin: CGPoint?
     private let answerMaxHeight: CGFloat = 340
 
     private var hasAnswer: Bool { !vm.aiAnswer.isEmpty || vm.showThinking }
@@ -93,20 +100,37 @@ struct AnswerOverlayView: View {
 
     private var statusText: String {
         if vm.showThinking || vm.isProcessing { return "Thinking…" }
+        if vm.micNeedsRetry { return vm.micStatus.capitalized }
+        if vm.micStatus == "CONNECTING" { return "Connecting…" }
         if vm.isListening { return "Listening" }
-        if vm.micStatus == "NO MIC" { return "No mic" }
-        return "Ready"
+        return vm.micStatus.capitalized
     }
 
     var body: some View {
         VStack(spacing: 0) {
             statusBar
+                .gesture(DragGesture(minimumDistance: 6).onChanged { value in
+                    guard let window = AnswerOverlayWindow.shared else { return }
+                    if dragOrigin == nil { dragOrigin = window.frame.origin }
+                    guard let origin = dragOrigin else { return }
+                    let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? window.frame
+                    let x = max(screen.minX, min(origin.x + value.translation.width, screen.maxX - window.frame.width))
+                    let y = max(screen.minY, min(origin.y - value.translation.height, screen.maxY - window.frame.height))
+                    window.setFrameOrigin(CGPoint(x: x, y: y))
+                    window.topEdgeY = window.frame.maxY
+                }.onEnded { _ in dragOrigin = nil })
 
             // Show the interviewer's question whenever we're listening OR have captured
             // text — with a "Listening…" placeholder — so the question area is never blank.
             if vm.isListening || !vm.transcript.isEmpty {
                 divider
-                transcriptRow
+                ScrollView {
+                    transcriptRow.background(GeometryReader { geometry in
+                        Color.clear.preference(key: EyeTranscriptHeightKey.self, value: geometry.size.height)
+                    })
+                }
+                .frame(height: min(max(transcriptContentHeight, 44), 100))
+                .onPreferenceChange(EyeTranscriptHeightKey.self) { transcriptContentHeight = $0 }
             }
 
             if hasAnswer {
@@ -126,26 +150,31 @@ struct AnswerOverlayView: View {
         )
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.18), lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 16))
-        .gesture(DragGesture().onChanged { value in
-            guard let w = AnswerOverlayWindow.shared else { return }
-            let screen = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
-            let o = w.frame.origin
-            let newX = max(screen.minX, min(o.x + value.translation.width, screen.maxX - w.frame.width))
-            let newY = max(screen.minY, min(o.y - value.translation.height, screen.maxY - w.frame.height))
-            w.setFrameOrigin(NSPoint(x: newX, y: newY))
-            w.topEdgeY = w.frame.maxY
-        })
+
     }
 
     // ── Status bar (always visible) ──
     private var statusBar: some View {
         HStack(spacing: 9) {
-            Circle().fill(vm.micColor).frame(width: 8, height: 8)
-            Text(statusText)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundColor(.white)
+            Button {
+                if vm.micNeedsRetry { vm.retryMic() }
+                else { vm.handleSpacePress(source: "COMPACT") }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: vm.isListening ? "pause.circle.fill" : "play.circle.fill")
+                        .foregroundColor(vm.micColor)
+                    Text(statusText)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.white)
+                }
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Listen, pause, or answer (⌥Space)")
+            .accessibilityLabel("Listening control: " + statusText)
             if isIdle {
-                Text("Press Space to listen")
+                Text(vm.listeningMode.isAutomatic ? "Auto · ⌥Space to pause / resume" : "⌥Space to listen / answer")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(.white.opacity(0.4))
             }
@@ -156,21 +185,52 @@ struct AnswerOverlayView: View {
             // the old name and says what the code does rather than what the user gets;
             // in compact mode this is the only button on the bar, so its label is the
             // entire explanation of what it will do.
-            Button(action: { vm.runScreenAnalysis() }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "viewfinder")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text("Read screen")
-                        .font(.system(size: 10, weight: .semibold))
+            // Same answer history as the main window: in compact mode this bar is the only
+            // way back to an answer something replaced.
+            if !vm.answerHistory.isEmpty {
+                HStack(spacing: 2) {
+                    Button(action: { vm.showPreviousAnswer() }) {
+                        Image(systemName: "chevron.left").font(.system(size: 9, weight: .bold))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!vm.canGoBack)
+                    .foregroundColor(vm.canGoBack ? Color(hex: "#cbd5e1") : Color(hex: "#475569"))
+                    .help("Previous answer (⌃⌥←)")
+                    if vm.isShowingHistory {
+                        Text(vm.historyPosition)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(Color(hex: "#fbbf24"))
+                            .fixedSize()
+                    }
+                    Button(action: { vm.showNextAnswer() }) {
+                        Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!vm.canGoForward)
+                    .foregroundColor(vm.canGoForward ? Color(hex: "#cbd5e1") : Color(hex: "#475569"))
+                    .help("Next answer (⌃⌥→)")
                 }
-                .foregroundColor(Color(hex: "#38bdf8"))
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(Color(hex: "#38bdf8").opacity(0.12))
-                .cornerRadius(5)
+                .padding(.horizontal, 5).padding(.vertical, 2)
+                .background(Capsule().fill(Color.white.opacity(0.05)))
+            }
+
+            Button(action: { vm.runScreenAnalysis() }) {
+                ReadScreenButtonLabel(busy: vm.isScreenAnalyzing)
+            }
+            .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
+                                          minHeight: 28, horizontalPadding: 9, verticalPadding: 3))
+            .disabled(vm.isProcessing || vm.isScreenAnalyzing)
+
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(vm.aiAnswer, forType: .string)
+            } label: {
+                Image(systemName: "doc.on.doc").foregroundColor(Color(hex: "#94a3b8"))
             }
             .buttonStyle(.plain)
-            .disabled(vm.isProcessing || vm.isScreenAnalyzing)
-            .opacity(vm.isProcessing || vm.isScreenAnalyzing ? 0.4 : 1)
+            .disabled(vm.aiAnswer.isEmpty)
+            .help("Copy answer")
+            .accessibilityLabel("Copy answer")
 
             Image(systemName: "eye.fill")
                 .font(.system(size: 10))
@@ -181,6 +241,8 @@ struct AnswerOverlayView: View {
                     .foregroundColor(.white.opacity(0.45))
             }
             .buttonStyle(.plain)
+            .help("Return to full view")
+            .accessibilityLabel("Return to full view")
         }
         .padding(.horizontal, 16).padding(.vertical, 11)
     }

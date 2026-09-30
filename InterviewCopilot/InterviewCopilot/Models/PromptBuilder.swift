@@ -5,6 +5,7 @@ enum QuestionType {
     case yesNo, intro, technical, behavioral, situational
     case weakness, whyRole, salary, availability, followUp
     case preference, memoryRecall, contextStatement, logistics, general
+    case coding, candidateQuestions, interviewClosing
 }
 
 // MARK: - PromptBuilder
@@ -140,7 +141,7 @@ class PromptBuilder {
     private static let screenReferencePhrases = [
         "on the screen", "on my screen", "on your screen", "on screen",
         "look at this", "look at the screen", "have a look", "take a look",
-        "what do you see", "can you see", "do you see", "you can see",
+        
         "sharing my screen", "share my screen", "shared my screen",
         "in front of you", "shown here", "displayed here", "up on the",
         "solve this", "fix this", "debug this", "explain this",
@@ -209,8 +210,17 @@ class PromptBuilder {
            re.firstMatch(in: q, range: NSRange(q.startIndex..., in: q)) != nil {
             return true
         }
-        return false
+        // "SEE" ONLY WHEN IT POINTS AT SOMETHING. "do you see" and "can you see" were plain
+        // substrings, so "Where do you see yourself in five years?" — asked in nearly every
+        // interview — took a screenshot and was answered from the desktop, and so was "How do
+        // you see a role like this fitting into that path?". Same pattern as Windows cdc86c3.
+        return q.range(of: Self.seesSomething, options: .regularExpression) != nil
     }
+
+    private static let seesSomething =
+        #"\b(?:can|do|could) you see (?:this|that|it|what i|anything|my|the (?:code|error|output|diagram|question|page|window|chart|problem))\b"#
+        + #"(?!\s+(?:role|position|job|team|company|opportunity|as|fitting|working|going|yourself))"#
+        + #"|\bwhat do you see\b(?!\s+(?:yourself|as|in|for|when))"#
 
     /// Deliberately NARROW: anything it is unsure about stays on the screen path, because
     /// while a screen is being shared most questions really are about it.
@@ -445,15 +455,334 @@ class PromptBuilder {
         return options[smallTalkIndex % options.count]
     }
 
+    // MARK: - Closing turns
+    //
+    // Ported from Windows PromptBuilder (f0ea569 "Stop asking new questions every time the
+    // interviewer says 'anything else?'", and d3a0606 / fbca2c6 after an external review).
+    // Same phrases, same order, same test sentences — see tools/regression.
+    //
+    // The first "do you have any questions for me?" still goes to the model, which asks ONE
+    // relevant question. Only repeats and the final sign-off are answered here: a candidate
+    // who keeps asking new questions every time the interviewer says "anything else?" is the
+    // clearest sign that something is answering for them.
+
+    private static func normalizedTurn(_ s: String) -> String {
+        s.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+
+    /// Words that begin a genuine question or task. When one appears AFTER a closing phrase,
+    /// the turn did not end there. Judged on the words after the phrase, never on sentence
+    /// punctuation, which speech recognition often drops: "does that answer your question so
+    /// how would you test this service" arrives with no punctuation at all.
+    private static let requestCue =
+        #"\b(how|what|why|when|where|which|who|can you|could you|would you|will you|tell me|tell us|walk me|walk us|explain|describe|design|write|implement|build|create|solve|show me|let's|let us)\b"#
+
+    private static func requestFollows(_ t: String, after end: Int) -> Bool {
+        guard end >= 0, end < t.count else { return false }
+        let from = t.index(t.startIndex, offsetBy: end)
+        return t.range(of: requestCue, options: .regularExpression, range: from..<t.endIndex) != nil
+    }
+
+    /// Character offset where the LAST occurrence of any phrase ends, or -1.
+    private static func lastEnd(ofPhrases phrases: [String], in t: String) -> Int {
+        var end = -1
+        for p in phrases {
+            if let r = t.range(of: p, options: .backwards) {
+                end = max(end, t.distance(from: t.startIndex, to: r.upperBound))
+            }
+        }
+        return end
+    }
+
+    /// Character offset where the last match of a pattern ends, or -1.
+    private static func lastEnd(ofPattern pattern: String, in t: String) -> Int {
+        var end = -1
+        var from = t.startIndex
+        while from < t.endIndex,
+              let r = t.range(of: pattern, options: .regularExpression, range: from..<t.endIndex) {
+            end = max(end, t.distance(from: t.startIndex, to: r.upperBound))
+            from = r.isEmpty ? t.index(after: r.lowerBound) : r.upperBound
+        }
+        return end
+    }
+
+    /// "Is there another angle on the role, the tech, or the team that you'd like me to focus
+    /// on?" is a repeat invitation; "What other angle would you take to reduce the latency?" is
+    /// a technical question. The first is about the role or team and asks what to focus on.
+    private static let anotherAngleOnRole =
+        #"\banother angle\b[^?.!]{0,60}\b(role|team|company|position|job|tech|product)\b[^?.!]{0,60}\b(focus on|like to know|want to know|like me to cover)\b"#
+
+    /// The general forms. The exact-phrase list below caught 7 of 20 ordinary wordings on
+    /// Windows. Not "any questions on the approach before you start coding?": that is about a
+    /// task, and a wrap-up reply to it ends the exercise.
+    private static let invitationPattern =
+        #"\bany (?:other |more |further |final |last |additional |follow[- ]?up )?questions?\b(?![^?.!]*\b(?:approach|problem|task|exercise|code|coding|design|requirements?|solution|assignment|start|begin)\b)"#
+        + #"|\bany (?:other )?thing (?:else )?(?:you|u) (?:want|like|would like|wanna) to (?:ask|know)\b"#
+        + #"|\b(?:do|would|did) (?:you|u) (?:want|wanna|like|have anything) to ask\b"#
+        + #"|\b(?:want|like) to ask (?:me |us )?(?:anything|something)\b"#
+        + #"|\b(?:anything|something) (?:else )?(?:that )?(?:you|you'd|you would|u) (?:like|want|wanna|would like) to (?:ask|know)\b"#
+        + #"|\bis there (?:anything|something) (?:else )?(?:you|you'd|you would|u)\b[^?.!]{0,30}\b(?:ask|know)\b"#
+        + #"|\bquestions? for (?:me|us)\b"#
+
+    private static let invitationPhrases = [
+        "do you have any questions", "have any questions for me",
+        "have any questions for us", "any questions for me", "any questions for us",
+        "are there any questions", "is there any questions", "is there any question you have",
+        "is there any question do you have", "any question you have",
+        "do you still have questions", "do you have still questions", "still have any questions",
+        "any other questions", "anything you'd like to ask", "anything you would like to ask",
+        "anything you want to ask", "is there anything you want to ask",
+        "anything else you'd like to ask", "anything else you would like to ask",
+        "what questions do you have", "what else would you like to know",
+        "what else do you want to know", "what else do you want to ask",
+        // Not "what other angle" or "would you like me to focus on": those are ordinary
+        // technical questions and were answered with a fixed sign-off on Windows.
+        "is that the level of detail", "did that answer your question",
+        "does that answer your question", "did that cover your question",
+        "does that cover your question", "do you want me to go deeper",
+        "would you like me to go deeper", "want me to go a bit deeper",
+        "want me to go deeper", "do you want more detail",
+    ]
+
+    /// The interviewer has handed the conversation to the candidate for questions, or is
+    /// checking that an earlier candidate question was answered — and nothing new follows.
+    static func isCandidateQuestionInvitation(_ question: String) -> Bool {
+        let t = normalizedTurn(question)
+        guard !t.isEmpty else { return false }
+        let end = max(lastEnd(ofPhrases: invitationPhrases, in: t),
+                      lastEnd(ofPattern: anotherAngleOnRole, in: t),
+                      lastEnd(ofPattern: invitationPattern, in: t))
+        return end >= 0 && !requestFollows(t, after: end)
+    }
+
+    /// A real sign-off. Thanking someone for their time is how interviews START as often as
+    /// how they end — "Thank you for taking the time... Can you start by telling me about
+    /// yourself?" carries on — so a thank-you counts only when nothing follows it.
+    static func isInterviewEndStatement(_ question: String) -> Bool {
+        let t = normalizedTurn(question)
+        guard !t.isEmpty else { return false }
+
+        // Strong closings end the interview unless a question follows them: "We'll be in
+        // touch with next steps, but first can you explain your testing approach?" is not one.
+        let strong = ["we'll be in touch", "we will be in touch", "we'll follow up",
+                      "we will follow up", "that concludes the interview",
+                      "this concludes the interview", "that wraps up the interview",
+                      "this wraps up the interview"]
+        let strongEnd = lastEnd(ofPhrases: strong, in: t)
+        if strongEnd >= 0, !requestFollows(t, after: strongEnd) {
+            let after = t.index(t.startIndex, offsetBy: strongEnd)
+            if !t[after...].contains("?") { return true }
+        }
+
+        // Judged from the LAST thank-you onward, so a recap of earlier questions before the
+        // thank-you still reads as a goodbye.
+        var thanksAt = -1
+        for word in ["thank you", "thanks"] {
+            if let r = t.range(of: word, options: .backwards) {
+                thanksAt = max(thanksAt, t.distance(from: t.startIndex, to: r.lowerBound))
+            }
+        }
+        guard thanksAt >= 0 else { return false }
+        let tail = String(t[t.index(t.startIndex, offsetBy: thanksAt)...])
+        let signOff = ["taking the time", "for your time", "speaking with me", "speaking with us",
+                       "meeting with me", "meeting with us", "joining us today",
+                       "talking with me", "talking with us"]
+        guard signOff.contains(where: { tail.contains($0) }) else { return false }
+        if tail.contains("?") || tail.range(of: requestCue, options: .regularExpression) != nil { return false }
+        let carriesOn = ["start", "begin", "move on", "next question", "next round",
+                         "next one", "now ", "go ahead", "welcome", "introduce",
+                         "background", "coding", "anything", "any final", "thoughts"]
+        return !carriesOn.contains(where: { tail.contains($0) })
+    }
+
+    /// Short follow-ups that only mean "any more questions?" once the candidate has already
+    /// been invited to ask. Earlier in an interview "Anything else?" asks for more on the last
+    /// answer, so these are never matched on their own.
+    private static let candidateQuestionFollowUp =
+        #"^(?:(?:ok|okay|sure|great|cool|alright|all right|perfect|good|yeah|yes|so|and|right|got it)[,.!]?\s+)*"#
+        + #"(?:anything else|anything more|something else|is that all|is there anything else"#
+        + #"|anything else i can (?:answer|help|clarify|tell)[^?.!]*"#
+        + #"|did that help|does that help|was that clear|was that helpful|does that make sense|that make sense|did that make sense)"#
+        + #"(?:\s+(?:for you|you want to know|you'd like to know|at all|then))?\s*[?.!]*\s*$"#
+
+    static func isCandidateQuestionFollowUp(_ question: String) -> Bool {
+        normalizedTurn(question).range(of: candidateQuestionFollowUp, options: .regularExpression) != nil
+    }
+
+    private var priorCandidateQuestionInvitations: Int {
+        history.filter { Self.isCandidateQuestionInvitation($0.q) }.count
+    }
+
+    private var priorClosingTurns: Int {
+        history.filter { Self.isCandidateQuestionInvitation($0.q) || Self.isCandidateQuestionFollowUp($0.q) }.count
+    }
+
+    /// A short, human reply to a repeat invitation or a sign-off, or nil when the turn should
+    /// go to the model. Varied so the same sentence is never said twice in a row, and never a
+    /// new question.
+    func closingResponse(to question: String) -> String? {
+        let followUp = priorCandidateQuestionInvitations > 0 && Self.isCandidateQuestionFollowUp(question)
+        if Self.isCandidateQuestionInvitation(question) || followUp {
+            guard priorCandidateQuestionInvitations > 0 else { return nil }
+            let checkingItHelped = question.lowercased().range(
+                of: #"\b(help|helpful|clear|make sense|answer your question|cover your question|level of detail|go deeper|more detail)\b"#,
+                options: .regularExpression) != nil
+            let prior = priorClosingTurns
+            if checkingItHelped {
+                return prior <= 1
+                    ? "Yes, that was really helpful, thank you. That covers my questions."
+                    : "Yes, it did, thank you. That's everything from me."
+            }
+            switch prior {
+            case ...1: return "That answered what I wanted to know, thank you. I think that covers my questions."
+            case 2:    return "No, I'm all set. Thank you for walking me through it."
+            default:   return "No, that's everything from me. Thanks again for your time."
+            }
+        }
+        guard Self.isInterviewEndStatement(question) else { return nil }
+        return "Thank you for your time. I enjoyed learning more about the role and the team."
+    }
+
     // MARK: - Question Classification
 
     func classifyQuestion(_ q: String) -> (type: QuestionType, isDrillDown: Bool) {
         return (detectType(q), isDrillDown(q))
     }
 
+    static func isCodingRequest(_ question: String) -> Bool {
+        let text = question.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces).lowercased()
+        guard !text.isEmpty else { return false }
+        let patterns = [
+            #"\b(write|show|provide|create|build|implement|develop|generate|code|program|solve)\b.{0,80}\b(code|program|function|method|class|algorithm|solution|snippet|application|api|query|sql)\b"#,
+            #"\b(code|program)\s+(this|that|it|me|for me|a|an|the)\b"#,
+            #"\bimplement\s+(a|an|the)?\s*[a-z0-9+#. -]{2,60}$"#,
+            // Tasks named rather than commanded: "for this next exercise I want a function
+            // that...", "the next exercise is a SQL query returning..."
+            #"\b(i want|i'd like|i would like|please|next exercise|next task|next problem|coding exercise|coding problem|exercise is|task is|problem is)\b.{0,80}\b(function|method|class|algorithm|query|sql|api|endpoint|program|script|code)\b"#,
+        ]
+        return patterns.contains { text.range(of: $0, options: .regularExpression) != nil }
+    }
+
+    /// The thing a definition question asks about: "What is a REST API?" gives "REST API".
+    /// Empty when there is nothing usable, including "What is Kafka and how have you used
+    /// it?" and "What is the difference between X and Y?", which are not "What is X?".
+    static func definitionTerm(_ question: String) -> String {
+        guard let re = try? NSRegularExpression(
+                pattern: #"(?:^|[?.!]\s*)(?:what is|what are|define)\s+(?:an?\s+|the\s+)?(.+?)(?:[?!]|\.(?=\s|$)|$)"#,
+                options: [.caseInsensitive]),
+              let m = re.firstMatch(in: question, range: NSRange(question.startIndex..., in: question)),
+              let r = Range(m.range(at: 1), in: question) else { return "" }
+        let raw = String(question[r])
+        if raw.range(of: #"\b(and|or|how|why|where|when|which|that|you|your|between|versus|vs|differ|difference|differences|compared|pros|cons|advantages?|disadvantages?)\b|,"#,
+                     options: [.regularExpression, .caseInsensitive]) != nil { return "" }
+        let term = raw.trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: #"\s+(?:exactly|actually|again|then|really|about)$"#, with: "",
+                                  options: [.regularExpression, .caseInsensitive])
+        return term.count > 60 ? String(term.prefix(60)).trimmingCharacters(in: .whitespaces) : term
+    }
+
+    private static let termFillerWords: Set<String> =
+        ["a", "an", "the", "of", "in", "on", "for", "to", "and", "or", "with", "is", "are", "vs", "versus"]
+
+    private static func hasFacts(_ resumeFacts: String) -> Bool {
+        let f = resumeFacts.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !f.isEmpty && f != "[NO RESUME]" && f != "No resume provided."
+    }
+
+    /// True when every meaningful word of the term appears in the candidate's facts, so the
+    /// answer may say where it sits in their work. One- and two-letter words ("Go", "C", "R")
+    /// must match with a capital, or "go" in ordinary resume prose would count as Go.
+    static func factsMention(_ resumeFacts: String, _ term: String) -> Bool {
+        guard hasFacts(resumeFacts), !term.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        let words = term.split(whereSeparator: { $0.isWhitespace })
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ",;:\"'")) }
+            .filter { !$0.isEmpty && !termFillerWords.contains($0.lowercased()) }
+        guard !words.isEmpty, words.count <= 3 else { return false }
+        for word in words {
+            let stem = word.count > 3 && word.lowercased().hasSuffix("s") ? String(word.dropLast()) : word
+            let short = stem.count <= 2
+            let body = short
+                ? NSRegularExpression.escapedPattern(for: stem.prefix(1).uppercased()) + NSRegularExpression.escapedPattern(for: String(stem.dropFirst()))
+                : NSRegularExpression.escapedPattern(for: stem)
+            let pattern = "(?<![A-Za-z0-9])" + body + "(?:e?s)?(?![A-Za-z0-9])"
+            let opts: String.CompareOptions = short ? [.regularExpression] : [.regularExpression, .caseInsensitive]
+            if resumeFacts.range(of: pattern, options: opts) == nil { return false }
+        }
+        return true
+    }
+
+    /// The format line for "What is X?", chosen in code by whether X is in the candidate's
+    /// facts, because only then may the answer say they use it. Told to check the resume
+    /// itself, the model still said "Rust's the language I use" for a candidate without it.
+    /// Wording copied from Windows, where it was measured against the live model: change it
+    /// by testing, not by feel.
+    static func definitionReminder(term: String, resumeFacts: String) -> String {
+        let t = term.trimmingCharacters(in: .whitespaces).isEmpty ? "it" : term
+        let opening =
+            "Begin the answer with the words \"\(t) is\" written out in full, starting with a capital letter and with A, An or The in front when English needs it, as in A hash map is. Never write \"\(t)'s\". " +
+            "4 or 5 spoken sentences, about 30-40 seconds, with real substance, the way an experienced engineer answers in an interview. " +
+            "Cover what it is in plain words, how it actually works underneath with the real mechanism names, and why it matters in real work. " +
+            "Sound like a person talking, not an encyclopedia: no filler such as basically, pretty smooth or super, no phrases such as general-purpose, " +
+            "is known for or the big advantage is, and never a bare lets you sentence standing in for the explanation. "
+        let more =
+            "The MORE TO SAY lines are what an experienced engineer would add if pushed: a deeper mechanism, a gotcha, a trade-off, " +
+            "or when you'd pick something else. Never claim a tool, project or incident that is not in the verified facts."
+        if factsMention(resumeFacts, term) {
+            return opening +
+                "\(t) is in the verified facts, so the first or second sentence says where it sits in your work, " +
+                "without inventing a project or detail that is not in the facts. " +
+                "Shape only, never reuse its words: Kafka is a distributed event streaming platform, and at work it's what carries events between our services. " +
+                "Producers write to topics, each topic is split into partitions, and every partition is an append-only log that consumers read at their own pace by offset. " +
+                "That's what makes it durable, because a consumer that falls over just picks up from its last offset. " +
+                "And partitions are how it scales, since consumers in a group split them between them. " +
+                more
+        }
+        let facts = hasFacts(resumeFacts)
+        return opening +
+            "\(t) is NOT in the verified facts, so never say you use it, have used it, or work with it. " +
+            (facts
+                ? "End with one honest sentence connecting it to what the verified facts show you do work with, for example your main language or tools, " +
+                  "and how the idea carries over. Never imply you have used the term itself. "
+                : "") +
+            "Shape only, never reuse its words: Rust is a systems language built so the compiler catches memory bugs before the code ever runs. " +
+            "It does that with ownership, where every value has exactly one owner, and borrowing rules the compiler checks for you. " +
+            "So you get C-level speed with no garbage collector, and whole classes of crashes and data races just can't compile. " +
+            (facts
+                ? "Most of my own work is in Python, so I lean on the runtime for memory, but that trade-off between safety and control is the same one. "
+                : "The price is a steeper learning curve, you spend real time early on fighting the borrow checker. ") +
+            more
+    }
+
+    static func isWorkAuthorizationQuestion(_ q: String) -> Bool {
+        q.range(of: #"\b(stem opt|opt|cpt|ead|h-?1-?b|h 1 b|cap[- ]gap|cap extension|green card|i-?20|i-?983|sponsor(?:ship)?|visa|work authori[sz]ation|authori[sz]ed to work)\b"#,
+                options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
     private func detectType(_ q: String) -> QuestionType {
         let t = q.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         let hasQuestionMark = t.contains("?")
+        let wordCount = t.split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "'") }).count
+
+        // Closing turns win over the generic yes/no and follow-up rules. "Do you have
+        // any questions?" is otherwise a yes/no answer. (Repeat invitations and sign-offs
+        // are answered locally by closingResponse before a request is ever built.)
+        if Self.isCandidateQuestionInvitation(t) { return .candidateQuestions }
+        if priorCandidateQuestionInvitations > 0 && Self.isCandidateQuestionFollowUp(t) { return .candidateQuestions }
+        if Self.isInterviewEndStatement(t) { return .interviewClosing }
+
+        // Once the candidate has been invited to ask questions, a long interviewer turn is
+        // their answer, not a question to recite back.
+        if priorCandidateQuestionInvitations > 0, wordCount >= 45, !t.hasSuffix("?"),
+           t.range(of: #"\b(your|yourself|tell me|walk me|can you|could you|would you|do you)\b"#, options: .regularExpression) == nil {
+            return .contextStatement
+        }
+
+        // Coding tasks first: "I'm going to give you an exercise: write a function..." opens
+        // like an introduction and would otherwise only be acknowledged.
+        if Self.isCodingRequest(t) { return .coding }
 
         let startsWithInterviewerInfo =
             t.hasPrefix("my name is") || t.hasPrefix("i am ") || t.hasPrefix("i'm ") ||
@@ -463,6 +792,17 @@ class PromptBuilder {
             t.hasPrefix("i work for") || t.hasPrefix("i currently") ||
             t.hasPrefix("just so you know") || t.hasPrefix("fyi") || t.hasPrefix("by the way")
         if startsWithInterviewerInfo && !hasQuestionMark { return .contextStatement }
+
+        // A long declarative turn that explains the team or process is acknowledged, not
+        // answered — but only with positive evidence it is an explanation, and never when
+        // it is addressed to the candidate ("so for this next one I want you to describe
+        // how you would design a URL shortener"). When unsure, answer it.
+        let startsLikeQuestionOrCommand = t.range(of: #"^(what|why|how|when|where|who|which|do|does|did|is|are|can|could|would|will|have|has|tell|describe|explain|define|compare|walk|give|share|write|create|build|implement|develop|generate|code|program|solve|show)\b"#, options: .regularExpression) != nil
+        let addressesCandidate = t.range(of: #"\b(you|your|yourself|walk me|tell me|imagine|suppose|let's say|lets say|assume|design|debug|describe|explain|implement|build)\b"#, options: .regularExpression) != nil
+        let explainsSomething = t.range(of: #"\b(we|we're|we've|we'll|our|the team|this team|the company|the role|this role|the position|the process|the interview|the project|the product)\b"#, options: .regularExpression) != nil
+        if !hasQuestionMark && !startsLikeQuestionOrCommand && !addressesCandidate && explainsSomething && wordCount >= 18 {
+            return .contextStatement
+        }
 
         if (t.contains("what") || t.contains("tell me")) &&
            (t.contains("my name") || t.contains("what i do") || t.contains("what do i do") ||
@@ -476,6 +816,37 @@ class PromptBuilder {
            t.contains("expand on that") || t.contains("go deeper") ||
            t.contains("what do you mean by") || t.contains("elaborate on") ||
            t.contains("go on") || t.contains("continue") { return .followUp }
+
+        // Story requests that open like a yes/no question: "Can you think of a
+        // specific project where you and a researcher disagreed?" wants the story.
+        if t.range(of: #"\b(can you think of|could you think of|can you recall|do you remember a|a specific (project|time|situation|example|case)|a time (when|where)|(project|situation|case) where)\b"#,
+                   options: .regularExpression) != nil {
+            return .behavioral
+        }
+
+        // "Can you tell me about the RESTful services you built?" is a request, not a
+        // yes/no question, and answering it in one or two sentences leaves it thin.
+        // Classify it by what is asked for, without the polite prefix.
+        if let polite = t.range(of: #"^(?:so |and |okay |ok |now |alright )?(?:can|could|would|will) (?:you|u) (?:please )?(?=(?:tell|walk|describe|explain|talk|share|give|go over|go through|elaborate|expand|read|list|summari[sz]e|brief|take me|help me understand)\b)"#,
+                                options: .regularExpression) {
+            let rest = String(t[polite.upperBound...])
+            if rest.range(of: #"\b(your|ur) (?:past |previous |work |professional |overall )?(experience|background|resume|career|journey)\b(?! (?:with|in|on|using|of|at)\b)"#,
+                          options: .regularExpression) != nil {
+                return .intro
+            }
+            let inner = detectType(rest)
+            return inner == .yesNo ? .general : inner
+        }
+
+        // "Where do you see yourself in five years?" is about direction, not a
+        // technical explanation.
+        if t.range(of: #"\b(how|where) do (you|u) see\b"#, options: .regularExpression) != nil {
+            return .general
+        }
+
+        // Work authorization is answered from the profile only, never explained
+        // like a technical term ("what is cap extension?").
+        if Self.isWorkAuthorizationQuestion(t) { return .yesNo }
 
         let yesNoStarters = ["are you","do you","can you","will you","have you",
                              "is your","would you","did you","are u","r u"]
@@ -543,6 +914,12 @@ class PromptBuilder {
            t.contains("what excites you") || t.contains("what motivates") ||
            t.contains("why should we hire") || t.contains("strengths") ||
            t.contains("what makes you") { return .whyRole }
+
+        // "How do you handle a disagreement with a teammate?" matched "how do you" in the
+        // technical rule below and was answered as a technical explanation.
+        if t.range(of: #"\bhow do (you|u) (handle|deal with|manage|approach|respond to|react to|work through|resolve)\b.*\b(disagree|conflict|pressure|stress|criticism|feedback|deadline|difficult|failure|mistake|setback|ambiguity|priorit|change|stakeholder|teammate|coworker|co-worker|manager|boss|colleague|collaborat|researcher|research team|cross-functional|other teams)"#, options: .regularExpression) != nil {
+            return .situational
+        }
 
         if t.contains("what would you do") || t.contains("how would you handle") ||
            t.contains("if you were") || t.contains("hypothetically") ||
@@ -701,16 +1078,23 @@ class PromptBuilder {
         sb += "  YOU ARE ONLY THE CANDIDATE, speaking out loud. NEVER write the interviewer's questions, NEVER narrate both sides of the conversation, NEVER add a line like 'Now let's get started, tell me about...'. Give YOUR answer in first person and stop.\n"
         sb += "  In the SPOKEN answer, NEVER use bullet points, dashes, asterisks, or numbered lists — speak in flowing sentences only. A list is an instant AI giveaway and an automatic fail. (The MORE TO SAY section below is the one exception, and it is not spoken.)\n"
         sb += "  NEVER introduce yourself by name ('I'm Pavan', 'My name is...') — the interviewer already has your name. Lead with your role or the actual answer.\n"
-        sb += "  Answer ONLY what the interviewer actually asked. No lectures, no theory dumps, no padding.\n"
-        sb += "  Match length to the question: a simple / logistics / yes-no question gets ONE natural sentence;\n"
-        sb += "  a deep question gets a few short spoken paragraphs. When unsure, shorter wins.\n"
-        sb += "  Lead with the actual answer first, then at most one crisp supporting detail.\n"
-        sb += "  Sound like a warm, confident, likeable human talking out loud — the kind of answer that makes\n"
-        sb += "  the interviewer quietly think 'I like this person.' Never a textbook, never a brochure, never an AI.\n\n"
+        sb += "  Answer only the last complete question. Ignore greetings, filler, and broken opening fragments. Do not repeat the question. Do not use canned introductions.\n"
+        sb += "  Match the length to the question. Quick factual, yes/no and logistics questions get 1-2 natural sentences.\n"
+        sb += "  Technical and experience questions get real substance, usually 30-45 seconds spoken; stories 45-60 seconds. A short answer with nothing in it is worse than no answer.\n"
+        sb += "  For behavioral questions, tell a concise STAR story without naming the STAR sections.\n"
+        sb += "  For technical questions, give the direct answer first, then explain how it works, why it matters, and one relevant tradeoff or example.\n"
+        sb += "  If asked to write, implement, or show code, output complete runnable code immediately. Never only describe the code, never refuse, and never claim you are not a programmer.\n"
+        sb += "  When a coding request is vague, make one sensible interview-style assumption, use the requested or most recently discussed language, and provide a compact working example.\n"
+        sb += "  Never invent employers, tools, dates, percentages, metrics, or achievements.\n"
+        sb += "  Never state immigration, visa, tax or legal facts, such as what STEM OPT, H-1B or an EAD allows, beyond what the candidate's own profile says. Confirm status only; do not explain the rules.\n"
+        sb += "  Be specific and credible. Do not cut off a useful explanation, but never pad the answer with generic filler.\n"
+        sb += "  Do not turn an answer into a tour of the resume. Use one relevant example, and name at most two tools unless the interviewer specifically asks for the stack.\n"
+        sb += "  When the interviewer is explaining or wrapping up, react conversationally. Do not paraphrase their whole statement back to them.\n\n"
 
         if hasResume {
             sb += "YOUR RESUME (use only these facts, never invent):\n\(resumeFacts)\n\n"
             sb += "NUMBERS RULE — CRITICAL: Only state a percentage, time, throughput, or any figure that ACTUALLY appears in the resume above (e.g. '500K+ events per minute' is fine — it's in there). NEVER invent a NEW number like '12% accuracy' or 'a 4-hour response time' just to sound impressive or to add 'measurement context' — made-up stats fall apart the moment the interviewer drills in. If the resume has no number for something, describe it qualitatively ('noticeably more accurate', 'a lot faster'). This OVERRIDES the metric-context rule below.\n\n"
+            sb += "The employers listed above are the only ones this candidate has worked for. Name no other company as somewhere they worked, ever, in any answer or example. Asked about a company that is not listed, say you did not work there. A technical example needs no employer: \"in a dispatch system\" makes the same point that \"at Uber\" would, without a claim about their life.\n\n"
         } else {
             sb += "NO RESUME PROVIDED — but you STILL give a strong, confident, human answer every single time. Never stall, never say you're missing details.\n"
             sb += "Answer as a seasoned, likeable software professional.\n"
@@ -718,7 +1102,7 @@ class PromptBuilder {
             sb += "Instead speak qualitatively and about your APPROACH: 'we made it noticeably faster by caching the hot paths and tightening the slow queries' — NOT invented numbers. Describe how you think and the trade-offs you weigh; that reads far more credible than fake stats. This OVERRIDES the metric-context rule below whenever you have no real number.\n"
             sb += "Refer naturally to 'my current team', 'a product I worked on', 'my last project' — never a named company.\n"
             sb += "STACK RULE — DO NOT INVENT A BACKGROUND: with no resume you do not know what this candidate works in, and reaching for the most common CV in existence is the failure that sounds most convincing. NEVER claim a technology as YOUR OWN experience — not 'my Java and Spring Boot background', not 'the React work I've done', not any language, framework, cloud or database — unless the INTERVIEWER named it first, in which case follow their words. Otherwise stay stack-neutral: 'the services I work on', 'our data pipelines', 'the models we ship'. This limits what you CLAIM, never what you ANSWER: explain any technology asked about in full technical depth.\n"
-            sb += "Salary: a calm range like $100k-$130k base, open to total comp. Visa/work auth: authorized to work, happy to share specifics. Location/relocation: confident and flexible.\n\n"
+            sb += "Salary: never invent a number; express flexibility and ask about the role scope and total package. Visa/work auth: never state a specific status or explain immigration rules; offer to confirm the details with HR. Location/relocation: confident and flexible.\n\n"
         }
 
         // THE QUESTION ARRIVED THROUGH SPEECH RECOGNITION.
@@ -761,123 +1145,41 @@ class PromptBuilder {
         // the model would occasionally obey the wrong instruction and emit a bulleted list.
         sb += "  If brand new -> a full answer: a few short spoken paragraphs.\n\n"
 
-        if hasResume {
-            sb += "RULE 2 — CURRENT JOB FIRST:\n"
-            sb += "  Always lead with your most recent role from the resume above.\n"
-            sb += "  Never mention an older role or education first.\n\n"
-            sb += "RULE 3 — TELL ME ABOUT YOURSELF structure:\n"
-            sb += "  1. Who you are NOW (current role + what you do)\n"
-            sb += "  2. One key win at current company (specific metric from resume)\n"
-            sb += "  3. Previous role briefly (years, key technologies)\n"
-            sb += "  4. Education briefly (one sentence)\n"
-            sb += "  5. Side projects if any\n"
-            sb += "  6. Why THIS company specifically\n"
-            sb += "  NEVER start with education. NEVER start with oldest job.\n\n"
-        } else {
-            sb += "RULE 2 — CURRENT JOB FIRST:\n"
-            sb += "  Lead with a generic current role. Never invent a specific company name.\n\n"
-            sb += "RULE 3 — TELL ME ABOUT YOURSELF structure (no resume mode):\n"
-            sb += "  1. Generic current role + what you do day to day\n"
-            sb += "  2. One generic win (no company name)\n"
-            sb += "  3. Previous experience briefly (technologies — no company name)\n"
-            sb += "  4. Education briefly — 'Computer Science background' without naming a school\n"
-            sb += "  5. Why THIS opportunity interests you\n"
-            sb += "  NEVER invent specific employer names, school names, or project names.\n\n"
-        }
+        sb += "RULE 2 — SESSION MEMORY:\n"
+        sb += "  When the interviewer drills down, reuse your earlier specifics. If you HAVE said it before, you may open with 'like I mentioned'. Never claim to have said something you did not say in THIS conversation.\n\n"
 
-        sb += "RULE 4 — FORMAT (scannable but human, NO bullet symbols):\n"
-        sb += "  Write 3-4 SHORT paragraphs separated by ONE blank line.\n"
-        sb += "  Each paragraph = ONE theme (2-3 sentences max).\n"
-        sb += "  NEVER use bullet symbols ( • * or numbers ).\n"
-        sb += "  Mix sentence length: some 3-word fragments, some longer flowing ones.\n"
-        sb += "  Sound spoken — like you're explaining to a smart friend over coffee.\n"
-        sb += "  For drill-downs / yes-no / preferences / availability: 1-2 short sentences only.\n\n"
+        // Ported from Windows AppendSharedVoiceRules (2026-09-17). The Mac prompt used to
+        // INVITE fillers ("basically, kind of, you know"), "Yeah so..." openers, staged
+        // self-corrections, and a forced project template (team size, timeline) that made
+        // the model invent whatever it did not have. Windows measured all of that as the
+        // opposite of what the owner wants: sound like a person, never say less.
+        sb += "SOUND LIKE A PERSON, NOT A DEFINITION:\n"
+        sb += "  Asked what something is, answer the way an engineer would answer a colleague, not the way an encyclopedia opens an article. Say what it is for and where you have met it. A dictionary sentence is the single clearest sign to an interviewer that something is being read out.\n\n"
+        sb += "  Not this:\n"
+        sb += "    \"Java is a general-purpose, object-oriented programming language that runs on the JVM. It is known for its write once, run anywhere philosophy.\"\n"
+        sb += "  This (the substance stays, only the voice changes):\n"
+        sb += "    \"Java is an object-oriented, statically typed language, and it's what most of my backend work is in. You compile to bytecode, and the JVM runs that bytecode on any operating system, so the same jar runs on my laptop and in our Linux containers. The JVM also manages memory with garbage collection and has multithreading built in, which matters a lot for backend services.\"\n"
+        sb += "  Sounding like a person never means saying less. An experienced engineer's answer is full of real specifics; it is only the textbook phrasing that goes.\n\n"
+        sb += "  How real speech differs from written prose:\n"
+        sb += "    Contractions throughout. It's, I've, that's, doesn't, we'd. Always.\n"
+        sb += "    Except the name of the thing being asked about: say \"Java is\", never \"Java's\". The candidate reads the name out in full.\n"
+        sb += "    Sentence lengths vary. A long one, then a short one. Never three evenly balanced sentences in a row, which is the rhythm nothing but a machine produces.\n"
+        sb += "    One idea per sentence. Nobody speaks in subordinate clauses.\n"
+        sb += "    No filler words such as basically, pretty smooth, super or kind of. They make an answer sound unsure without making it sound human.\n\n"
+        sb += "  Never use these. They are not words people say out loud, and an interviewer hearing one knows immediately what produced it:\n"
+        sb += "    leverage, utilize, robust, seamless, comprehensive, delve, myriad, facilitate, streamline, cutting-edge, best-in-class, holistic, paradigm, synergy, plethora, pivotal, underscore, showcase, spearheaded, results-driven, detail-oriented, passionate about, is known for, is widely regarded, plays a crucial role, it is worth noting, in today's fast-paced world.\n"
+        sb += "  Never open with Great question, Absolutely, Of course, Certainly, Sure, I'd be happy to, or Thank you for asking.\n"
+        sb += "  Say use, strong, smooth, full, go into, many, help, speed up, modern, best, whole, approach, and so on. The plain word every time.\n\n"
+        sb += "  No triple adjective lists. \"Fast, reliable, and scalable\" is writing, not speech. Pick the one that actually matters and say why.\n\n"
 
-        sb += "RULE 5 — YES/NO ANSWERS:\n"
-        if hasResume {
-            sb += "  Use facts from your resume. 1-2 short sentences. No setup phrases.\n\n"
-        } else {
-            sb += "  Visa/work auth: authorized to work, can discuss details. 1-2 sentences.\n"
-            sb += "  Relocation: Yes/No + openness. 1 sentence.\n"
-            sb += "  Background check / drug test: Confident yes. 1 sentence.\n"
-            sb += "  Start date: notice period (e.g. '2 weeks'). 1 sentence.\n\n"
-        }
-
-        sb += "RULE 6 — BANNED OPENERS (instant AI tell):\n"
-        sb += "  Never start with: Great question / Absolutely / Of course / Certainly / Sure /\n"
-        sb += "  I'd be happy to / I'm happy to / That's a great question / Thank you for asking /\n"
-        sb += "  In my role as / Throughout my career / As a [adjective] professional /\n"
-        sb += "  I'm a detail-oriented / I'm a results-driven / I have experience in.\n"
-        sb += "  GOOD openers: 'Yeah so...' / 'Honestly...' / 'So...' / 'Basically...' / 'Yeah honestly...'\n\n"
-
-        sb += "RULE 7 — SOUND HUMAN (kill corporate-speak completely):\n"
-        sb += "  USE contractions everywhere: I'm, I've, I'd, didn't, wasn't, it's, that's, we'd, won't, can't.\n"
-        sb += "  USE natural fillers: yeah, so, honestly, basically, kind of, sort of, you know, I mean, like.\n"
-        sb += "  USE self-correction: 'actually, let me back up' / 'I mean, more specifically...'\n\n"
-        sb += "  BANNED corporate words (these flag AI in 2026 — NEVER use):\n"
-        sb += "    detail-oriented, results-driven, results-oriented, results-focused,\n"
-        sb += "    cross-functional, driving initiatives, driving results, driving growth,\n"
-        sb += "    operational efficiency, organizational goals, organizational success,\n"
-        sb += "    high-impact, mission-critical, business-critical, value-add, value-driven,\n"
-        sb += "    key stakeholders, key drivers, key initiatives, strategic alignment,\n"
-        sb += "    leverage, leveraging, synergy, synergistic, holistic, paradigm, ecosystem,\n"
-        sb += "    optimize, optimization, maximize, facilitate, facilitation, transform,\n"
-        sb += "    foster, cultivate, enable, empower, dynamic, motivated, passionate,\n"
-        sb += "    dedicated, hardworking, team player, robust, comprehensive, spearheaded,\n"
-        sb += "    streamlined, innovative, strategic, end-to-end, best-in-class, world-class,\n"
-        sb += "    cutting-edge, deliverables, deliver value, proactive, seamless, seamlessly,\n"
-        sb += "    utilize, utilization, delve, deep dive, 'with a focus on', 'passionate about'.\n\n"
-        sb += "  REPLACE corporate-speak with plain words:\n"
-        sb += "    'facilitate' -> 'help' / 'run' / 'set up'\n"
-        sb += "    'utilize' -> 'use'\n"
-        sb += "    'leverage' -> 'use' / 'lean on'\n"
-        sb += "    'optimize' -> 'make faster' / 'cut down'\n"
-        sb += "    'spearheaded' -> 'led' / 'ran'\n"
-        sb += "    'robust' -> 'solid' / 'reliable'\n"
-        sb += "    'comprehensive' -> 'full' / 'covers everything'\n"
-        sb += "    'drive results' -> 'get results' / 'ship stuff'\n"
-        sb += "    'key stakeholders' -> 'my manager and the client' / 'the people I worked with'\n\n"
-
-        sb += "RULE 8 — FORCED SPECIFICITY (kill generic answers):\n"
-        if hasResume { sb += "  Use facts from your resume above as your factual base.\n" }
-        sb += "  For ANY project question, include ALL of these:\n"
-        sb += "    1. What the project actually did\n"
-        sb += "    2. Real tools used\n"
-        sb += "    3. Team size\n"
-        sb += "    4. Your SPECIFIC role\n"
-        sb += "    5. Rough timeline\n"
-        sb += "  Generic phrases like 'delivering technology solutions' are FORBIDDEN.\n\n"
-
-        sb += "RULE 9 — NUMBERS (do NOT fabricate):\n"
-        sb += "  Use ONLY numbers that actually appear in your resume or hints. NEVER invent a percentage, a 'before X seconds / after Y seconds', or a 'tracked over N months' — do NOT force that template with made-up figures. That fake before/after pattern is the #1 way these answers get caught.\n"
-        sb += "  If you have a REAL number, state it plainly and naturally. If you don't, describe the impact qualitatively ('noticeably faster', 'a lot more accurate', 'big improvement'). No number is far better than a fake one.\n\n"
-
-        sb += "RULE 10 — SESSION MEMORY + DRILL-DOWN MEMORY (CRITICAL):\n"
-        sb += "  You have perfect recall of everything said in this interview.\n"
-        sb += "  When interviewer drills down: REUSE your earlier specifics.\n"
-        sb += "  If you HAVE said it before, open with a callback: 'yeah so like I mentioned...' / 'going back to that...'\n"
-        sb += "  NEVER use a callback for something you have not actually said in THIS conversation. Claiming 'as I mentioned' when you didn't reads as evasion to the one person who knows exactly what was said.\n"
-        sb += "  If you can't remember an exact detail: 'I'd have to check the exact number but it was around X'\n\n"
-
-        sb += "RULE 11 — NEVER ECHO YOUR RESUME WORD-FOR-WORD:\n"
-        sb += "  Your resume is reference data, NOT a script. Always paraphrase.\n\n"
-
-        sb += "RULE 12 — NEVER REPEAT THE SAME PHRASING TWICE:\n"
-        sb += "  Every answer must feel freshly spoken. VARY starters, word choices, story angles.\n"
-        sb += "  Rotate: 'Yeah so...' / 'Honestly...' / 'So basically...' / 'I mean...' / 'Actually...'\n\n"
-
-        sb += "RULE 13 — IMPERFECT IS HUMAN:\n"
-        sb += "  Occasionally self-correct: 'actually wait, let me rephrase that'\n"
-        sb += "  Occasionally add uncertainty: 'I think it was around 3 months, maybe 4'\n"
-        sb += "  Real candidates aren't perfectly polished. Too perfect = AI.\n\n"
-
-        sb += "RULE 14 — TWO PARTS: THE SPOKEN ANSWER, THEN DEPTH:\n"
-        sb += "  Give the spoken answer FIRST, exactly as long as the question deserves — that is what gets read while somebody is waiting, and it must not get longer.\n"
-        sb += "  Then, on its own line, the marker: MORE TO SAY\n"
-        sb += "  Under it, 4-6 SEPARATE points, each starting with the • character (use • literally, never a hyphen or asterisk).\n"
-        sb += "  Each point stands alone — it does NOT continue the sentence above. Use: a specific example, a trade-off, a real number, an edge case, what you would do differently.\n"
-        sb += "  These are notes to glance at if the interviewer pushes for more. They are NOT spoken aloud, so they may be terse fragments.\n"
-        sb += "  SKIP the MORE TO SAY section entirely for greetings, small talk, yes/no answers, logistics, and anything already complete in one sentence — there is nothing to add to 'I am on STEM OPT', and offering some makes a clean answer look padded.\n\n"
+        sb += "ANSWER SHAPE — TWO PARTS, ALWAYS IN THIS ORDER:\n"
+        sb += "  First, the spoken answer. Exactly what to say out loud, nothing else, at the length the question deserves. This is the part read while someone is waiting, so it comes first and stays tight.\n\n"
+        sb += "  Then, on its own line, the word:\n"
+        sb += "    MORE TO SAY\n"
+        sb += "  followed by 2 or 3 short lines, each opening with the character • and one space, never a hyphen and never an asterisk, and each a different thing that could be added if the interviewer wants depth: a trade-off, an edge case, a decision and why it was made, what you would do differently. Not a summary of the answer above, and not a continuation of the same sentence. Each one has to stand on its own as something worth saying next.\n\n"
+        sb += "  These bullets invent nothing. No percentage, no metric, no team size, no salary, no employer, no project name, unless that exact detail sits in the verified facts above. Where a real figure belongs and none is known, write it so they can complete it: \"we handled about [your number] a day\".\n\n"
+        sb += "  Skip MORE TO SAY entirely for greetings, small talk, yes/no logistics, interviewer explanations, candidate questions, closing turns, and anything already answered in one sentence. There is nothing to add to \"I am on STEM OPT\", and offering some makes it look padded.\n\n"
+        sb += "  The bullets are the one place bullets are allowed. The spoken answer above them is still flowing sentences, never a list.\n\n"
 
         sb += "PERMANENTLY BANNED:\n"
         sb += "  - Bullet symbols ( • * ) anywhere in the SPOKEN answer (the MORE TO SAY section is exempt)\n"
@@ -922,8 +1224,8 @@ class PromptBuilder {
         return false
     }
 
-    private func buildFormatReminder(qType: QuestionType, question: String, isDrillDown: Bool, concise: Bool = false, hasResume: Bool = true) -> String {
-        var reminder = baseFormatReminder(qType: qType, question: question, isDrillDown: isDrillDown)
+    private func buildFormatReminder(qType: QuestionType, question: String, isDrillDown: Bool, concise: Bool = false, hasResume: Bool = true, resumeFacts: String = "") -> String {
+        var reminder = baseFormatReminder(qType: qType, question: question, isDrillDown: isDrillDown, resumeFacts: resumeFacts)
         // WITHOUT A RESUME THERE ARE NO REAL NUMBERS TO CITE. The reminders below ask for a
         // metric, and this text is the last thing the model reads, so it outranked the
         // no-fabrication rule in the system prompt and the model duly invented one —
@@ -941,14 +1243,15 @@ class PromptBuilder {
         // question, and it ends with "NO bullet symbols" and "don't pad" — which read as a
         // direct contradiction of the depth section and won, so MORE TO SAY never appeared.
         guard needsDepthSection(qType) else { return reminder }
-        return reminder + "\n\nTHEN, after the spoken answer, add a blank line and this exact marker on its own line:\nMORE TO SAY\nUnder it, 4-6 SEPARATE points, each on its own line starting with the • character. Each stands alone (a specific example, a trade-off, a real number, an edge case, what you'd do differently). These are glance-notes if the interviewer pushes — NOT spoken, so terse fragments are fine. The 'no bullets' rule above applies ONLY to the spoken answer, never to this section."
+        return reminder + "\n\nTHEN, after the spoken answer, add a blank line and this exact marker on its own line:\nMORE TO SAY\nUnder it, 2 or 3 SEPARATE points, each on its own line starting with the • character. Each stands alone (a trade-off, an edge case, a decision and why, what you'd do differently) and invents nothing: no number, employer or project that is not in the verified facts. These are glance-notes if the interviewer pushes — NOT spoken, so terse fragments are fine. The 'no bullets' rule above applies ONLY to the spoken answer, never to this section."
     }
 
     /// Which questions deserve depth notes. Greetings, yes/no and logistics are complete in
     /// a sentence — offering "more to say" there makes a clean answer look padded.
     private func needsDepthSection(_ qType: QuestionType) -> Bool {
         switch qType {
-        case .yesNo, .availability, .logistics, .salary, .contextStatement, .memoryRecall:
+        case .yesNo, .availability, .logistics, .salary, .contextStatement, .memoryRecall,
+             .candidateQuestions, .interviewClosing, .coding:
             return false
         default:
             return true
@@ -962,77 +1265,81 @@ class PromptBuilder {
                        options: [.regularExpression, .caseInsensitive]) != nil
     }
 
-    private func baseFormatReminder(qType: QuestionType, question: String, isDrillDown: Bool) -> String {
+    // Wording ported from Windows BuildFormatReminder (2026-09-17/18), where each line was
+    // measured against the live model on real interview sessions. The lengths hold the
+    // spoken answer short; none of these says "NO bullets", because sitting directly above
+    // the question it was read as forbidding the MORE TO SAY section too.
+    private func baseFormatReminder(qType: QuestionType, question: String, isDrillDown: Bool, resumeFacts: String = "") -> String {
         if hasLockedConflict(for: question) {
-            return "1-2 short sentences. NO bullets. Politely correct, restate your locked answer. Example: 'Actually I said Python earlier, that's still my answer.' Don't justify."
+            return "1-2 short sentences. Politely correct, restate your locked answer. Example: 'Actually I said Python earlier, that's still my answer.' Don't justify."
         }
         if isDrillDown {
-            return "1-2 short sentences. NO bullets. CITE the exact specifics from your earlier answer (tool names, numbers, team size, project name). If it genuinely IS in your earlier answer, open with 'yeah so like I mentioned...' or 'going back to that...' - otherwise just answer plainly, never claim to have said something you did not. Never invent new contradicting facts."
+            return "1-2 short sentences. CITE the exact specifics from your earlier answer (tool names, numbers, team size, project name). Start with the fact itself. Never invent new contradicting facts."
         }
 
         let q = question.lowercased()
         switch qType {
         case .preference:
-            return "ONE short sentence with a casual filler. Example: 'Honestly, Java. That's what I've used the most.' NO bullets. NO long explanation."
+            return "2 natural spoken sentences. Give the preference directly, then one concise reason. No long explanation."
         case .yesNo:
-            if q.contains("stem") || q.contains("visa") || q.contains("sponsorship") {
-                return "2-3 short sentences in plain language. NO bullets. Example: 'Yeah I'm on STEM OPT, so no sponsorship needed for the next two years.'"
+            // The old example stated a status nobody had given ("no sponsorship needed for
+            // the next two years") and the model repeated it.
+            if Self.isWorkAuthorizationQuestion(q) {
+                return "1-2 short, plain sentences. Say only what the candidate's own profile says about their work status and whether they need sponsorship now or later. Never explain immigration rules, timelines, grace periods or eligibility, and never state a status or date the facts do not give. If they do not say, answer with the status the facts do show and offer to confirm the exact details with HR. Never mention a profile, facts or information you were given: this is spoken by the candidate about themselves."
             }
-            if q.contains("relocat") { return "1 short sentence. NO bullets. Casual opener + Yes/No + openness." }
-            if q.contains("background") || q.contains("drug") { return "1 short sentence. NO bullets. Confident yes, no fluff." }
-            return "1-2 short sentences. NO bullets. Direct answer + one detail."
+            if q.contains("relocat") { return "1 short sentence. Casual opener + Yes/No + openness." }
+            if q.contains("background") || q.contains("drug") { return "1 short sentence. Confident yes, no fluff." }
+            return "1-2 short sentences. Direct answer + one detail."
         case .availability:
-            return "1 sentence. NO bullets. State notice period naturally. Example: 'I can give two weeks notice, could start the week after.'"
+            return "1 sentence. State notice period naturally. Example: 'I can give two weeks notice, could start the week after.'"
         case .logistics:
-            return "Short and natural, like a quick chat — not a form. Default to ONE sentence. BUT if they ask you to 'explain', say 'why', or ask your preference, give the answer + ONE genuine reason (2-3 sentences max, no lecture). Warm and confident. Examples: 'Yeah, I'm based in Dallas, but totally open to relocating for the right role.' / 'Honestly I lean toward hybrid, a couple days in the office for the in-person stuff and the rest remote so I get my focused deep-work time.'"
+            return "Short and natural, like a quick chat, not a form. Default to ONE sentence. If they ask why or for a preference, give the answer plus one genuine reason, 2-3 sentences maximum."
         case .salary:
-            return "2-3 sentences. NO bullets. Range + total comp openness. Example: 'I'm targeting around $120-140k base depending on total package. Open to discussing equity and bonus.'"
+            return "2-3 sentences. State a range only when it appears in the resume or live hints. Otherwise express flexibility and ask to consider the role scope and total package. Never invent a salary number."
         case .intro:
-            return "3-4 SHORT scannable paragraphs separated by blank lines. NO bullet symbols. P1: Who you are now + current role. P2: One specific win — cite a metric ONLY if your resume actually contains one, otherwise describe the result qualitatively and name the tools used. P3: Previous role briefly. P4: Why this company (something specific). Mix sentence length. Use 'yeah', 'so', 'honestly'."
+            return "2-3 SHORT spoken paragraphs, about 30-40 seconds total. Start with who you are now, give one relevant resume-backed example, then one brief line connecting the earlier background. Only explain why this company if the interviewer asked. Do not list the whole resume or force filler words like 'yeah', 'so', or 'honestly'."
         case .technical:
-            // A plain definition question gets the wording Windows MEASURED (a191a81), copied
-            // byte for byte. The old shape asked for "one-sentence definition in plain words",
-            // which the model reads as "Java is a statically-typed programming language that
-            // runs on the JVM" — the answer the owner called robotic and hard to say aloud.
-            // Against the live model the Windows text opened "X is a ..." in 0 of 10 definition
-            // questions, where the shipped text did in 8 of 10. Two details carried it: naming
-            // the banned opening mechanically, including that a leading A or An does not exempt
-            // it, and asking for an action as the main verb so the model has somewhere to go.
-            // A slightly reworded draft scored far worse, so do not paraphrase this string.
+            // A plain "What is X?" gets one of two lines chosen in code by whether X is in
+            // the resume (see definitionReminder).
             if Self.isSimpleDefinitionQuestion(question) {
-                return "3 concise spoken sentences, the way you would answer a colleague out loud. " +
-                       "Do not open by classifying the term. An opening of the form TERM is a NOUN, " +
-                       "TERM is an NOUN or TERM is the NOUN is the single clearest sign an answer is " +
-                       "being read off a screen, and a leading A or An does not exempt it. Open with " +
-                       "what it does or what you use it for, so the main verb is an action rather " +
-                       "than is. " +
-                       "Yes: A hash map gets you a value back in roughly constant time by hashing the " +
-                       "key to a bucket. " +
-                       "Yes: Docker packages an app with everything it needs so it runs the same on " +
-                       "my laptop and in prod. " +
-                       "No: A hash map is a key-value data structure. " +
-                       "Use contractions the way you would speaking. One short clause of your own use " +
-                       "is good. No project story, no employer list, no history lesson."
+                let term = Self.definitionTerm(question)
+                if !term.isEmpty { return Self.definitionReminder(term: term, resumeFacts: resumeFacts) }
             }
-            return "3-4 SHORT paragraphs separated by blank lines. NO bullet symbols. P1: One-sentence definition in plain words. P2: REAL example from YOUR work. P3: Something tricky and how you handled it. P4 (optional): Result or lesson."
+            return "1-2 spoken paragraphs, about 30-45 seconds, with real substance. Give the direct answer first, then how it actually works and why, with the specific mechanisms, names and trade-offs an experienced engineer would give, never vague words. Only if the topic itself is named in the verified facts, add one short clause about where it sits in your own work. Never invent a project, incident, result or personal story, and never say you use a tool that is not named in the verified facts: other tools can come up as options, not as things you use. Name at most two tools unless they ask for tooling."
+        case .coding:
+            return "CODING TASK. Output complete runnable code, not an explanation-only response. Use the language the interviewer requested or the most recently discussed language. If requirements are vague, state one short reasonable assumption and choose a compact interview-relevant example. Put the code first, include all required imports and a runnable entry point when appropriate, then add only 2-4 concise sentences explaining the approach and complexity. Never refuse, never ask the interviewer to repeat a vague request, and never say you are not a programmer or expert."
         case .behavioral:
-            return "3-5 SHORT paragraphs separated by blank lines. NO bullet symbols. NOT textbook STAR. P1: Scene casually. P2: Concrete problem. P3: What YOU personally did. P4: How it turned out — use a real number ONLY if your resume has one, otherwise describe the result qualitatively. NEVER invent stats."
+            return "3 SHORT spoken paragraphs, about 40-55 seconds. NOT textbook STAR. Set the scene briefly, spend most of the answer on what YOU did, then give the outcome. Use a real number only if it appears in the verified facts. Never invent stats."
         case .weakness:
-            return "2-3 SHORT paragraphs. NO bullets. Real weakness, no humble-brags. Casual: 'honestly, I used to...' Mention steps + evidence of progress."
+            return "2-3 SHORT paragraphs. Real weakness, no humble-brags. Casual: 'honestly, I used to...' Mention steps + evidence of progress."
         case .whyRole:
-            return "2-3 SHORT paragraphs. NO bullets. Name something CONCRETE about THIS company. No generic 'I'm passionate about your mission' fluff."
+            if q.range(of: #"strength|why should we hire|what makes you|good fit|why you\b"#, options: .regularExpression) != nil {
+                return "2 short spoken paragraphs, about 30-45 seconds. Name two real strengths that show in the verified facts, each with one concrete proof from those facts. Never invent a number, project, or fact about the company."
+            }
+            // With no company given, a test produced "you've invested in Kubernetes": facts
+            // about a company the model knew nothing about, read aloud to that company.
+            return "2 short spoken paragraphs, about 30-45 seconds. If the ROLE / COMPANY section names the company or describes the role, point to one concrete thing from it. If it does not, never invent facts about the company, its products, stack, team or plans: talk about what draws you to this kind of role and what you'd bring, from the verified facts. No generic 'passionate about your mission' fluff."
         case .situational:
-            return "2-3 SHORT paragraphs. NO bullets. P1: A real past situation. P2: How it applies. Concrete specifics."
+            // "P1: A real past situation" had the model write one, none of it in the facts.
+            return "1-2 spoken paragraphs, about 30-45 seconds. Say concretely what you actually do, step by step, and why it works, the way an experienced engineer would. Give a past example only if one is in the verified facts; otherwise stay with your approach and never invent an incident, teammate, project or outcome."
         case .contextStatement:
-            return "1-2 SHORT conversational sentences acknowledging what the interviewer shared. DO NOT launch into your own intro. NO bullets."
+            if priorCandidateQuestionInvitations > 0 {
+                return "1-2 SHORT conversational sentences: thank them for explaining and say briefly why it was useful to hear. Do not ask another question, repeat their explanation, or launch into your own background."
+            }
+            return "1-2 SHORT conversational sentences acknowledging what the interviewer shared. Do not repeat their explanation point by point, answer a question they did not ask, or launch into your own background."
+        case .candidateQuestions:
+            if priorCandidateQuestionInvitations > 0 {
+                return "The candidate already asked a question and the interviewer answered it. Close naturally in 1-2 sentences: thank them and say that covers your questions. Do not ask another question and do not restart a technical discussion."
+            }
+            return "Ask ONE concise, thoughtful question about the role, team, expectations, or current priorities. It should sound like a real candidate in conversation, not a multi-part consulting questionnaire. Do not answer your own question, list tools, or add a second question."
+        case .interviewClosing:
+            return "The interview is ending. Reply with 1-2 warm, natural sentences thanking them for their time. Do not recap your background, answer earlier questions, ask anything new, or add MORE TO SAY."
         case .memoryRecall:
             return "1-2 SHORT sentences ONLY. Answer exactly what was asked. DO NOT add your own background. Stop there."
         case .followUp:
-            return "1-2 SHORT paragraphs. NO bullets. Add NEW detail only — never repeat prior content."
+            return "1-2 SHORT paragraphs. Add NEW detail only, never repeat prior content."
         default:
-            // Catch-all for ANY question type not explicitly handled above. Don't force
-            // a fixed shape — let the model judge what THIS specific question needs.
-            return "This is a general question — use your judgment. Read what the interviewer is ACTUALLY asking and answer it directly, the way a sharp human would. Match the length to the question: a quick or factual one gets 1-2 sentences; a deep or open one gets 2-4 short paragraphs. Answer from your real background (or hints), stay specific and human, NO bullet symbols, and don't pad."
+            return "This is a general question, use your judgment. Read what the interviewer is ACTUALLY asking and answer it directly, the way a sharp human would. Match length to the question: a quick or factual one gets 1-2 sentences; a deep or open one gets 1-2 short paragraphs with real substance. Most answers should take 15-35 seconds aloud. Use one relevant example rather than listing every related tool or role. Stay specific and human, don't pad with filler."
         }
     }
 
@@ -1070,7 +1377,7 @@ class PromptBuilder {
             && resumeFacts != "[NO RESUME]"
         let formatReminder = buildFormatReminder(qType: qType, question: currentQuestion,
                                                  isDrillDown: drillDown, concise: concise,
-                                                 hasResume: hasResumeFacts)
+                                                 hasResume: hasResumeFacts, resumeFacts: resumeFacts)
         let contextNote = buildContextNote()
 
         var historyHint = ""

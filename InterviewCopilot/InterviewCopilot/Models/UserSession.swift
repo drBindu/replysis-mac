@@ -5,13 +5,28 @@ import Security
 private enum Keychain {
     private static let service = "com.coopilotx.InterviewCopilot.session"
 
-    static func save(_ data: Data, account: String) {
+    /// What a refused delete leaves behind: one byte meaning "nothing here". An item this
+    /// build may not delete can still be overwritten, and overwriting with an EMPTY value
+    /// is silently ignored by the Keychain (measured), so the placeholder carries a byte.
+    private static let tombstone = Data([0])
+
+    /// Returns the Keychain status. It used to return nothing: both the delete and the add
+    /// ignored their results, so a write macOS refused looked exactly like one that worked.
+    /// Measured 2026-09-18: the speech-key item had not changed since the previous evening
+    /// while the log said "cached — reusable for 60 minutes" after every fetch, so every
+    /// launch read a day-old key, called it expired and spent a fresh one.
+    @discardableResult
+    static func save(_ data: Data, account: String) -> OSStatus {
         let base: [String: Any] = [
             kSecClass as String:       kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(base as CFDictionary)   // replace any existing item
+        // Update in place first: it leaves no gap in which the item does not exist, and it
+        // does not depend on being allowed to delete an item this build may not own.
+        let updated = SecItemUpdate(base as CFDictionary,
+                                    [kSecValueData as String: data] as CFDictionary)
+        if updated != errSecItemNotFound { return updated }
         var add = base
         add[kSecValueData as String]      = data
         // ...ThisDeviceOnly: the auth token never leaves this Mac — it's excluded from
@@ -21,7 +36,7 @@ private enum Keychain {
         // AfterFirstUnlock (not WhenUnlocked) so session restore works right after a
         // reboot even before the user re-unlocks.
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(add as CFDictionary, nil)
+        return SecItemAdd(add as CFDictionary, nil)
     }
 
     static func load(account: String) -> Data? {
@@ -33,17 +48,39 @@ private enum Keychain {
             kSecMatchLimit as String:  kSecMatchLimitOne
         ]
         var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
-        return result as? Data
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data, !data.isEmpty, data != tombstone else { return nil }
+        return data
     }
 
-    static func delete(account: String) {
+    /// Delete, and if macOS refuses, empty the item so it can never be read back.
+    ///
+    /// Measured 2026-09-18 on this Mac: SecItemDelete was refused for the speech-key item
+    /// while SecItemUpdate on the same item succeeded. The result was ignored, so a "discarded"
+    /// key was still there on the next lookup: a forced renewal reused the key it was meant
+    /// to replace, and a key the service had REJECTED would have been presented again. Sign-
+    /// out goes through here too, and a refused delete there would have left the login behind.
+    @discardableResult
+    static func delete(account: String) -> OSStatus {
         let query: [String: Any] = [
             kSecClass as String:       kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(query as CFDictionary)
+        let status = SecItemDelete(query as CFDictionary)
+        guard status != errSecSuccess, status != errSecItemNotFound else { return status }
+        // OVERWRITE WITH ONE BYTE, NOT WITH NOTHING. Measured on this Mac, 2026-09-21, by
+        // signing out for real: SecItemDelete was refused (-25244, the item having been
+        // created by a differently-signed build of this app), and the fallback that wrote
+        // Data() returned errSecSuccess while the item still read back all 1,552 bytes of
+        // the session — an empty write is accepted and ignored. The login survived a
+        // sign-out and nothing said so. One byte is accepted AND replaces the data, and
+        // load() treats it as absent, so the token is genuinely gone. Verified after the
+        // change: session item unreadable, speech key unreadable, session file gone.
+        let overwritten = SecItemUpdate(query as CFDictionary,
+                                        [kSecValueData as String: tombstone] as CFDictionary)
+        dlog("Keychain: delete of '\(account)' refused (status \(status)); overwrote it instead (status \(overwritten))", tag: "AUTH")
+        return overwritten
     }
 }
 
@@ -289,6 +326,18 @@ class UserSession {
         let deepgramToken: String?
     }
 
+    /// When the speech token in use stops working, or nil when there is no cached token for
+    /// this account. Read by the in-session renewal: the engine is handed its token once, at
+    /// launch, and holds it for the life of the process, so a long interview outlives it.
+    ///
+    /// Held in memory, set whenever a key is taken into use. It was read back from the
+    /// Keychain, and when a write there failed silently it returned the previous day's key:
+    /// the renewal saw "expires in 0 min" twenty-eight seconds after a fresh hour-long key
+    /// was fetched, and would have renewed every five minutes — twelve mints an hour, the
+    /// whole allowance. What the engine is actually using is what this must describe.
+    var speechKeyExpiresAt: Date? { speechKeyExpiry }
+    private var speechKeyExpiry: Date?
+
     private var speechKeyOwner: String {
         isGuestSession ? "guest:\(DeviceIdentity.current)" : (userId.isEmpty ? email : userId)
     }
@@ -296,6 +345,10 @@ class UserSession {
     private func loadCachedSpeechKey() -> String? {
         guard let data = Keychain.load(account: Self.speechKeyAccount),
               let cached = try? JSONDecoder().decode(CachedSpeechKey.self, from: data) else { return nil }
+        guard discardedSpeechKey.isEmpty || cached.key != discardedSpeechKey else {
+            dlog("SM key cache: still holds the key just thrown away — fetching a fresh one", tag: "AUTH")
+            return nil
+        }
         guard cached.owner == speechKeyOwner else {
             dlog("SM key cache: minted for a different account — discarding", tag: "AUTH")
             discardCachedSpeechKey(); return nil
@@ -309,6 +362,7 @@ class UserSession {
             discardCachedSpeechKey(); return nil
         }
         deepgramToken = dgCached
+        speechKeyExpiry = cached.expiresAt
         return cached.key
     }
 
@@ -359,9 +413,14 @@ class UserSession {
                                      expiresAt: Date().addingTimeInterval(ttl),
                                      owner: speechKeyOwner,
                                      deepgramToken: deepgramToken)
+        speechKeyExpiry = cached.expiresAt
         guard let data = try? JSONEncoder().encode(cached) else { return }
-        Keychain.save(data, account: Self.speechKeyAccount)
-        dlog("SM key cached — reusable for \(Int(ttl / 60)) minutes", tag: "AUTH")
+        let status = Keychain.save(data, account: Self.speechKeyAccount)
+        if status == errSecSuccess {
+            dlog("SM key cached — reusable for \(Int(ttl / 60)) minutes", tag: "AUTH")
+        } else {
+            dlog("SM key NOT cached — the Keychain refused the write (status \(status)); this session is fine, the next launch will fetch again", tag: "AUTH")
+        }
     }
 
     /// Throw the cached token away.
@@ -369,7 +428,16 @@ class UserSession {
     /// MUST be called the moment a token is rejected. Otherwise one minted by a dead or
     /// blocked account survives on disk for its full hour, the app keeps presenting it, and
     /// nothing on screen explains why transcription stopped.
+    /// The key most recently thrown away. Checked on every cache lookup, because the Keychain
+    /// cannot be relied on to forget it: measured 2026-09-18, a lookup three seconds after the
+    /// discard still returned the key the service had just rejected, and the recovery started
+    /// the engine with it again. Held in memory for the life of the process — it is only ever
+    /// compared, never presented.
+    private var discardedSpeechKey = ""
+
     func discardCachedSpeechKey() {
+        if !speechmaticsKey.isEmpty { discardedSpeechKey = speechmaticsKey }
+        speechKeyExpiry = nil
         speechmaticsKey = ""
         deepgramToken = ""
         Keychain.delete(account: Self.speechKeyAccount)
@@ -383,7 +451,11 @@ class UserSession {
             return false
         }
         if forceRefresh { discardCachedSpeechKey() }
-        if let cached = loadCachedSpeechKey() {
+        // Never consult the cache on a forced refresh. It used to rely on the discard above
+        // having worked, and when the Keychain refused it the "renewal" restarted the engine
+        // with the very key it was meant to replace: "reusing the cached token" logged a
+        // second after "renewing it". Measured 2026-09-18.
+        if !forceRefresh, let cached = loadCachedSpeechKey() {
             speechmaticsKey = cached
             // Also on the cached path. Reporting the plan only when a token is freshly
             // minted means it is silent for the whole hour a cached one is reused — which

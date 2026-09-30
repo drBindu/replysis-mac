@@ -20,14 +20,14 @@ class MainViewModel {
     // MARK: - UI Content
     var aiAnswer = ""
     var transcript = ""
-    var aiAnswerHint = "Ready. Press SPACE to start listening, then SPACE again to get your answer."
+    var aiAnswerHint = "Ready. Press ⌥ SPACE to start listening, then ⌥ SPACE again to get your answer."
 
     /// The idle prompt must match the ACTIVE mode. It was hardcoded to the manual
     /// instructions, so Practice Auto told the user to press SPACE — advice that is simply
     /// wrong there, and undermines trust in a mode whose entire promise is pressing nothing.
     var idleHintForCurrentMode: String {
         switch listeningMode {
-        case .manual: return "Ready. Press SPACE to start listening, then SPACE again to get your answer."
+        case .manual: return "Ready. Press ⌥ SPACE to start listening, then ⌥ SPACE again to get your answer."
         case .auto:   return "Listening. The answer appears when the question ends."
         }
     }
@@ -119,7 +119,16 @@ class MainViewModel {
 
     // MARK: - Window / Overlay
     var showCameraOverlay = false
-    var isPinnedOnTop = false       // when true, window floats above other apps
+    /// On by default and remembered, as on Windows (AppConfig.KeepOnTop). Stealth keeps the
+    /// window out of the Dock and ⌘Tab, so once another window covered it an unpinned window
+    /// had no way back — ⌃⌥R now brings it back too.
+    var isPinnedOnTop = true
+    /// Settings, "Screen keys work in every app". See GlobalHotkey.isScreenKey.
+    var screenKeysEverywhere = true
+    /// "Real interview? Mic off in Settings", shown in place of AUTO | MANUAL for four seconds
+    /// the first time Auto is chosen in a launch with the microphone on. Windows 2523ecf.
+    var showMicOffHint = false
+    private var micOffHintShown = false
     var mainWindowOpacity: Double = 0.40
     var overlayOpacity: Double = 0.90
     var isScreenAnalyzing = false
@@ -157,7 +166,7 @@ class MainViewModel {
     // the instant it's downloaded, with no System Settings wall.
     var needsPermissionSetup = false   // true only while the OPTIONAL hotkey setup sheet is up
     var hotkeyActive = false           // is the global hotkey currently working?
-    var showHotkeyBanner = false       // subtle "enable Space bar" upsell in the main UI
+    var showHotkeyBanner = false       // subtle "enable ⌥Space bar" upsell in the main UI
     private var hotkeyBannerDismissed = false
     var permInputMonitoring = false    // needed (with Accessibility) for the global hotkey
     var permAccessibility   = false
@@ -305,6 +314,9 @@ class MainViewModel {
 
     private var didAppear = false
     func onAppear() {
+        // The admin dashboard shows a signed-in user as "Live" from this. Each beat checks
+        // the session itself, so starting it once at launch covers signing in later.
+        PresenceTracker.shared.start()
         guard !didAppear else { return }
         didAppear = true
         // Apply the persisted Stealth Mode setting to the window immediately — default is
@@ -533,7 +545,7 @@ class MainViewModel {
                     // press lands on an already-warm mic pipeline instead of triggering a
                     // restart at that moment.
                     if self.engine.isRunning {
-                        dlog("Mic granted — restarting engine into BOTH mode ahead of first Space", tag: "PERM")
+                        dlog("Mic granted — restarting engine into BOTH mode ahead of first ⌥Space", tag: "PERM")
                         self.engine.stop()
                         self.engine.start(smKey: self.session.speechmaticsKey)
                     }
@@ -725,7 +737,11 @@ class MainViewModel {
                 // Let text editors (resume / ask boxes) receive a real space.
                 if let fr = event.window?.firstResponder, fr is NSText { return event }
                 switch event.keyCode {
-                case 49:        self.handleSpacePress(source: "LOCAL"); return nil   // Space
+                case 49:
+                    guard GlobalHotkey.isListeningShortcut(keyCode: Int64(event.keyCode),
+                            flags: CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue))) else { return event }
+                    if !event.isARepeat { self.handleSpacePress(source: "LOCAL") }
+                    return nil
                 case 100: self.runScreenAnalysis(wholeScreen: false);  return nil   // F8 — this window
                 case 101: self.runScreenAnalysis(wholeScreen: true);   return nil   // F9 — main screen
                 default:        return event
@@ -747,8 +763,20 @@ class MainViewModel {
             onF8Pressed:    { [weak self] in self?.runScreenAnalysis(wholeScreen: false) },
             onF9Pressed:    { [weak self] in self?.runScreenAnalysis(wholeScreen: true) },
             onF12Pressed:   { },
-            onKillPressed:  { NSApplication.shared.terminate(nil) }
+            onKillPressed:  {
+                // ⌃⇧F4 exists for "someone just walked in", so it stays instant and
+                // unconfirmed — a prompt defeats the point. Windows keeps theirs the same
+                // way (2026-09-22). What was missing on both sides is the record of it.
+                dlog("Kill chord ⌃⇧F4 pressed — quitting immediately, no confirmation", tag: "LIFECYCLE")
+                MainViewModel.quitWithoutAsking = true
+                NSApplication.shared.terminate(nil)
+            }
         )
+        hotkey?.onBringToFront = { [weak self] in self?.bringToFront() }
+        hotkey?.onRegionAnalysisPressed = { [weak self] in self?.runRegionAnalysis() }
+        hotkey?.onPreviousAnswer = { [weak self] in self?.showPreviousAnswer() }
+        hotkey?.onNextAnswer = { [weak self] in self?.showNextAnswer() }
+        hotkey?.setScreenKeysEverywhere(screenKeysEverywhere)
         refreshHotkeyGate()   // seed the tap's consume/pass-through state
     }
 
@@ -781,10 +809,10 @@ class MainViewModel {
             // Without this guard, Space fires .showLogin before the Keychain restore completes
             // and the user sees a login sheet for an account they're already signed into.
             if isRestoringSession {
-                dlog("SPACE from \(source): session restore in flight — ignoring to avoid premature login prompt", tag: "SPACE")
+                dlog("⌥ SPACE from \(source): session restore in flight — ignoring to avoid premature login prompt", tag: "SPACE")
                 return
             }
-            dlog("SPACE from \(source): not signed in → prompting sign-in", tag: "SPACE")
+            dlog("⌥ SPACE from \(source): not signed in → prompting sign-in", tag: "SPACE")
             NotificationCenter.default.post(name: .showLogin, object: nil)
             return
         }
@@ -813,7 +841,7 @@ class MainViewModel {
                             // Restart so the engine picks up the mic (relaunches in BOTH mode).
                             // The mic is opened idle and only records while listening, so this
                             // doesn't turn on the orange dot until the user is actually speaking.
-                            dlog("Mic granted on first Space — restarting engine in BOTH mode", tag: "SPACE")
+                            dlog("Mic granted on first ⌥Space — restarting engine in BOTH mode", tag: "SPACE")
                             self.engine.stop()
                             self.engine.start(smKey: self.session.speechmaticsKey)
                         }
@@ -833,25 +861,25 @@ class MainViewModel {
         }
         // Accessibility is never a gate here: the local key monitor works without it.
 
-        dlog("SPACE pressed from \(source) | loggedIn=\(session.isLoggedIn) | engineRunning=\(engine.isRunning) | isMuted=\(isMuted) | isProcessing=\(isProcessing)", tag: "SPACE")
+        dlog("⌥ SPACE pressed from \(source) | loggedIn=\(session.isLoggedIn) | engineRunning=\(engine.isRunning) | isMuted=\(isMuted) | isProcessing=\(isProcessing)", tag: "SPACE")
 
         guard !isProcessing else {
-            dlog("SPACE ignored — AI is processing", tag: "SPACE"); return
+            dlog("⌥ SPACE ignored — AI is processing", tag: "SPACE"); return
         }
         let now = Date()
         guard now.timeIntervalSince(lastSpaceTime) >= spaceDebounceMs else {
-            dlog("SPACE debounced", tag: "SPACE"); return
+            dlog("⌥ SPACE debounced", tag: "SPACE"); return
         }
         lastSpaceTime = now
 
         if session.isLoggedIn && !engine.isRunning && isMuted {
             let key = session.speechmaticsKey
-            dlog("SPACE: engine not running, smKey length=\(key.count)", tag: "SPACE")
+            dlog("⌥ SPACE: engine not running, smKey length=\(key.count)", tag: "SPACE")
             if key.isEmpty {
                 // BUG-1 FIX: if session restore is still in flight the key just hasn't been
                 // fetched yet — don't cry "NO MIC" and lock in a 60s retry; just wait.
                 if isRestoringSession {
-                    dlog("SPACE: key not yet fetched (restore in flight), ignoring", tag: "SPACE")
+                    dlog("⌥ SPACE: key not yet fetched (restore in flight), ignoring", tag: "SPACE")
                     return
                 }
                 aiAnswer = "⚠ Speech service temporarily unavailable.\n\nRetrying automatically — or click the NO MIC badge.\n\nUse F9 / Analyze Screen instead."
@@ -864,17 +892,17 @@ class MainViewModel {
             // monitor/retry timers are gone). This used to fall through and unmute into
             // a dead engine — the mic showed LISTENING while nothing transcribed. Start
             // it now; if it's genuinely mid-restart elsewhere, start() safely no-ops.
-            dlog("SPACE: restarting dead engine before unmuting", tag: "SPACE")
+            dlog("⌥ SPACE: restarting dead engine before unmuting", tag: "SPACE")
             engine.start(smKey: key)
         }
 
         if isMuted {
-            dlog("SPACE: unmuting → LISTENING", tag: "SPACE")
+            dlog("⌥ SPACE: unmuting → LISTENING", tag: "SPACE")
             stoppedForIdle = false   // the user is back; the room is not empty any more
             isMuted = false; isListening = true
             justStartedListening = true; listenStartTicks = 0
             resetAutoTurnState()   // fresh turn — nothing from the last one carries over
-            transcript = ""; aiAnswer = ""
+            clearAnswerForNewTurn()
             // The engine has a slow (~10s) cold start on the first listen after launch.
             // Tell the user it's warming up instead of showing a green mic that silently
             // drops the first words — this was the "Space does nothing at first" bug.
@@ -895,7 +923,7 @@ class MainViewModel {
             // Wake the backend now (TLS + cold JVM) so the first answer isn't slow.
             NetworkClient.shared.warmUp()
         } else {
-            dlog("SPACE: muting → sending to AI. transcript='\(transcript.prefix(80))'", tag: "SPACE")
+            dlog("⌥ SPACE: muting → sending to AI. transcript='\(transcript.prefix(80))'", tag: "SPACE")
             isListening = false
             engine.writePauseFlag()
             isMuted = true
@@ -1058,7 +1086,7 @@ class MainViewModel {
         guard !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             // Honest feedback instead of silently doing nothing — the #1 "is it broken?"
             // moment is pressing Space twice and seeing zero reaction.
-            aiAnswerHint = "No speech was captured. Speak (or play the interviewer's audio), then press Space again."
+            aiAnswerHint = "No speech was captured. Speak (or play the interviewer's audio), then press ⌥Space again."
             updateMicUI(); return
         }
         guard session.isLoggedIn else { aiAnswer = "⚠ Please sign in to use AI answers."; return }
@@ -1079,11 +1107,13 @@ class MainViewModel {
 
         if builder.isGreeting(q)  { finishAI(question: q, answer: builder.getGreetingResponse());  return }
         if builder.isSmallTalk(q) { finishAI(question: q, answer: builder.getSmallTalkResponse()); return }
-        // Only treat as off-topic if it WASN'T recognized as a real question type —
-        // otherwise short real questions ("where are you located") get wrongly dismissed.
-        if case .general = qType, builder.isOffTopic(q) {
-            stopThinkingUI(); return   // silence — don't respond, don't log
-        }
+        // A repeat "any other questions?" or the final sign-off gets a short, human reply
+        // instead of another invented question. The first invitation still reaches the model.
+        // Same order as Windows. See PromptBuilder.closingResponse.
+        if let reply = builder.closingResponse(to: q) { finishAI(question: q, answer: reply); return }
+        // No more "off-topic" silence. Short turns with no interview keyword were dropped
+        // with no answer and no log — "Kafka partitions?" got nothing. Windows removed the
+        // same step: when the turn is uncertain, the model decides, never a local guess.
 
         let messages = builder.buildMessages(resumeFacts: resumeFacts, currentQuestion: q,
                                              qTypeHint: qType, drillDownHint: isDrill,
@@ -1208,8 +1238,123 @@ class MainViewModel {
         """
     }
 
+    /// Set by the kill chord so the quit confirmation is skipped for that one path.
+    nonisolated(unsafe) static var quitWithoutAsking = false
+
+    // ── Answers you can go back to ─────────────────────────────────────────────
+    //
+    // A live interview only ever showed the newest answer. A stray voice in the room, a
+    // colleague talking past the mic, or the interviewer moving on mid-read was enough to
+    // replace an answer somebody was still speaking from — and it was gone. Every answer
+    // this session is kept in memory, so stepping back is instant and costs nothing.
+    struct AnsweredTurn: Identifiable {
+        let id = UUID()
+        let question: String
+        let answer: String
+        let at: Date
+    }
+    private(set) var answerHistory: [AnsweredTurn] = []
+    /// Which past answer is on screen, or nil when showing the live one.
+    private(set) var historyIndex: Int?
+    /// An answer arrived while a past one was being read: never steal the screen, say so.
+    private(set) var newerAnswerWaiting = false
+    private var liveAnswer = ""
+    private var liveTranscript = ""
+
+    var isShowingHistory: Bool { historyIndex != nil }
+    var historyPosition: String {
+        guard let i = historyIndex else { return "" }
+        return "\(i + 1) of \(answerHistory.count)"
+    }
+    var canGoBack: Bool {
+        guard !answerHistory.isEmpty else { return false }
+        return historyIndex == nil || (historyIndex ?? 0) > 0
+    }
+    var canGoForward: Bool { historyIndex != nil }
+
+    /// Starting a turn empties the answer panel — unless a past answer is being read, in
+    /// which case it empties the LIVE one underneath and leaves the screen alone. Windows
+    /// found this live (2026-09-22): listening cleared the box, so the moment the
+    /// interviewer began the next question the answer just recovered was wiped, which is
+    /// the exact loss this feature exists to prevent, one second later.
+    private func clearAnswerForNewTurn() {
+        if historyIndex != nil {
+            liveTranscript = ""; liveAnswer = ""
+            return
+        }
+        transcript = ""; aiAnswer = ""
+    }
+
+    /// How many answers have arrived while a past one was being read.
+    private(set) var newerAnswerCount = 0
+    var newerAnswerBadge: String {
+        newerAnswerCount <= 0 ? "" : (newerAnswerCount == 1 ? "1 new answer" : "\(newerAnswerCount) new answers")
+    }
+
+    /// One answer back. Instant: it reads memory and never calls the model.
+    func showPreviousAnswer() {
+        guard !answerHistory.isEmpty else { return }
+        if historyIndex == nil {
+            liveAnswer = aiAnswer
+            liveTranscript = transcript
+            historyIndex = answerHistory.count - 1
+        } else if let i = historyIndex, i > 0 {
+            historyIndex = i - 1
+        } else {
+            return
+        }
+        applyHistoryView()
+    }
+
+    /// Forward again, and past the newest one back to the live answer.
+    func showNextAnswer() {
+        guard let i = historyIndex else { return }
+        if i + 1 < answerHistory.count {
+            historyIndex = i + 1
+            applyHistoryView()
+        } else {
+            returnToLive()   // past the newest: follow the live answer again
+        }
+    }
+
+    func returnToLive() {
+        guard historyIndex != nil else { return }
+        historyIndex = nil
+        newerAnswerWaiting = false
+        newerAnswerCount = 0
+        aiAnswer = liveAnswer
+        transcript = liveTranscript
+        answerEpoch += 1          // scroll back to the top of the live answer
+        dlog("HISTORY: back to the live answer", tag: "HISTORY")
+    }
+
+    private func applyHistoryView() {
+        guard let i = historyIndex, answerHistory.indices.contains(i) else { return }
+        let turn = answerHistory[i]
+        transcript = turn.question
+        aiAnswer = turn.answer
+        answerEpoch += 1
+        dlog("HISTORY: showing answer \(i + 1) of \(answerHistory.count)", tag: "HISTORY")
+    }
+
     private func finishAI(question: String, answer: String, prefix: String = "",
                           historyAnswer: String? = nil) {
+        answerHistory.append(AnsweredTurn(question: question, answer: answer, at: Date()))
+        // Bounded: an interview is dozens of turns, and this is only ever read by a person.
+        if answerHistory.count > 60 { answerHistory.removeFirst() }
+        // READING A PAST ANSWER IS NOT INTERRUPTED. The new answer is live underneath and
+        // one press of ⌃⌥→ away; taking the screen is exactly the loss this exists to stop.
+        if historyIndex != nil {
+            liveAnswer = "\(prefix)\(answer)"
+            liveTranscript = question
+            newerAnswerWaiting = true
+            newerAnswerCount += 1
+            lastAnsweredAnswer = answer
+            PromptBuilder.shared.addToHistory(question: question, answer: historyAnswer ?? answer)
+            appendToSessionLog(q: question, a: answer)
+            stopThinkingUI()
+            return
+        }
         aiAnswer = "\(prefix)\(answer)"
         // Remembered so the next utterance can be checked against it. In Practice Auto the
         // user reads this aloud to rehearse, and without this the app hears its own answer
@@ -1252,8 +1397,8 @@ class MainViewModel {
         Task { await _doScreenCapture(label: wholeScreen ? "MAIN SCREEN" : "THIS SCREEN") }
     }
 
-    // Arms screen answers. Despite what this comment used to say, nothing is captured on a
-    // timer — see toggleWatchMode() for the arithmetic behind that decision.
+    // Arms screen answers. While armed and listening, the screen is prepared every 2 seconds
+    // (see tickPreparedShots); the model reads it only when a question is asked.
     /// Settings toggle. Kept separate from the toolbar, which now performs an action.
     func setScreenAnswers(_ enabled: Bool) {
         guard isWatchMode != enabled else { return }
@@ -1270,17 +1415,12 @@ class MainViewModel {
             aiAnswer = "Screen watch mode stopped."
         } else {
             isWatchMode = true
-            // Said "capturing every 8s" while the code deliberately captures on question
-            // detection instead. A debug log that asserts behaviour the app does not have
-            // sends the next person debugging this to look for a timer that is not there.
-            dlog("Watch mode ON — captures on question detection, not on a timer", tag: "SCREEN")
+            dlog("Watch mode ON — screen prepared every 2s while listening; read only when a question is asked", tag: "SCREEN")
             aiAnswer = "👁 WATCH MODE ON — for when the interviewer is sharing their screen.\n\nEvery question is now answered from what is on screen, with nothing to press.\n\nPress Watch again to go back to answering from what was said."
-            // NOTE: no timer. Capturing every N seconds is the obvious reading of "watch
-            // the screen" and it does not survive arithmetic: a capture every 8s for a
-            // 30-minute interview is 225 vision calls, almost all of them frames nobody
-            // asked about, each one billed. A capture costs ~80ms, so waiting until there
-            // IS a question costs nothing and answers exactly the same. The capture is
-            // driven by question detection instead — see startAI()'s watch-mode branch.
+            // The model reads the screen only when a question is asked, so there is still
+            // one vision call per question, never one per frame. What runs every 2 seconds
+            // is the capture and, when the screen changed, the upload ahead of the question
+            // (see tickPreparedShots) — the schedule the privacy policy describes.
         }
     }
 
@@ -1290,7 +1430,16 @@ class MainViewModel {
         // to begin with. The old approach ordered every window out, slept 80ms for the
         // compositor, then ordered them back — which read as the whole app blinking on
         // every single capture, and cost 80ms of the user's wait for nothing.
-        let imageData = await captureScreen()
+        // In watch mode the capture taken on the last 2-second tick IS the screen now; using
+        // it takes the capture out of the candidate's wait. An F8 window capture always
+        // captures fresh, since the prepared ones are of the whole screen.
+        var imageData: Data?
+        if capturingWholeScreen, pendingRegionRect == nil, let prepared = freshPreparedShot() {
+            dlog("SCREEN: using the capture from \(Int(Date().timeIntervalSince(preparedShotDataAt) * 1000))ms ago; no capture wait", tag: "SCREEN")
+            imageData = prepared
+        } else {
+            imageData = await captureScreen()
+        }
 
         guard let imageData = imageData, !imageData.isEmpty else {
             // Failing SILENTLY here is not acceptable: the user asked a question, watched
@@ -1337,7 +1486,7 @@ class MainViewModel {
             captureSource: lastCaptureSource,
             // When the picture went up while they were still speaking, the question carries
             // its id and not two hundred kilobytes. Nil falls back to sending the bytes.
-            imageId: usableImageId(matching: Self.coarseSignature(imageData)),
+            imageIds: usableImageIds(matching: Self.coarseSignature(imageData)),
             onToken: { [weak self] token in
                 guard let self = self, self.answerEpoch == epoch else { return }
                 accumulated += token; tokenCount += 1
@@ -1397,7 +1546,7 @@ class MainViewModel {
     /// 4K screenshot is read at ~1365x768 no matter what we send — the extra pixels are
     /// decoded, thrown away, and billed for. Capping here sends a fraction of the bytes for
     /// a byte-identical result on the model side.
-    private let visionMaxEdge: Double = 1536
+    private static let visionMaxEdge: Double = 1536
     /// A single window arrives close to its real size and reads well at a 768 short edge.
     /// A whole monitor does not: 1920x1080 shrunk to fit 768 becomes 1365x768, and body
     /// text on a coding site goes from about fourteen pixels to ten — the edge of what a
@@ -1408,8 +1557,39 @@ class MainViewModel {
     /// has not seen before — which is every question that matters.
     ///
     /// A 1080p monitor is now sent at its own resolution rather than three quarters of it.
-    private let visionMaxShortEdgeFullScreen: Double = 1100
-    private let visionMaxLongEdgeFullScreen: Double  = 2560
+    private static let visionMaxShortEdgeFullScreen: Double = 1100
+    private static let visionMaxLongEdgeFullScreen: Double  = 2560
+
+    /// The area chosen with F7, in CoreGraphics screen coordinates, for the next capture.
+    private var pendingRegionRect: CGRect?
+
+    /// F7 — drag a box around one part of the screen and read only that. Windows has had
+    /// this since before the Mac existed; a full-screen capture spends its pixel budget on
+    /// the whole IDE when the question is about eight lines of it.
+    func runRegionAnalysis() {
+        guard !isProcessing && !isScreenAnalyzing else { return }
+        guard session.isLoggedIn else {
+            NotificationCenter.default.post(name: .showLogin, object: nil); return
+        }
+        dlog("Region capture: picker opened (F7)", tag: "SCREEN")
+        RegionPicker.shared.pick { [weak self] rect in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                guard let rect = rect else {
+                    dlog("Region capture: cancelled", tag: "SCREEN")
+                    return
+                }
+                self.pendingRegionRect = rect
+                self.answerIsBehavioral = false
+                self.answerEpoch += 1
+                self.capturingWholeScreen = true          // a region is cut from the display
+                self.isScreenAnalyzing = true; self.isProcessing = true
+                self.startBusyWatchdog(); self.updateMicUI()
+                await self._doScreenCapture(label: "SELECTED AREA")
+                self.pendingRegionRect = nil
+            }
+        }
+    }
 
     /// Whether this capture should take the whole display rather than the front window.
     ///
@@ -1423,20 +1603,52 @@ class MainViewModel {
     //
     // Sending the screenshot ahead was the larger half of the wait: 1,483ms to first word,
     // of which the model was 720ms and most of the rest was the image going up the wire.
-    // The upload happens while the speaker is still finishing, so the question carries an
-    // id instead of the bytes.
     //
-    // NO TIMER. Capturing every couple of seconds for as long as the app is open is a
-    // screenshot of somebody's work every two seconds, uploaded whenever the picture
-    // changes — around eleven megabytes a minute of their connection, and their screen,
-    // with no interview happening. This prepares a picture only when a turn is actually
-    // ending, which is the moment it is about to be needed anyway.
+    // SCHEDULE — the owner's product decision, matching Windows and the privacy policy
+    // (MainWindow.xaml.cs PreparedShotInterval / PreparedShotIntervalWhileMuted /
+    // PrepareShotsAfterMicWithin): with screen answers on, one capture every 2 seconds while
+    // listening; after the mic stops, one every 15 seconds, and nothing at all once it has
+    // been off for 5 minutes. Only a screen that actually changed is uploaded; the server
+    // keeps each for at most 90 seconds, hands it back once, and deletes it. Read Screen and
+    // F8/F9 still capture on demand. An app left open with no interview captures nothing.
+    static let preparedShotInterval: TimeInterval = 2
+    static let preparedShotIntervalWhileMuted: TimeInterval = 15
+    static let prepareShotsAfterMicWithin: TimeInterval = 5 * 60
+    /// How old a prepared capture may be and still stand in for a fresh one: one interval
+    /// plus the time a capture takes, so the latest tick is always usable.
+    static let preparedShotMaxAge: TimeInterval = 2.5
+    /// Most views one question carries, and the bytes they may total (two full-screen
+    /// captures fit; the newest always goes first so it is never the one dropped).
+    static let maxShotsPerQuestion = 3
+    static let maxTotalShotBytes = 1_000 * 1024
+
     private var preparedImageId: String?
     private var preparedImageAt: Date = .distantPast
     private var preparedSignature: [UInt8] = []
     private var preparingScreenshot = false
     /// The server holds a cached image for ninety seconds; stay well inside that.
-    private let preparedImageLifetime: TimeInterval = 75
+    private let preparedImageLifetime: TimeInterval = 60
+    private var preparedShotData: Data?
+    private var preparedShotDataAt: Date = .distantPast
+    private var lastPreparedShotTickAt: Date = .distantPast
+    private var lastMicLiveAt: Date = .distantPast
+    /// The distinct views uploaded since the last question, oldest first. A problem that
+    /// needs scrolling is read top to bottom; by the time they ask, both halves are here.
+    private var recentShots: [(id: String, bytes: Int, at: Date)] = []
+    private var lastKeptSignature: [UInt8] = []
+
+    /// Driven from the always-running transcript poll, so it needs no timer of its own and
+    /// cannot be left running by a mode change.
+    private func tickPreparedShots() {
+        let now = Date()
+        if isListening { lastMicLiveAt = now }
+        guard isWatchMode, session.isLoggedIn, !preparingScreenshot, !isProcessing, !isScreenAnalyzing else { return }
+        guard now.timeIntervalSince(lastMicLiveAt) <= Self.prepareShotsAfterMicWithin else { return }
+        let interval = isListening ? Self.preparedShotInterval : Self.preparedShotIntervalWhileMuted
+        guard now.timeIntervalSince(lastPreparedShotTickAt) >= interval else { return }
+        lastPreparedShotTickAt = now
+        Task { [weak self] in await self?.prepareScreenshotAhead() }
+    }
 
     /// Capture now and upload, so the question only has to carry an id.
     ///
@@ -1446,24 +1658,51 @@ class MainViewModel {
     /// coarse 16x16 sixteen-grey signature tells scrolling from a ticking counter.
     private func prepareScreenshotAhead() async {
         guard isWatchMode, session.isLoggedIn, !preparingScreenshot else { return }
-        guard listeningMeterTimer != nil || isListening else { return }   // only during a live session
+        guard Date().timeIntervalSince(lastMicLiveAt) <= Self.prepareShotsAfterMicWithin || isListening else { return }
         preparingScreenshot = true
         defer { preparingScreenshot = false }
 
-        capturingWholeScreen = true            // watching means the screen
-        guard let data = await captureScreen(), !data.isEmpty else { return }
-        let signature = Self.coarseSignature(data)
+        // Watching means the screen. Passed explicitly rather than through the shared
+        // flag, so a timed capture can never flip an F8 window capture mid-flight.
+        guard let image = await captureCGImage(wholeScreen: true) else { return }
+        // COMPARE BEFORE ENCODING. Measured on this Mac: the 2-second prepare costs
+        // 2.3-13.4% of a core with screen answers on and 1.1-2.2% with them off, and the
+        // difference is almost entirely scaling and encoding a screen nobody changed.
+        // The 16x16 signature comes straight off the capture, so a still screen stops here.
+        let signature = Self.coarseSignature(image: image)
         if Self.signaturesMatch(signature, preparedSignature),
            Date().timeIntervalSince(preparedImageAt) < preparedImageLifetime, preparedImageId != nil {
-            dlog("SCREEN: unchanged since the last upload — reusing it", tag: "SCREEN")
+            preparedShotDataAt = Date()   // the picture on hand still shows what is there
             return
         }
-        if let id = await NetworkClient.shared.cacheScreenshot(imageBase64: data.base64EncodedString()) {
-            preparedImageId = id
-            preparedImageAt = Date()
-            preparedSignature = signature
-            dlog("SCREEN: uploaded ahead of the question (id \(id.prefix(8)))", tag: "SCREEN")
+        guard let data = Self.encodeCapture(image, wholeScreen: true), !data.isEmpty else { return }
+        preparedShotData = data
+        preparedShotDataAt = Date()
+        guard let id = await NetworkClient.shared.cacheScreenshot(imageBase64: data.base64EncodedString()) else {
+            preparedImageId = nil; preparedSignature = []
+            return
         }
+        preparedImageId = id
+        preparedImageAt = Date()
+        preparedSignature = signature
+        // A moved page is a new view; the same view re-uploaded only replaces the newest.
+        let entry = (id: id, bytes: data.count, at: Date())
+        recentShots.removeAll { Date().timeIntervalSince($0.at) >= preparedImageLifetime }
+        if recentShots.isEmpty || !Self.signaturesMatch(signature, lastKeptSignature) {
+            lastKeptSignature = signature
+            recentShots.append(entry)
+        } else {
+            recentShots[recentShots.count - 1] = entry
+        }
+        while recentShots.count > Self.maxShotsPerQuestion { recentShots.removeFirst() }
+        dlog("SCREEN: uploaded ahead of the question (id \(id.prefix(8)), \(recentShots.count) view\(recentShots.count == 1 ? "" : "s") held)", tag: "SCREEN")
+    }
+
+    /// The prepared capture when it is fresh enough to stand in for a new one.
+    private func freshPreparedShot() -> Data? {
+        guard let data = preparedShotData,
+              Date().timeIntervalSince(preparedShotDataAt) <= Self.preparedShotMaxAge else { return nil }
+        return data
     }
 
     /// Has the screen actually MOVED?
@@ -1529,6 +1768,10 @@ class MainViewModel {
 
     static func coarseSignature(_ jpeg: Data) -> [UInt8] {
         guard let src = NSBitmapImageRep(data: jpeg)?.cgImage else { return [] }
+        return coarseSignature(image: src)
+    }
+
+    static func coarseSignature(image src: CGImage) -> [UInt8] {
         let n = 16
         var pixels = [UInt8](repeating: 0, count: n * n)
         guard let ctx = CGContext(data: &pixels, width: n, height: n, bitsPerComponent: 8,
@@ -1603,26 +1846,44 @@ class MainViewModel {
         Task { await _doScreenCapture(label: "AFTER SCROLL") }
     }
 
-    /// The prepared id, but ONLY if it is still fresh and still shows the same screen.
+    /// The prepared ids, but ONLY if the newest still shows the screen being asked about.
     ///
     /// Matching the signature is what makes this safe. Sending an id prepared moments ago
     /// alongside a screen that has since scrolled would answer a picture the candidate is no
-    /// longer looking at — a wrong answer that reads as a confident one, which is the exact
-    /// failure the whole screen path exists to avoid. When they differ, the fresh bytes go
-    /// inline and the only thing lost is the head start.
-    private func usableImageId(matching signature: [UInt8]) -> String? {
+    /// longer looking at — a wrong answer that reads as a confident one. When they differ,
+    /// the fresh bytes go inline and the only thing lost is the head start.
+    ///
+    /// With the newest, the OLDEST view held is sent too when it fits: someone reading a
+    /// problem scrolls from the top down, so that is the statement they scrolled past.
+    private func usableImageIds(matching signature: [UInt8]) -> [String]? {
         guard let id = preparedImageId,
               Date().timeIntervalSince(preparedImageAt) < preparedImageLifetime,
               Self.signaturesMatch(signature, preparedSignature) else { return nil }
-        // The server returns a cached image EXACTLY ONCE, so a used id is spent. Clearing it
-        // means the next question uploads again rather than referencing something the server
-        // has already handed back and dropped.
+        var ids = [id]
+        var total = recentShots.last?.bytes ?? 0
+        if recentShots.count > 1, let oldest = recentShots.first, oldest.id != id,
+           Date().timeIntervalSince(oldest.at) < preparedImageLifetime,
+           total + oldest.bytes <= Self.maxTotalShotBytes {
+            ids.insert(oldest.id, at: 0)   // top of the page first
+            total += oldest.bytes
+        }
+        // The server returns a cached image EXACTLY ONCE, so every id sent is spent.
         preparedImageId = nil
         preparedSignature = []
-        return id
+        recentShots.removeAll()
+        lastKeptSignature = []
+        dlog("SCREEN: question carries \(ids.count) prepared view\(ids.count == 1 ? "" : "s") (\(total / 1024) KB)", tag: "SCREEN")
+        return ids
     }
 
-    private func captureScreen() async -> Data? {
+    private func captureScreen(wholeScreen: Bool? = nil) async -> Data? {
+        guard let cgImage = await captureCGImage(wholeScreen: wholeScreen) else { return nil }
+        return Self.encodeCapture(cgImage, wholeScreen: wholeScreen ?? capturingWholeScreen)
+    }
+
+    /// The raw capture, before any scaling or encoding.
+    private func captureCGImage(wholeScreen: Bool? = nil) async -> CGImage? {
+        let wholeScreenCapture = wholeScreen ?? capturingWholeScreen
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
 
@@ -1632,7 +1893,7 @@ class MainViewModel {
             // pixels where the question actually is. Falls back to the display when there is
             // no sensible foreground window (e.g. only the desktop is showing).
             let ownPID = ProcessInfo.processInfo.processIdentifier
-            let candidate = capturingWholeScreen ? nil : content.windows.first { w in
+            let candidate = wholeScreenCapture ? nil : content.windows.first { w in
                 guard w.isOnScreen, w.frame.width > 200, w.frame.height > 200 else { return false }
                 guard let app = w.owningApplication else { return false }
                 // Never target ourselves — the user wants what is BEHIND this app.
@@ -1664,10 +1925,43 @@ class MainViewModel {
                 let filter = SCContentFilter(display: display,
                                              excludingApplications: ourApp.map { [$0] } ?? [],
                                              exceptingWindows: [])
-                cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-                lastCaptureSource = "full screen"
+                let shot = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+                if let region = pendingRegionRect {
+                    // The capture is in pixels and the selection is in points; on a Retina
+                    // display those differ by the backing scale, so convert before cropping.
+                    let scale = Double(shot.width) / Double(max(display.width, 1))
+                    let bounds = CGDisplayBounds(display.displayID)
+                    let local = CGRect(x: (region.origin.x - bounds.origin.x) * scale,
+                                       y: (region.origin.y - bounds.origin.y) * scale,
+                                       width: region.width * scale, height: region.height * scale)
+                    let clamped = local.intersection(CGRect(x: 0, y: 0, width: shot.width, height: shot.height))
+                    if let cropped = clamped.isNull || clamped.width < 8 || clamped.height < 8
+                        ? nil : shot.cropping(to: clamped) {
+                        cgImage = cropped
+                        lastCaptureSource = "selected area"
+                        dlog("SCREEN: region \(Int(clamped.width))x\(Int(clamped.height)) px", tag: "SCREEN")
+                    } else {
+                        cgImage = shot
+                        lastCaptureSource = "full screen"
+                    }
+                } else {
+                    cgImage = shot
+                    lastCaptureSource = "full screen"
+                }
             }
 
+            return cgImage
+        } catch {
+            dlog("Screen capture failed: \(error)", tag: "SCREEN")
+            return nil
+        }
+    }
+
+    /// Scale and encode a capture. Split out so a prepared shot can compare the picture
+    /// BEFORE paying for the encode: measured on this Mac, the 2-second prepare costs
+    /// 2.3-13.4% of a core with screen answers on against 1.1-2.2% with them off, and
+    /// almost all of that is encoding a screen that has not changed.
+    static func encodeCapture(_ cgImage: CGImage, wholeScreen wholeScreenCapture: Bool) -> Data? {
             // Downscale by the LONGEST edge (the old code only ever considered width, so a
             // tall narrow window came through far larger than intended).
             let origW = Double(cgImage.width), origH = Double(cgImage.height)
@@ -1676,11 +1970,11 @@ class MainViewModel {
             // downscales to, so it is the one that decides whether text survives.
             let shortEdge = min(origW, origH), longEdge = max(origW, origH)
             let scale: Double
-            if capturingWholeScreen {
-                scale = min(1.0, visionMaxShortEdgeFullScreen / shortEdge,
-                                 visionMaxLongEdgeFullScreen / longEdge)
+            if wholeScreenCapture {
+                scale = min(1.0, Self.visionMaxShortEdgeFullScreen / shortEdge,
+                                 Self.visionMaxLongEdgeFullScreen / longEdge)
             } else {
-                scale = min(1.0, visionMaxEdge / longEdge)
+                scale = min(1.0, Self.visionMaxEdge / longEdge)
             }
             let newW  = max(1, Int((origW * scale).rounded()))
             let newH  = max(1, Int((origH * scale).rounded()))
@@ -1699,12 +1993,7 @@ class MainViewModel {
             // worst at. Its ringing around glyph edges is the difference between the model
             // reading "l" and reading "1", which in code is a wrong answer.
             let rep  = NSBitmapImageRep(cgImage: scaled)
-            let data = Self.encodeWithinBudget(rep, width: newW, height: newH)
-            return data
-        } catch {
-            dlog("Screen capture failed: \(error)", tag: "SCREEN")
-            return nil
-        }
+            return Self.encodeWithinBudget(rep, width: newW, height: newH)
     }
 
     // MARK: - Transcript Polling
@@ -1718,12 +2007,17 @@ class MainViewModel {
     private var transcriptLogTick = 0
     private var autoBlockLogTick = 0
     private var lastEngineReady = false
+    private var lastTokenRenewalCheckAt = Date.distantPast
+    private var lastTokenRenewalAt = Date.distantPast
     /// Set while the "live transcription is paused" notice is on screen, with what the app was
     /// doing before it appeared. Without these, the notice outlived the failure: see the
     /// recovery in updateTranscript and handleSpeechKeyError.
     private var keyErrorNoticeShowing = false
     private var wasListeningBeforeKeyError = false
     private func updateTranscript() {
+        tickPreparedShots()
+        checkAudioSourceTip()
+        renewSpeechTokenIfExpiring()
         // THE ROOM IS NOT QUIET ANY MORE. The microphone is shut, but the system-audio tap
         // keeps running, so the interviewer starting to talk in Zoom is visible even now.
         // Armed before a call that starts ten minutes late, the app stopped after three
@@ -1757,8 +2051,17 @@ class MainViewModel {
         // armed. This poll already runs; use it to notice the flip in BOTH directions, so
         // the drop is visible and the recovery clears itself without the user doing anything.
         if engine.isReady != lastEngineReady {
+            let cameBack = engine.isReady && !lastEngineReady
             lastEngineReady = engine.isReady
             dlog("Transcription live=\(engine.isReady)", tag: "AUTO")
+            // Coming back from an outage starts a clean slate. The words the engine
+            // produces first are built from audio captured while transcription was down,
+            // and answering those is answering something nobody asked.
+            if cameBack {
+                transcript = ""
+                resetAutoTurnState()
+                lastRawTranscript = ""
+            }
             if autoModeEnabled && isListening {
                 aiAnswerHint = engine.isReady
                     ? idleHintForCurrentMode
@@ -1790,7 +2093,7 @@ class MainViewModel {
                     showListeningNotice("TRANSCRIPTION IS BACK")
                     aiAnswerHint = idleHintForCurrentMode
                 } else {
-                    aiAnswerHint = "Transcription is back. Press SPACE to listen."
+                    aiAnswerHint = "Transcription is back. Press ⌥ SPACE to listen."
                 }
             }
             updateMicUI()
@@ -1953,6 +2256,14 @@ class MainViewModel {
     private var lastAnsweredAt = Date.distantPast
     /// How long after an answer a further utterance still counts as the same question.
     private let continuationWindow: TimeInterval = 20
+    /// How soon the CONTINUATION has to START to count as one, measured from the answer it
+    /// would be glued onto. Windows requires 4s (AutoTurnRules), "so the next question's
+    /// opening words are not glued onto the previous question". Mac only bounded the whole
+    /// chain at 20s, and a soak run showed exactly the failure Windows names: "What is a
+    /// load balancer?", asked eleven seconds after TCP was answered, came back as
+    /// "What is TCP? What is a load balancer?" — one answer covering two questions, and the
+    /// second question's own answer never given.
+    private let continuationStartWindow: TimeInterval = 4
     /// When the CURRENT run of continuations began.
     ///
     /// The window used to be measured from the last answer, and every merge produced a new
@@ -2224,7 +2535,15 @@ class MainViewModel {
             AutoTurnDetector.collapseRepeats((lastAnsweredQuestion + " " + addition)
                 .trimmingCharacters(in: .whitespacesAndNewlines)))
         let mergedWords = mergedCandidate.split(whereSeparator: { $0 == " " }).count
+        // When this speech BEGAN, not when it ended: a genuine addition can start inside
+        // the window and run on for several seconds.
+        let startedAt = pendingSpeechStartedAt ?? Date()
+        let startedWithinWindow = startedAt.timeIntervalSince(lastAnsweredAt) < continuationStartWindow
         if !lastAnsweredQuestion.isEmpty, additionWords >= 2, sinceAnswer < continuationWindow,
+           startedWithinWindow || speechBeganWhileLoading || saidBeforeAnswer,
+           // ...and it has to be an ADDITION, not the next question. Speaking over the
+           // answer used to be enough on its own, which glued separate questions together.
+           AutoTurnDetector.isFollowUpAddition(addition),
            chainAge < continuationWindow,
            continuationCount < maxContinuations,
            mergedWords <= (saidBeforeAnswer ? maxGapMergeWords : maxContinuationWords),
@@ -2406,6 +2725,12 @@ class MainViewModel {
         // HOW the sentence ends decides whether to answer now, wait, or not at all. This
         // runs BEFORE the duplicate guard on purpose: an unfinished turn must stay askable,
         // and marking it as submitted here would silence the real question when it arrives.
+        // NOT ANSWERED MID-SENTENCE, deliberately. Answering the question a speaker had
+        // just finished while they carried straight on was tried and measured: it answered
+        // all eight of eight rapid questions, but several answers went to fragments
+        // ("What is a", "semaphore?") because the submission consumes the transcript and
+        // the half-said tail then arrived as its own turn. A fragment answered confidently
+        // is worse than an answer that waits for the pause.
         switch AutoTurnDetector.classifyTurnEnding(text) {
         case .unfinished:
             // Silence proves they paused, never that they finished. Waiting costs nothing
@@ -2452,6 +2777,40 @@ class MainViewModel {
             // question is sent the picture is usually already there.
             if isWatchMode { Task { [weak self] in await self?.prepareScreenshotAhead() } }
             commitAutomaticTurn(text)
+        }
+    }
+
+    /// Replace the transcription token before it expires, in a quiet moment.
+    ///
+    /// The token lasts about an hour and the engine is handed it once, at launch, so a long
+    /// interview outlives it: Windows measured a real session going silent for good after an
+    /// hour — Deepgram refused, Speechmatics refused the same stale key, nothing recovered
+    /// (MAC_CATCHUP, 2026-09-17, CRITICAL). Renewing early costs a one-second restart nobody
+    /// sees; waiting for the failure costs the question being asked when it happens.
+    ///
+    /// Windows renews only while not listening. That cannot work here: in Auto the Mac is
+    /// listening nearly all the time, so the rule would never fire. A quiet moment is the
+    /// Mac's equivalent — nothing being answered, no turn being submitted, no speech for 3s.
+    private func renewSpeechTokenIfExpiring() {
+        let now = Date()
+        guard now.timeIntervalSince(lastTokenRenewalCheckAt) >= 30 else { return }
+        lastTokenRenewalCheckAt = now
+        guard session.isLoggedIn, engine.isRunning, !isProcessing, !autoTurnSubmitting,
+              now.timeIntervalSince(lastSpeechHeardAt) > 3,
+              now.timeIntervalSince(lastTokenRenewalAt) > 5 * 60,
+              let expiry = session.speechKeyExpiresAt,
+              expiry.timeIntervalSince(now) < 8 * 60 else { return }
+        lastTokenRenewalAt = now
+        dlog("STT_KEY: token expires in \(max(0, Int(expiry.timeIntervalSince(now) / 60))) min — renewing it in a quiet moment", tag: "AUTH")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard await self.session.fetchSpeechmaticsKeyAsync(forceRefresh: true) else {
+                dlog("STT_KEY: early renewal failed — the rejection path will still recover", tag: "AUTH")
+                return
+            }
+            guard !self.isProcessing, !self.autoTurnSubmitting else { return }
+            self.engine.stop()
+            self.engine.start(smKey: self.session.speechmaticsKey)
         }
     }
 
@@ -2518,6 +2877,12 @@ class MainViewModel {
             answerEpoch += 1
             isProcessing = false
             showThinking = false
+        }
+        // Several complete questions in one turn: answer the one they just asked.
+        var text = text
+        if let latest = AutoTurnDetector.latestQuestionIfMultiple(text) {
+            dlog("AUTO: several questions in one turn — answering the last: '\(latest.prefix(70))'", tag: "AUTO")
+            text = latest
         }
         dlog("AUTO: speaker finished — answering: '\(text.prefix(70))'", tag: "AUTO")
         lastAnsweredQuestion = text
@@ -2660,7 +3025,7 @@ class MainViewModel {
         // The mic gave up on a silent room. Re-arming here would reopen it seconds later
         // and spend the time the stop just saved — and the message on screen says Space.
         guard !stoppedForIdle else {
-            dlog("AUTO: stopped for idle — waiting for Space rather than re-arming", tag: "METER")
+            dlog("AUTO: stopped for idle — waiting for ⌥Space rather than re-arming", tag: "METER")
             return
         }
         guard engine.isRunning else {
@@ -2898,6 +3263,7 @@ class MainViewModel {
         lastSpeechHeardAt = Date()
         heardAnythingThisSession = false
         engine.resetDeafDetection()   // a fresh turn never starts already accused
+        answerHistory.removeAll(); historyIndex = nil; newerAnswerWaiting = false; newerAnswerCount = 0
         listeningNoticeTimer?.invalidate(); listeningNotice = ""   // a new session, not the old one's news
         listeningMeterTimer?.invalidate()
         listeningMeterTimer = Timer.scheduledTimer(withTimeInterval: Self.listeningMeterInterval,
@@ -2998,9 +3364,15 @@ class MainViewModel {
         // had been said yet — which in an automatic mode is the ordinary case of being armed
         // before the call starts — and it told the user the one thing they did not need to
         // know while leaving out the one thing they did.
-        showListeningNotice(heardAnythingThisSession
-            ? "MIC OFF AFTER \(Int(idleListeningTimeout / 60)) MIN QUIET — SPACE TO RESUME"
-            : "MIC OFF — NOTHING HEARD YET — SPACE TO RESUME")
+        var wakesOnAudio = false
+        if #available(macOS 14.2, *) { wakesOnAudio = autoModeEnabled }
+        if wakesOnAudio {
+            showListeningNotice("STANDBY — WAKES WHEN SOMEONE SPEAKS")
+        } else {
+            showListeningNotice(heardAnythingThisSession
+                ? "MIC OFF AFTER \(Int(idleListeningTimeout / 60)) MIN QUIET — ⌥ SPACE TO RESUME"
+                : "MIC OFF — NOTHING HEARD YET — ⌥ SPACE TO RESUME")
+        }
         updateMicUI()
     }
 
@@ -3096,14 +3468,21 @@ class MainViewModel {
             // user speaks, waits, and gets no answer and no error. A green LISTENING pill
             // through that window actively tells them the opposite of what is true, so say
             // CONNECTING until the recogniser is genuinely online.
-            if autoModeEnabled && !engine.isReady {
+            if !engine.isReady {
                 micStatus = "CONNECTING"; micColor = .orange
             } else {
                 micStatus = "LISTENING"; micColor = .green
             }
         }
+        // Auto mode pauses the mic after a quiet stretch and wakes by itself on the next
+        // audio. A red MUTED there reads as broken; it is only waiting.
+        else if isMuted && stoppedForIdle && autoModeEnabled { micStatus = "STANDBY"; micColor = .orange }
         else if isMuted      { micStatus = "MUTED";     micColor = Color(red: 239/255, green: 68/255, blue: 68/255) }
-        else                 { micStatus = isRecording ? "RECORDING" : "READY"
+        // "RECORDING" was shown whenever a session was open, but the Mac never records audio —
+        // isRecording only means a session log is being written. Telling someone in an
+        // interview that they are being recorded when they are not is the one status that must
+        // never be wrong. Windows made the same change (MAC_CATCHUP, 2026-09-17).
+        else                 { micStatus = "READY"
                                micColor = Color(red: 239/255, green: 68/255, blue: 68/255) }
     }
 
@@ -3150,7 +3529,7 @@ class MainViewModel {
         // Same reason as the launch hint: an automatic mode needs no keypress to begin.
         aiAnswerHint = autoModeEnabled
             ? "New session started. " + idleHintForCurrentMode
-            : "New session started. Press SPACE to begin."
+            : "New session started. Press ⌥ SPACE to begin."
         startNewSession()
     }
 
@@ -3197,6 +3576,7 @@ class MainViewModel {
     // Firebase account for the endpoint to authenticate against. Fire-and-forget:
     // never blocks or affects the local log above.
     private func syncTurnToCloud(q: String, a: String) {
+        guard cloudSyncEnabled else { return }   // "Back up session history", as on Windows
         guard session.isLoggedIn, !session.isGuestSession else { return }
         cloudTurns.append(.init(role: "interviewer", text: q))
         cloudTurns.append(.init(role: "candidate", text: a))
@@ -3361,10 +3741,31 @@ class MainViewModel {
     func togglePin() {
         isPinnedOnTop.toggle()
         mainPanel?.level = isPinnedOnTop ? .floating : .normal
+        saveSettings()
         dlog("Pin-on-top \(isPinnedOnTop ? "ON" : "OFF")", tag: "WINDOW")
     }
 
+    func setScreenKeysEverywhere(_ on: Bool) {
+        screenKeysEverywhere = on
+        hotkey?.setScreenKeysEverywhere(on)
+        saveSettings()
+        dlog("Screen keys everywhere: \(on ? "ON" : "OFF — plain F8/F9 go to other apps; ⌃⌥F8/F9 still work")", tag: "HOTKEY")
+    }
+
+    /// ⌃⌥R from any app. Raises whichever window is in use — the compact overlay when that is
+    /// showing, so it does not pull the hidden main window over it (Windows fbca2c6).
+    func bringToFront() {
+        dlog("⌃⌥R — bringing Replysis to the front", tag: "WINDOW")
+        if showCameraOverlay, let overlay = AnswerOverlayWindow.shared {
+            overlay.orderFrontRegardless()
+        } else {
+            mainPanel?.orderFrontRegardless()
+            mainPanel?.makeKey()
+        }
+    }
+
     func signOut() {
+        PresenceTracker.shared.stop()
         // Stop eye-mode overlay so its NSPanel and timers don't outlive the session.
         if showCameraOverlay { exitCamera() }
         // BUG-16 FIX: stop watch mode before clearing the session — otherwise the 8s
@@ -3536,13 +3937,22 @@ class MainViewModel {
             // Default ON: system audio + the user's own voice, so Space captures both out
             // of the box. Users who want to stay fully invisible in a real interview can
             // switch to system-audio-only in Settings.
-            micCaptureEnabled = obj["micCaptureEnabled"] as? Bool ?? true
+            // Default for NEW installs is Interview (no microphone). Anyone who has saved a
+            // choice keeps it — the key is present in their settings file.
+            micCaptureEnabled = obj["micCaptureEnabled"] as? Bool ?? false
+            transcriptLanguage = obj["transcriptLanguage"] as? String ?? "en"
+            cloudSyncEnabled = obj["cloudSyncEnabled"] as? Bool ?? true
+            sarvamApiKey = obj["sarvamApiKey"] as? String ?? ""
             isWatchMode = obj["screenAnswers"] as? Bool ?? true
             listeningMode = ListeningMode.fromStored(obj["listeningMode"] as? String)
                 ?? ((obj["autoModeEnabled"] as? Bool ?? false) ? .auto : .manual)
             // Default ON: hidden from screen sharing/recording out of the box. Settings
             // can turn it off for anyone who wants the window visible in a recording.
             stealthModeEnabled = obj["stealthModeEnabled"] as? Bool ?? true
+            isPinnedOnTop = obj["keepOnTop"] as? Bool ?? true
+            screenKeysEverywhere = obj["screenKeysEverywhere"] as? Bool ?? true
+            mainPanel?.level = isPinnedOnTop ? .floating : .normal
+            hotkey?.setScreenKeysEverywhere(screenKeysEverywhere)
 
             // ONE-TIME migration: the default window opacity changed from 100% to 40%.
             // Existing users already have a saved mainOpacity (100%, the old default) from
@@ -3564,9 +3974,14 @@ class MainViewModel {
         let obj: [String: Any] = ["mainOpacity": mainWindowOpacity,
                                   "overlayOpacity": overlayOpacity, "concise": conciseAnswers,
                                   "micCaptureEnabled": micCaptureEnabled,
+                                  "transcriptLanguage": transcriptLanguage,
+                                  "cloudSyncEnabled": cloudSyncEnabled,
+                                  "sarvamApiKey": sarvamApiKey,
                                   "screenAnswers": isWatchMode,
                                   "listeningMode": listeningMode.rawValue,
                                   "stealthModeEnabled": stealthModeEnabled,
+                                  "keepOnTop": isPinnedOnTop,
+                                  "screenKeysEverywhere": screenKeysEverywhere,
                                   "opacityDefaultV2Applied": true]
         try? JSONSerialization.data(withJSONObject: obj).write(to: path)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
@@ -3581,7 +3996,189 @@ class MainViewModel {
     /// Off = system-audio-only: only the interviewer is transcribed, the mic is NEVER
     /// opened, so there's no orange indicator — fully invisible, for users who want to
     /// stay hidden in a real interview with nothing to reveal if the mic icon is checked.
-    var micCaptureEnabled = true
+    var micCaptureEnabled = false
+
+    /// "Back up session history": mirrors questions and answers to the account, so they
+    /// appear in Past Sessions on the other signed-in devices. On by default, as on
+    /// Windows; off keeps every transcript on this Mac only.
+    var cloudSyncEnabled = true
+
+    func setCloudSyncEnabled(_ enabled: Bool) {
+        guard cloudSyncEnabled != enabled else { return }
+        cloudSyncEnabled = enabled
+        saveSettings()
+        dlog("Cloud session backup \(enabled ? "on" : "off")", tag: "SETTINGS")
+    }
+
+    // ── Interview language ────────────────────────────────────────────────────
+    //
+    // The engine hears ONLY this language (--language), so it has to match the interview:
+    // speech in another language comes back as garbled words in this one. Same list and
+    // codes as Windows, so a transcript is the same on both. Telugu and the other Indian
+    // languages Speechmatics cannot do are routed by the engine to Sarvam AI, which needs
+    // a key in Settings; without one they stay unavailable and the picker says so.
+    static let interviewLanguages: [(name: String, code: String)] = [
+        ("English", "en"), ("Hindi", "hi"), ("Tamil", "ta"), ("Telugu (Sarvam AI)", "te"),
+        ("Bengali", "bn"), ("Marathi", "mr"), ("Urdu", "ur"), ("Spanish", "es"),
+        ("French", "fr"), ("German", "de"), ("Portuguese", "pt"), ("Italian", "it"),
+        ("Mandarin Chinese", "cmn"), ("Japanese", "ja"), ("Korean", "ko"),
+        ("Arabic", "ar"), ("Russian", "ru"),
+    ]
+    /// Codes the engine routes to Sarvam AI. Keep in sync with SARVAM_LANG_MAP in
+    /// speechmatics_engine.py and with Windows _sarvamLangs.
+    static let sarvamLanguages: Set<String> = ["te", "kn", "ml", "gu", "pa", "or", "as"]
+
+    var transcriptLanguage = "en"
+    var sarvamApiKey = ""
+
+    var interviewLanguageName: String {
+        Self.interviewLanguages.first { $0.code == transcriptLanguage }?.name ?? "English"
+    }
+
+    func setInterviewLanguage(_ code: String) {
+        guard transcriptLanguage != code else { return }
+        transcriptLanguage = code
+        saveSettings()
+        dlog("Interview language → \(code)", tag: "SETTINGS")
+        // The language is read when the engine starts, so it has to restart. Never in the
+        // middle of a question: the restart takes about a second and would cut it off.
+        if isListening || isProcessing {
+            languageChangePending = true
+            showListeningNotice("LANGUAGE CHANGES AFTER THIS QUESTION")
+            return
+        }
+        restartEngineForSettingChange()
+    }
+
+    private var languageChangePending = false
+
+    func setSarvamApiKey(_ key: String) {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard sarvamApiKey != trimmed else { return }
+        sarvamApiKey = trimmed
+        saveSettings()
+        dlog("Sarvam API key \(trimmed.isEmpty ? "cleared" : "set")", tag: "SETTINGS")
+        if Self.sarvamLanguages.contains(transcriptLanguage), !isListening, !isProcessing {
+            restartEngineForSettingChange()
+        }
+    }
+
+    /// Restart the engine so a setting it reads at startup takes effect now.
+    private func restartEngineForSettingChange() {
+        guard engine.isRunning else { return }
+        engine.stop()
+        engine.start(smKey: session.speechmaticsKey)
+    }
+
+    // ── Interview / Practice ──────────────────────────────────────────────────
+    //
+    // The same preference the Settings switch writes, so the two can never disagree.
+    // Practice means the microphone is open too. Ported from Windows (2026-09-20).
+    var practiceAudioOn: Bool { micCaptureEnabled }
+    private var audioSourceChangePending = false
+    private var interviewTipShown = false
+    private var practiceTipShown = false
+    private var lastAudioSourceTipCheck = Date.distantPast
+    /// An alert that can carry one action, for the two tips below.
+    var alertTitle = ""
+    var alertBody = ""
+    var alertActionLabel = ""
+    private var alertAction: (() -> Void)?
+
+    func showAlert(title: String, body: String, actionLabel: String = "", action: (() -> Void)? = nil) {
+        dlog("ALERT: \(title) — \(body)", tag: "ALERT")
+        alertTitle = title; alertBody = body
+        alertActionLabel = action == nil ? "" : actionLabel
+        alertAction = action
+    }
+
+    func runAlertAction() {
+        let act = alertAction
+        dismissAlert()
+        act?()
+    }
+
+    func dismissAlert() {
+        alertTitle = ""; alertBody = ""; alertActionLabel = ""; alertAction = nil
+    }
+
+    /// Switches between hearing the meeting only and hearing the meeting plus the
+    /// microphone. The engine is told by restarting it, which takes about a second, so it
+    /// waits while a question is being listened to rather than cutting it off.
+    func selectAudioSource(practice: Bool) {
+        guard micCaptureEnabled != practice else { return }
+        if isListening || isProcessing {
+            micCaptureEnabled = practice          // the toolbar shows the new choice at once
+            saveSettings()
+            audioSourceChangePending = true
+            showListeningNotice(practice ? "PRACTICE STARTS AFTER THIS QUESTION"
+                                         : "INTERVIEW STARTS AFTER THIS QUESTION")
+            dlog("Audio source → \(practice ? "Practice" : "Interview") — waiting for this question to finish", tag: "AUDIO")
+            return
+        }
+        audioSourceChangePending = false
+        setMicCaptureEnabled(practice)
+        dlog(practice ? "Practice: hears the meeting and the microphone"
+                      : "Interview: hears the meeting only", tag: "AUDIO")
+    }
+
+    /// Applies a switch that was asked for mid-question, once it is over.
+    private func applyPendingAudioSourceChange() {
+        guard audioSourceChangePending, !isListening, !isProcessing else { return }
+        audioSourceChangePending = false
+        let wanted = micCaptureEnabled
+        micCaptureEnabled = !wanted          // so setMicCaptureEnabled sees a real change
+        setMicCaptureEnabled(wanted)
+        dlog("Audio source applied now the question is over → \(wanted ? "Practice" : "Interview")", tag: "AUDIO")
+    }
+
+    /// Says something only when the setting is about to cost the user an interview: the
+    /// microphone is open with a meeting app running, or the app has been listening to
+    /// silence for minutes with no meeting anywhere. Each tip at most once per launch.
+    private func checkAudioSourceTip() {
+        let now = Date()
+        guard now.timeIntervalSince(lastAudioSourceTipCheck) >= 20 else { return }
+        lastAudioSourceTipCheck = now
+        applyPendingAudioSourceChange()
+        if languageChangePending, !isListening, !isProcessing {
+            languageChangePending = false
+            restartEngineForSettingChange()
+            dlog("Interview language applied now the question is over", tag: "SETTINGS")
+        }
+        guard session.isLoggedIn, alertTitle.isEmpty else { return }
+
+        let practice = practiceAudioOn
+        let meeting = AudioSourceRules.meetingAppRunning()
+
+        if AudioSourceRules.shouldSuggestInterview(practiceOn: practice, meetingAppRunning: meeting,
+                                                   alreadySuggested: interviewTipShown) {
+            interviewTipShown = true
+            showAlert(title: "In a real interview?",
+                      body: "Replysis can hear your microphone, so your own answers can be taken as new questions. Interview hears the meeting only.",
+                      actionLabel: "Switch to Interview") { [weak self] in
+                self?.selectAudioSource(practice: false)
+            }
+            return
+        }
+
+        let quiet = heardAnythingThisSession ? now.timeIntervalSince(lastSpeechHeardAt) : 0
+        // "Listening" here has to include the standby the quiet itself causes. Measured:
+        // the mic stops after 3 minutes of silence (stopForIdle) at the same moment this
+        // rule's 3 minutes elapse, so a strict isListening meant the tip could never fire.
+        // Standby after a quiet stretch is the same evidence — the app is armed and
+        // nothing is being said to it.
+        let armed = isListening || (stoppedForIdle && autoModeEnabled)
+        if AudioSourceRules.shouldSuggestPractice(interviewOn: !practice, listening: armed,
+                                                  meetingAppRunning: meeting, quietFor: quiet,
+                                                  alreadySuggested: practiceTipShown) {
+            practiceTipShown = true
+            showAlert(title: "Practising on your own?",
+                      body: "Interview hears the meeting only, so nothing you say is picked up. Practice hears your microphone too.",
+                      actionLabel: "Switch to Practice") { [weak self] in
+                self?.selectAudioSource(practice: true)
+            }
+        }
+    }
 
     /// Called from Settings when the user switches audio-capture mode. Applies immediately:
     /// requests the native mic permission if needed, and restarts the engine so the change
@@ -3630,6 +4227,15 @@ class MainViewModel {
         listeningMode = mode
         saveSettings()
         dlog("Listening mode: \(previous.rawValue) -> \(mode.rawValue)", tag: "AUTO")
+        // The one case Auto cannot handle is the candidate's own answer, spoken as a
+        // sentence, heard through an open microphone. In a real call the interviewer comes
+        // through computer sound, so turning the mic off removes it entirely — but people only
+        // do that if they are told. Once per launch, and only with the mic on.
+        if mode == .auto, micCaptureEnabled, !micOffHintShown {
+            micOffHintShown = true
+            showMicOffHint = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.showMicOffHint = false }
+        }
         // Clear what the PREVIOUS mode produced. Leaving the old answer on screen made a
         // mode that had correctly stayed silent look like it had answered wrongly — the
         // user reads a stale reply and blames the new mode for it. Also drops any

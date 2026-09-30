@@ -102,6 +102,8 @@ class SpeechmaticsEngine {
     private var engineCancelled = false
     private var authErrorHandled = false
     private var selectedDeviceId = -1
+    private var capturesMicrophone = false
+    private var inputRoute = AudioInputRouteTracker()
     private var isStarting = false   // prevents concurrent start() calls from checkEngine
     // When SystemAudioCapture crashes (typically permission denied on first run), fall back
     // to mic-only for the rest of the session so we don't loop permission dialogs every 3s.
@@ -252,14 +254,28 @@ class SpeechmaticsEngine {
         // Default OFF (system-audio-only) — a fresh install stays fully invisible until the
         // user explicitly opts in to their own voice being transcribed too.
         let settingsPath = appDataFolder.appendingPathComponent("settings.json")
-        let micCaptureEnabled: Bool = {
+        let savedSettings: [String: Any] = {
             guard let data = try? Data(contentsOf: settingsPath),
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return true }
-            return obj["micCaptureEnabled"] as? Bool ?? true
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+            return obj
         }()
+        // Interview is the default for a new install, here as well as in the view model:
+        // this file is read by the engine launch, and disagreeing defaults would open the
+        // microphone on a machine whose UI says Interview.
+        let micCaptureEnabled = savedSettings["micCaptureEnabled"] as? Bool ?? false
+        // The engine hears ONLY this language, so it has to match the interview. Speech in
+        // another language comes back as garbled words in this one.
+        let language = (savedSettings["transcriptLanguage"] as? String ?? "en")
+            .trimmingCharacters(in: .whitespaces)
         // The saved preference AND the active mode must both permit the mic.
         let micAllowed = micCaptureEnabled && micCaptureAllowed
         let micGranted = micAllowed && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        capturesMicrophone = micGranted
+        if !language.isEmpty, language != "en" {
+            args += ["-language", language]
+            dlog("  Interview language: \(language)", tag: "SM")
+        }
+        inputRoute.reset(to: micGranted ? AudioInputRoute.current() : nil)
         var startedSysTap = false
         if !sysAudioCrashed, #available(macOS 14.2, *) {
             let fifo = appDataFolder.appendingPathComponent("sysaudio.pcm").path
@@ -338,6 +354,14 @@ class SpeechmaticsEngine {
             dlog("SM: Deepgram token passed to the engine — Deepgram first, Speechmatics fallback", tag: "SM")
         } else {
             env.removeValue(forKey: "DG_TOKEN")   // never inherit one from the launching shell
+        }
+        // Sarvam key for Telugu and the other languages Speechmatics cannot do. Passed by
+        // environment, never on the command line, exactly like the Speechmatics key.
+        if let sarvam = savedSettings["sarvamApiKey"] as? String,
+           !sarvam.trimmingCharacters(in: .whitespaces).isEmpty {
+            env["SARVAM_API_KEY"] = sarvam.trimmingCharacters(in: .whitespaces)
+        } else {
+            env.removeValue(forKey: "SARVAM_API_KEY")
         }
         // Point OpenSSL at the CA bundle we SHIP, instead of whatever path happened to be
         // compiled into the Python that froze the engine.
@@ -523,7 +547,11 @@ class SpeechmaticsEngine {
             }
             // CONTRACT:RUNTIME — see ENGINE_CONTRACT.md and verify_engine_contract.py
             if line.contains("STATUS: ONLINE") || line.contains("ENGINE: READY") {
-                Task { @MainActor [weak self] in self?.isReady = true }
+                Task { @MainActor [weak self] in
+                    self?.isReady = true
+                    self?.offlineSince = nil      // live again; the offline clock stops
+                    self?.offlineRestarts = 0
+                }
             }
             // A dropped session is NOT the same event as a crashed process, and handling
             // only one leaves the app believing transcription still works. This is the
@@ -543,7 +571,18 @@ class SpeechmaticsEngine {
             if line.contains("STATUS: OFFLINE") {
                 Task { @MainActor [weak self] in
                     self?.isReady = false
+                    if self?.offlineSince == nil { self?.offlineSince = Date() }
                     dlog("SM: session dropped — transcription is no longer live", tag: "SM")
+                }
+            }
+            // The engine's own recovery is a flat "Retrying in 60s". Measured after the Mac
+            // slept: every endpoint failed DNS the moment the network came back, and the
+            // engine then sat for a minute while the app looked armed and answered nothing.
+            // A minute of that in an interview is the whole interview.
+            if line.contains("All endpoints failed") {
+                Task { @MainActor [weak self] in
+                    self?.isReady = false
+                    if self?.offlineSince == nil { self?.offlineSince = Date() }
                 }
             }
         }
@@ -642,11 +681,31 @@ class SpeechmaticsEngine {
         // recover from a problem retrying cannot fix. Ten minutes still recovers on its own,
         // promptly enough, once billing is restored.
         startRetryTimer(interval: 600)
+        // BUT FIRST, ONE IMMEDIATE TRY. The usual cause of a rejection mid-session is not a
+        // broken account: it is the hour-long token simply running out, and a fresh one fixes
+        // it at once. Waiting the full ten minutes left the candidate deaf for ten minutes of
+        // an interview (Windows measured the same failure, MAC_CATCHUP 2026-09-17). One quick
+        // attempt per ten minutes keeps the loop the comment above guards against impossible;
+        // the ten-minute timer is still there if this one fails, and it stands down by itself
+        // once the engine is running again.
+        if !balanceExhausted, Date().timeIntervalSince(lastQuickKeyRecoveryAt) > 600 {
+            lastQuickKeyRecoveryAt = Date()
+            dlog("SM: key rejected — one immediate re-fetch, since an expired token is the usual cause", tag: "SM")
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                guard let self, !self.isRunning, !self.stoppedByUser else { return }
+                if await UserSession.shared.fetchSpeechmaticsKeyAsync(), !self.isRunning, !self.stoppedByUser {
+                    self.start(smKey: UserSession.shared.speechmaticsKey)
+                }
+            }
+        }
     }
 
     // MARK: - A microphone that stops answering
 
     private var micHangRestarts = 0
+    /// Last time a key rejection got an immediate re-fetch rather than the ten-minute wait.
+    private var lastQuickKeyRecoveryAt = Date.distantPast
     private var lastMicRestartAt = Date.distantPast
     /// At most this many engine restarts for a hung microphone in one session, and never two
     /// inside a minute: a restart that does not help must not become a loop.
@@ -668,10 +727,12 @@ class SpeechmaticsEngine {
     private func handleMicHang() {
         guard !engineCancelled, !stoppedByUser, isRunning else { return }
         let wordsBefore = lastWordsAt
+        let expectedPID = enginePid
         dlog("SM: the engine says its microphone read is hanging — checking whether anything still arrives", tag: "SM")
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 2_500_000_000)
-            guard let self, !self.engineCancelled, !self.stoppedByUser, self.isRunning else { return }
+            guard let self, !self.engineCancelled, !self.stoppedByUser, self.isRunning,
+                  self.enginePid == expectedPID else { return }
             guard self.lastWordsAt <= wordsBefore else {
                 dlog("SM: words are still arriving — the microphone read recovered by itself", tag: "SM")
                 return
@@ -696,8 +757,63 @@ class SpeechmaticsEngine {
         }
     }
 
+    /// When transcription went offline while the process stayed alive, or nil when live.
+    private var offlineSince: Date?
+    private var lastOfflineRestartAt = Date.distantPast
+    private var offlineRestarts = 0
+    /// How long to let the engine's own retry try before restarting it outright.
+    private static let offlineGrace: TimeInterval = 6
+    private static let offlineRestartCooldown: TimeInterval = 20
+    private static let maxOfflineRestarts = 8
+
     private func checkEngine() {
         guard !engineCancelled else { return }
+
+        // TRANSCRIPTION OFFLINE WHILE THE PROCESS IS FINE. The monitor below only notices a
+        // DEAD process, so a live engine with a dropped websocket was invisible to it: the
+        // app kept listening, the header stayed armed, and nothing was answered until the
+        // engine's own 60-second timer came round. Restart it ourselves instead, which
+        // re-resolves DNS and reconnects in about a second. Bounded, so a genuinely offline
+        // machine does not turn into a restart loop.
+        if isRunning, !isReady, let since = offlineSince,
+           Date().timeIntervalSince(since) >= Self.offlineGrace,
+           Date().timeIntervalSince(lastOfflineRestartAt) >= Self.offlineRestartCooldown,
+           offlineRestarts < Self.maxOfflineRestarts {
+            let key = UserSession.shared.speechmaticsKey
+            if !key.isEmpty {
+                offlineRestarts += 1
+                lastOfflineRestartAt = Date()
+                offlineSince = nil
+                // START THE NEW SESSION DEAF TO THE OLD ONE. Measured: after a restart the
+                // reconnected engine emitted words built from audio buffered across the
+                // outage — "One, two. So you . As a matter . He was a poor" — and the app
+                // answered that as a question. Whatever was captured while nobody could
+                // hear it is not a question anyone asked.
+                clearLatestTxt()
+                writeResetFlag()
+                dlog("checkEngine: transcription offline for \(Int(Date().timeIntervalSince(since)))s — restarting the engine instead of waiting for its 60s retry (\(offlineRestarts)/\(Self.maxOfflineRestarts))", tag: "SM")
+                statusText = "CONNECTING"
+                killAndDispose()
+                start(smKey: key)
+                return
+            }
+        }
+        // PortAudio snapshots device indexes at startup. Reopen after a stable OS route
+        // change, including Bluetooth sample-rate changes when a meeting starts.
+        if isRunning, capturesMicrophone, selectedDeviceId < 0,
+           inputRoute.shouldReconnect(to: AudioInputRoute.current()) {
+            let key = UserSession.shared.speechmaticsKey
+            if !key.isEmpty {
+                dlog("Default microphone changed — reconnecting audio automatically", tag: "SM")
+                isReady = false
+                statusText = "CONNECTING"
+                MicPrimer.shared.stop()
+                MicPrimer.shared.start()
+                killAndDispose()
+                start(smKey: key)
+                return
+            }
+        }
         // kill(pid, 0) == 0 → process still alive; non-zero (ESRCH) → it died, restart it.
         if enginePid <= 0 || kill(enginePid, 0) != 0 {
             // Assume sys audio crashed (e.g. Screen Recording permission denied) and fall

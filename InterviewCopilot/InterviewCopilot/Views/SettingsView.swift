@@ -38,17 +38,33 @@ struct SettingsView: View {
                         // does not, which is what the switch says.
                         settingsSection("LISTENING") {
                             VStack(alignment: .leading, spacing: 10) {
-                                Text("Works for both real interviews and practice. It hears the interviewer and you, and ignores you reading an answer aloud.")
+                                // Live tip, as on Windows 1.0.20: amber while the mic is on, green
+                                // once it is off. Follows the switch below as it is flipped.
+                                HStack(alignment: .top, spacing: 8) {
+                                    Image(systemName: vm.micCaptureEnabled ? "exclamationmark.triangle.fill" : "checkmark.seal.fill")
+                                        .foregroundColor(Color(hex: vm.micCaptureEnabled ? "#fbbf24" : "#34d399"))
+                                    Text(vm.micCaptureEnabled
+                                         ? "Real interview: switch the toolbar to Interview, so only the interviewer is heard."
+                                         : "Ready for a real interview. Interview mode — only the interviewer's audio is heard.")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(Color(hex: vm.micCaptureEnabled ? "#fbbf24" : "#34d399"))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color(hex: vm.micCaptureEnabled ? "#2A1F0D" : "#0D2A1F")))
+                                Text("For a live interview in Zoom, Google Meet or Teams, choose Interview in the toolbar. Replysis still hears the interviewer through your computer sound, without mistaking your spoken answer for a new question. Keep your microphone on in the meeting app so the interviewer can hear you.")
                                     .font(.system(size: 11))
                                     .foregroundColor(Color(hex: "#8b9bb0"))
                                     .fixedSize(horizontal: false, vertical: true)
                                 Toggle(isOn: Binding(get: { vm.micCaptureEnabled },
                                                      set: { vm.setMicCaptureEnabled($0) })) {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text("Use my microphone")
+                                        Text("Practice mode: use my microphone")
                                             .font(.system(size: 13, weight: .medium))
                                             .foregroundColor(.white)
-                                        Text("Needed for practice. When off, only your computer's sound is heard.")
+                                        Text("Same switch as Interview / Practice in the toolbar. Off (Interview) hears the meeting only, so your own answers are never taken as questions. On (Practice) also hears you, for practising alone. Replysis follows your Mac’s default input and reconnects when it changes.")
                                             .font(.system(size: 11))
                                             .foregroundColor(Color(hex: "#8b9bb0"))
                                             .fixedSize(horizontal: false, vertical: true)
@@ -58,9 +74,84 @@ struct SettingsView: View {
                             }
                         }
 
+                        // The engine hears ONLY this language, so it has to match the
+                        // interview. Same list and codes as Windows.
+                        settingsSection("INTERVIEW LANGUAGE") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Picker("", selection: Binding(get: { vm.transcriptLanguage },
+                                                              set: { vm.setInterviewLanguage($0) })) {
+                                    ForEach(MainViewModel.interviewLanguages, id: \.code) { lang in
+                                        Text(lang.name).tag(lang.code)
+                                    }
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.menu)
+                                .frame(maxWidth: 260, alignment: .leading)
+                                Text("The interviewer is heard in this language only. Speech in another language comes back as garbled words in this one. Changing it restarts listening, and waits if a question is in progress.")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(Color(hex: "#8b9bb0"))
+                                    .fixedSize(horizontal: false, vertical: true)
+
+                                // Only the languages that need it, and only when one is chosen.
+                                if MainViewModel.sarvamLanguages.contains(vm.transcriptLanguage) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Sarvam AI API key")
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundColor(.white)
+                                        SecureField("Required for this language", text: Binding(
+                                            get: { vm.sarvamApiKey },
+                                            set: { vm.setSarvamApiKey($0) }))
+                                            .textFieldStyle(.roundedBorder)
+                                            .frame(maxWidth: 260)
+                                        Text(vm.sarvamApiKey.isEmpty
+                                             ? "Speechmatics cannot transcribe this language, so Replysis uses Sarvam AI. Without a key, nothing is heard."
+                                             : "Stored on this Mac only, and sent to the engine by environment, never on a command line.")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(Color(hex: vm.sarvamApiKey.isEmpty ? "#fbbf24" : "#8b9bb0"))
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                            }
+                        }
+
+                        settingsSection("PRIVACY") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Toggle(isOn: Binding(get: { vm.cloudSyncEnabled },
+                                                     set: { vm.setCloudSyncEnabled($0) })) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Back up session history")
+                                            .font(.system(size: 13, weight: .medium))
+                                            .foregroundColor(.white)
+                                        Text("Syncs questions, answers and a short part of your resume to your other signed-in devices.")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(Color(hex: "#8b9bb0"))
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                .toggleStyle(.switch)
+                                Text("Settings are saved on this Mac. Replysis never saves the audio it hears.")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(Color(hex: "#8b9bb0"))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+
                         // Screen answers — the standing preference the toolbar used to hold.
                         settingsSection("SCREEN ANSWERS") {
                             VStack(alignment: .leading, spacing: 8) {
+                                Toggle(isOn: Binding(get: { vm.screenKeysEverywhere },
+                                                     set: { vm.setScreenKeysEverywhere($0) })) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Screen keys work in every app")
+                                            .font(.system(size: 13, weight: .medium))
+                                            .foregroundColor(.white)
+                                        Text("F8 and F9 read the screen from any app. Turn off if another app needs them, such as an IDE; ⌃⌥F8 and ⌃⌥F9 always work.")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(Color(hex: "#8b9bb0"))
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                .toggleStyle(.switch)
                                 audioModeRow(
                                     title: "Answer from the screen (Recommended)",
                                     detail: "When a question is about what's on screen — a coding problem, an error, a diagram — read the screen and answer from it. Questions about you are still answered from your resume.",
@@ -95,7 +186,7 @@ struct SettingsView: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 audioModeRow(
                                     title: "Stealth ON (Recommended)",
-                                    detail: "Hidden from screen sharing & recording — the interviewer never sees this window, even while you share your screen.",
+                                    detail: "Requests exclusion from screen capture. Support depends on macOS and the meeting app; verify with a test share before relying on it.",
                                     selected: vm.stealthModeEnabled
                                 ) { vm.setStealthModeEnabled(true) }
                                 audioModeRow(

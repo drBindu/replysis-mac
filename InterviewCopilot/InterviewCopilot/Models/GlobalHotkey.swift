@@ -6,10 +6,19 @@ class GlobalHotkey {
     private var runLoopSource: CFRunLoopSource?
 
     var onSpacePressed: (() -> Void)?
+    /// F7 — drag a box around one part of the screen and read only that (Windows F7).
+    var onRegionAnalysisPressed: (() -> Void)?
+    /// ⌃⌥← / ⌃⌥→ — step back through this session's answers and forward again. Chorded
+    /// rather than plain ⌥← so word-by-word cursor movement still works everywhere else.
+    var onPreviousAnswer: (() -> Void)?
+    var onNextAnswer: (() -> Void)?
     var onF8Pressed:    (() -> Void)?
     var onF9Pressed:    (() -> Void)?
     var onF12Pressed:   (() -> Void)?
     var onKillPressed:  (() -> Void)?
+    /// ⌃⌥R from any app: bring the window back. Stealth keeps it out of the Dock and ⌘Tab,
+    /// so once it was covered or hidden there was no way back to it (Windows: Ctrl+Alt+R).
+    var onBringToFront: (() -> Void)?
 
     // The app mirrors two pieces of state here so the CGEvent tap thread can decide
     // whether to CONSUME a key WITHOUT touching @MainActor state (which would be a data
@@ -17,6 +26,35 @@ class GlobalHotkey {
     // unnecessary. Updated on the main thread via updateGate(); read on the tap thread.
     nonisolated(unsafe) private var gateLoggedIn = false
     nonisolated(unsafe) private var gateEditing  = false
+    /// Settings, "Screen keys work in every app". Off hands plain F8/F9 back to other apps —
+    /// an IDE uses them for debugging — while ⌃⌥F8/F9 keep working. Default on.
+    nonisolated(unsafe) private var gateScreenKeysEverywhere = true
+
+    func setScreenKeysEverywhere(_ on: Bool) { gateScreenKeysEverywhere = on }
+
+    private static let chordModifiers: CGEventFlags = [.maskAlternate, .maskCommand, .maskControl, .maskShift]
+
+    /// Exactly Control and Option, nothing else.
+    static func isControlOption(_ flags: CGEventFlags) -> Bool {
+        flags.intersection(chordModifiers) == [.maskControl, .maskAlternate]
+    }
+
+    /// Should F8/F9 read the screen? Plain only when screen keys work everywhere; ⌃⌥ always;
+    /// any other modifier is somebody else's shortcut and passes through.
+    static func isScreenKey(flags: CGEventFlags, everywhere: Bool) -> Bool {
+        let held = flags.intersection(chordModifiers)
+        if held.isEmpty { return everywhere }
+        return isControlOption(flags)
+    }
+
+    /// F12 opened the debug window from EVERY app — browser DevTools and an IDE's
+    /// go-to-definition both brought it up. Now ⌃⌥F12 only, as on Windows (Ctrl+Alt+F12).
+    static func isDebugShortcut(flags: CGEventFlags) -> Bool { isControlOption(flags) }
+
+    /// ⌃⌥R. Never swallowed: the front app still receives it.
+    static func isBringToFront(keyCode: Int64, flags: CGEventFlags) -> Bool {
+        keyCode == 15 && isControlOption(flags)
+    }
 
     /// Called on the main thread whenever sign-in state or text-field focus changes.
     func updateGate(loggedIn: Bool, editing: Bool) {
@@ -31,6 +69,12 @@ class GlobalHotkey {
         }
     }
 
+    /// Option-Space is deliberate; plain Space and Cmd-Space must reach the foreground app.
+    static func isListeningShortcut(keyCode: Int64, flags: CGEventFlags) -> Bool {
+        let modifiers: CGEventFlags = [.maskAlternate, .maskCommand, .maskControl, .maskShift]
+        return keyCode == 49 && flags.intersection(modifiers) == .maskAlternate
+    }
+
     private var lastSpaceTime: Date = .distantPast
     private let spaceDebounceSecs: Double = 0.4
 
@@ -39,6 +83,9 @@ class GlobalHotkey {
     // macOS virtual key codes (from Carbon/Events.h)
     // F1=122 F2=120 F3=99 F4=118 F5=96 F6=97 F7=98 F8=100 F9=101 F10=109 F11=103 F12=111
     private let kVK_Space:  Int64 = 0x31
+    private let kVK_Left:   Int64 = 123
+    private let kVK_Right:  Int64 = 124
+    private let kVK_F7:     Int64 = 98
     private let kVK_F8:     Int64 = 100
     private let kVK_F9:     Int64 = 101
     private let kVK_F11:    Int64 = 103
@@ -140,13 +187,15 @@ class GlobalHotkey {
 
         switch keyCode {
         case kVK_Space:
+            guard Self.isListeningShortcut(keyCode: keyCode, flags: flags) else { return false }
+            if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { return true }
             // Signed out, or typing in our Ask box / a sign-in field → let Space behave
             // normally (type a space, scroll the front app). Don't toggle, don't consume.
             if !gateLoggedIn || gateEditing {
                 // Diagnostic: this is why a background Space press can appear to "do
                 // nothing" — the global tap DID see it but passed it through. If this logs
                 // while the user expects a toggle, the gate mirror is the culprit.
-                Task { @MainActor in dlog("GLOBAL Space passed through (gateLoggedIn=\(self.gateLoggedIn) gateEditing=\(self.gateEditing))", tag: "HOTKEY") }
+                Task { @MainActor in dlog("GLOBAL ⌥Space passed through (gateLoggedIn=\(self.gateLoggedIn) gateEditing=\(self.gateEditing))", tag: "HOTKEY") }
                 return false
             }
             let now = Date()
@@ -156,17 +205,31 @@ class GlobalHotkey {
             DispatchQueue.main.async { [weak self] in self?.onSpacePressed?() }
             return true   // consume — Space belongs to Copilot
 
-        case kVK_F8:
+        case kVK_Left, kVK_Right:
+            guard Self.isControlOption(flags) else { return false }
             guard gateLoggedIn else { return false }
-            DispatchQueue.main.async { [weak self] in self?.onF8Pressed?() }
+            let back = keyCode == kVK_Left
+            DispatchQueue.main.async { [weak self] in
+                back ? self?.onPreviousAnswer?() : self?.onNextAnswer?()
+            }
             return true
 
-        case kVK_F9:
+        case kVK_F7:
+            guard Self.isScreenKey(flags: flags, everywhere: gateScreenKeysEverywhere) else { return false }
             guard gateLoggedIn else { return false }
-            DispatchQueue.main.async { [weak self] in self?.onF9Pressed?() }
+            DispatchQueue.main.async { [weak self] in self?.onRegionAnalysisPressed?() }
+            return true
+
+        case kVK_F8, kVK_F9:
+            guard Self.isScreenKey(flags: flags, everywhere: gateScreenKeysEverywhere) else { return false }
+            if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { return gateLoggedIn }
+            guard gateLoggedIn else { return false }
+            let whole = keyCode == kVK_F9
+            DispatchQueue.main.async { [weak self] in whole ? self?.onF9Pressed?() : self?.onF8Pressed?() }
             return true
 
         case kVK_F12:
+            guard Self.isDebugShortcut(flags: flags) else { return false }
             DispatchQueue.main.async { [weak self] in
                 NotificationCenter.default.post(name: .showDebugLog, object: nil)
                 self?.onF12Pressed?()
@@ -174,6 +237,9 @@ class GlobalHotkey {
             return false   // debug toggle — harmless to let through
 
         default:
+            if Self.isBringToFront(keyCode: keyCode, flags: flags) {
+                DispatchQueue.main.async { [weak self] in self?.onBringToFront?() }
+            }
             return false
         }
     }

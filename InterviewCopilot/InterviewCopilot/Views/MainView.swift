@@ -2,7 +2,15 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+/// Measured height of the interviewer transcript, so the box can grow to fit it.
+private struct MainTranscriptHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 struct MainView: View {
+    /// Height the transcript actually needs; the box grows to it, up to a cap, then scrolls.
+    @State private var transcriptContentHeight: CGFloat = 0
     @Environment(MainViewModel.self) var vm
     @State private var resumeCollapsed = false
     @State private var showSettings    = false
@@ -54,6 +62,12 @@ struct MainView: View {
                     }
                     .clipShape(UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
                 Divider().background(Color.white.opacity(0.08))
+                // TRANSIENT MESSAGES GET THEIR OWN LINE. They used to sit inside the header
+                // row: when one appeared there was no width left, no header tier fitted, and
+                // SwiftUI drew "Read screen" over "Compact" — a broken toolbar for as long as
+                // the message lasted, tidying itself when the message timed out. A separate
+                // row cannot squeeze the controls, and the message is easier to read.
+                transientMessageRow
                 bodyArea
             }
         }
@@ -164,6 +178,38 @@ struct MainView: View {
         }
     }
 
+    /// The mic notice and the Interview / Practice tips, on their own line under the header.
+    @ViewBuilder
+    var transientMessageRow: some View {
+        if !vm.alertTitle.isEmpty || !vm.listeningNotice.isEmpty {
+            HStack(spacing: 10) {
+                if !vm.alertTitle.isEmpty {
+                    audioSourceAlert
+                }
+                if !vm.listeningNotice.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "mic.slash.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(Color(hex: "#f59e0b"))
+                        Text(vm.listeningNotice)
+                            .font(.system(size: 10, weight: .bold)).tracking(0.4)
+                            .foregroundColor(Color(hex: "#fcd34d"))
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                            .frame(maxWidth: 320, alignment: .leading)
+                    }
+                    .padding(.horizontal, 11).padding(.vertical, 6)
+                    .background(Capsule().fill(Color(hex: "#2A1F0D")))
+                    .overlay(Capsule().stroke(Color(hex: "#7c5e1e"), lineWidth: 1))
+                    .help("Press ⌥Space to start listening again")
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 6)
+            .transition(.opacity)
+        }
+    }
+
     // ── Brand (left) ───────────────────────────────────────────────
     func brandView(_ tier: HeaderTier) -> some View {
         HStack(spacing: 9) {
@@ -249,7 +295,7 @@ struct MainView: View {
             )
         }
         .buttonStyle(.plain)
-        .help(vm.micNeedsRetry ? "Tap to retry audio capture" : "Press SPACE to toggle mic")
+        .help(vm.micNeedsRetry ? "Tap to retry audio capture" : "Press ⌥ SPACE to toggle mic")
     }
 
     var micHintText: String {
@@ -259,7 +305,7 @@ struct MainView: View {
         if vm.micStatus == "CONNECTING" { return "Connecting — nothing is being heard yet" }
         switch vm.listeningMode {
         case .manual:
-            return vm.isListening ? "Press SPACE again to get answer" : "Press SPACE to listen"
+            return vm.isListening ? "Press ⌥ SPACE again to get answer" : "Press ⌥ SPACE to listen"
         case .auto:
             return vm.isListening ? "Listening, answers on its own" : "Auto, answers when the question ends"
         }
@@ -297,32 +343,6 @@ struct MainView: View {
             toolSegmentGroup
 
             headerSeparator
-
-            // Passing states about the microphone live here, next to the other passing
-            // states — never in the answer panel, which is somebody's answer and not ours
-            // to overwrite with news about hardware.
-            if !vm.listeningNotice.isEmpty {
-                HStack(spacing: 6) {
-                    Image(systemName: "mic.slash.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(Color(hex: "#f59e0b"))
-                    Text(vm.listeningNotice)
-                        .font(.system(size: 10, weight: .bold)).tracking(0.4)
-                        .foregroundColor(Color(hex: "#fcd34d"))
-                        // Capped, not fixed. This pill only appears when something is wrong,
-                        // and with fixedSize its text set the header's minimum width — so a
-                        // longer message made the whole WINDOW wider. "Another session is
-                        // already running" grew it by ~230pt, that size was autosaved, and
-                        // the next launch restored it and grew again: 864, 1097, 1323. An
-                        // error message should not be able to resize the app.
-                        .lineLimit(1).minimumScaleFactor(0.8)
-                        .frame(maxWidth: 210, alignment: .leading)
-                }
-                .padding(.horizontal, 11).padding(.vertical, 8)
-                .background(Capsule().fill(Color(hex: "#2A1F0D")))
-                .overlay(Capsule().stroke(Color(hex: "#7c5e1e"), lineWidth: 1))
-                .help("Press Space to start listening again")
-            }
 
             // Status cluster: session time and credits read as one unit, because they are
             // both "how the session is going" rather than controls.
@@ -409,14 +429,33 @@ struct MainView: View {
     // WHEN the app answers, never which audio it hears; that stopped being a choice when the
     // modes merged. Two visible segments rather than a menu: a dropdown hides the state until
     // it is opened, and this is state a candidate has to read at a glance mid-interview.
-    var listeningModeSwitch: some View {
+    // The "Real interview? Mic off in Settings" capsule lived here. It pointed at a
+    // Settings switch that is now a segment in this same toolbar, and the two tips that
+    // matter are alerts with a button that performs the switch (see interviewTipAlert).
+    var listeningModeSwitch: some View { listeningModeSegments }
+
+    // Group 1: WHEN the app answers. Group 2, past the hairline: WHAT it hears.
+    // The audio choice was a checkbox in Settings called "microphone", and people left it
+    // on in real interviews, so the app heard the candidate's own answers and took them as
+    // new questions. Named for the situation, beside the mode it belongs with, and read
+    // before the call starts. Windows 9294be2.
+    var listeningModeSegments: some View {
         HStack(spacing: 0) {
             modeSegment(.auto, label: "AUTO",
                         help: "Auto. Answers as soon as the question ends.")
             Rectangle().fill(Color.white.opacity(0.10)).frame(width: 1, height: 18)
             modeSegment(.manual, label: "MANUAL",
-                        help: "Manual. Press Space to listen, and again to answer. Most accurate, because you decide when the question ends. In Auto the end is inferred from a pause, so an interviewer who stops mid-sentence to think can be answered half-way.")
+                        help: "Manual. Press ⌥Space to listen, and again to answer. Most accurate, because you decide when the question ends. In Auto the end is inferred from a pause, so an interviewer who stops mid-sentence to think can be answered half-way.")
+
+            Rectangle().fill(Color.white.opacity(0.18))
+                .frame(width: 1, height: 18).padding(.horizontal, 6)
+
+            audioSegment(practice: false, label: "Interview", icon: "video.fill",
+                         help: AudioSourceRules.interviewHelp)
+            audioSegment(practice: true, label: "Practice", icon: "mic.fill",
+                         help: AudioSourceRules.practiceHelp)
         }
+        .help(AudioSourceRules.hearingLine(practiceOn: vm.practiceAudioOn))
         .background(Capsule().fill(Color(hex: "#161b22")))
         .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
         .clipShape(Capsule())
@@ -424,7 +463,7 @@ struct MainView: View {
 
     func modeSegment(_ mode: ListeningMode, label: String, help: String) -> some View {
         let selected = vm.listeningMode == mode
-        let accent = mode == .auto ? Color(hex: "#34E08A") : Color(hex: "#38bdf8")
+        let accent = GlassMaterial.text
         return Button(action: { vm.setListeningMode(mode) }) {
             HStack(spacing: 6) {
                 Circle().fill(selected ? accent : Color.clear).frame(width: 6, height: 6)
@@ -434,7 +473,68 @@ struct MainView: View {
                     .foregroundColor(selected ? .white : Color(hex: "#64748b"))
             }
             .padding(.horizontal, 11).padding(.vertical, 8)
-            .background(selected ? accent.opacity(0.16) : Color.clear)
+            .background(selected ? GlassMaterial.fill(GlassMaterial.selectedSegment, windowOpacity: vm.mainWindowOpacity) : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    /// An in-app alert that can carry one action, for the Interview / Practice tips.
+    /// One click does the thing it suggests, so nobody has to find a setting mid-call.
+    var audioSourceAlert: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "info.circle.fill")
+                .font(.system(size: 12))
+                .foregroundColor(Color(hex: "#fbbf24"))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(vm.alertTitle)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white)
+                Text(vm.alertBody)
+                    .font(.system(size: 10.5))
+                    .foregroundColor(Color(hex: "#c3ccd8"))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: 320, alignment: .leading)
+            if !vm.alertActionLabel.isEmpty {
+                Button(action: { vm.runAlertAction() }) {
+                    Text(vm.alertActionLabel)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .lineLimit(1).fixedSize()
+                }
+                .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
+                                              minHeight: 26, horizontalPadding: 10, verticalPadding: 3))
+            }
+            Button(action: { vm.dismissAlert() }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(Color(hex: "#8b9bb0"))
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss")
+        }
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color(hex: "#161b22").opacity(0.96)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.12), lineWidth: 1))
+        .transition(.opacity)
+    }
+
+    func audioSegment(practice: Bool, label: String, icon: String, help: String) -> some View {
+        let selected = vm.practiceAudioOn == practice
+        return Button(action: { vm.selectAudioSource(practice: practice) }) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 9, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+            }
+            .foregroundColor(selected ? GlassMaterial.text : Color(hex: "#92929F"))
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 4).fill(
+                selected ? GlassMaterial.fill(GlassMaterial.selectedSegment, windowOpacity: vm.mainWindowOpacity)
+                         : Color.clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -443,62 +543,85 @@ struct MainView: View {
 
     // ── WATCH SCREEN | COMPACT — one grouped pill, as on Windows ──
     var watchAndCompactGroup: some View {
-        HStack(spacing: 0) {
-            // AN ACTION, NOT A SWITCH. Pressing it reads the screen there and then.
-            //
-            // The label never changes when pressed: a control whose text changes is read as
-            // a switch, and this one is not. Only the colour says whether screen answers are
-            // armed, and that is a Settings preference now — it used to be this button,
-            // which meant the feature most likely to matter in a coding round was the one a
-            // candidate had to remember to turn on with an interviewer already talking.
+        HStack(spacing: 6) {
+            // AN ACTION, NOT A SWITCH. Pressing it reads the screen there and then; the label
+            // never changes, because a control whose text changes is read as a switch.
+            // Whether screen answers are armed is a Settings preference, said in the tooltip.
+            // Styled to the Windows 1.0.21 glass spec: neutral silver, fills that follow the
+            // opacity slider, text that never fades.
             Button(action: { vm.runScreenAnalysis(wholeScreen: false) }) {
-                HStack(spacing: 7) {
-                    if vm.isScreenAnalyzing {
-                        // Without this, a running capture would have no visible indicator.
-                        ProgressView().scaleEffect(0.45).frame(width: 12, height: 12)
-                    } else {
-                        Image(systemName: "display")
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    Text("READ SCREEN")
-                        .font(.system(size: 10, weight: .bold)).tracking(0.7)
-                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
-                    Text("F8")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(Color(hex: "#64748b"))
-                        .padding(.horizontal, 4).padding(.vertical, 1)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.06)))
-                }
-                .foregroundColor(vm.isWatchMode ? Color(hex: "#fbbf24") : Color(hex: "#cbd5e1"))
-                .padding(.horizontal, 11).padding(.vertical, 8)
-                .background(vm.isWatchMode ? Color(hex: "#241a06") : Color.clear)
+                ReadScreenButtonLabel(busy: vm.isScreenAnalyzing)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
+                                          minHeight: 28, horizontalPadding: 9, verticalPadding: 3))
             .disabled(vm.isScreenAnalyzing)
             .help(vm.isWatchMode
                   ? "Read the screen now (F8). Screen answers are ARMED — questions about the screen are answered from it automatically. Change that in Settings."
                   : "Read the screen now (F8). Automatic screen answers are off — turn them on in Settings.")
 
-            Rectangle().fill(Color.white.opacity(0.10)).frame(width: 1, height: 20)
-
             Button(action: { vm.toggleCamera() }) {
-                HStack(spacing: 7) {
+                HStack(spacing: 6) {
                     Image(systemName: vm.showCameraOverlay ? "eye.fill" : "eye")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("COMPACT")
-                        .font(.system(size: 10, weight: .bold)).tracking(0.7)
-                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Compact")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .lineLimit(1).fixedSize()
                 }
-                .foregroundColor(vm.showCameraOverlay ? Color(hex: "#38bdf8") : Color(hex: "#cbd5e1"))
-                .padding(.horizontal, 11).padding(.vertical, 8)
-                .background(vm.showCameraOverlay ? Color(hex: "#0c2540") : Color.clear)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
+                                          minHeight: 28, horizontalPadding: 9, verticalPadding: 3))
             .help("Compact overlay — a small bar instead of the full window")
         }
-        .background(Capsule().fill(Color.white.opacity(0.04)))
-        .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 1))
-        .clipShape(Capsule())
+    }
+
+    /// ◀ ▶ over this session's answers, with where you are and a way back to live.
+    @ViewBuilder
+    var answerHistoryControls: some View {
+        if !vm.answerHistory.isEmpty {
+            HStack(spacing: 4) {
+                Button(action: { vm.showPreviousAnswer() }) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 10, weight: .bold))
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .disabled(!vm.canGoBack)
+                .foregroundColor(vm.canGoBack ? Color(hex: "#cbd5e1") : Color(hex: "#475569"))
+                .help("Previous answer (⌃⌥←)")
+
+                if vm.isShowingHistory {
+                    Text(vm.historyPosition)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(Color(hex: "#fbbf24"))
+                        .fixedSize()
+                }
+
+                Button(action: { vm.showNextAnswer() }) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .bold))
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .disabled(!vm.canGoForward)
+                .foregroundColor(vm.canGoForward ? Color(hex: "#cbd5e1") : Color(hex: "#475569"))
+                .help("Next answer (⌃⌥→)")
+
+                if vm.isShowingHistory {
+                    Button(action: { vm.returnToLive() }) {
+                        Text(vm.newerAnswerWaiting ? vm.newerAnswerBadge : "Back to live")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(vm.newerAnswerWaiting ? Color(hex: "#34d399") : Color(hex: "#cbd5e1"))
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Capsule().fill(Color.white.opacity(0.06)))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Return to the newest answer (⌃⌥→)")
+                }
+            }
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(Capsule().fill(Color.white.opacity(0.04)))
+            .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
+        }
     }
 
     // ── Profile button + dropdown popover ──────────────────────────
@@ -1188,17 +1311,25 @@ struct MainView: View {
                               ? "Concise — short, spoken-length answers. Tap for detailed."
                               : "Detailed — full structured answers. Tap for concise.")
 
+                        // Step back through this session's answers. Instant, local, and it
+                        // never calls the model: the answer a stray voice replaced is one
+                        // press away instead of gone.
+                        answerHistoryControls
+
                         ghostBtn("📋 Copy") { copyAnswer() }
                         ghostBtn("✕ Clear") { vm.clearAnswer() }
                         Button(action: { vm.newSession() }) {
-                            Text("＋ New Session")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 10).padding(.vertical, 5)
-                                .background(Color(hex: "#1a6b3a"))
-                                .cornerRadius(10)
+                            HStack(spacing: 6) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text("New session")
+                                    .font(.system(size: 11.5, weight: .semibold))
+                                    .lineLimit(1).fixedSize()
+                            }
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
+                                                      minHeight: 30, minWidth: 112,
+                                                      horizontalPadding: 14, verticalPadding: 4))
                     }
                 }
                 .padding(.bottom, 10)
@@ -1271,7 +1402,7 @@ struct MainView: View {
                         if vm.listeningMode.isAutomatic {
                             hotKeyBadge("AUTO  answers on its own", color: "#34E08A", bg: "#0D2E0D")
                         } else {
-                            hotKeyBadge("SPACE  listen / answer", color: "#38BDF8", bg: "#0D1B2E")
+                            hotKeyBadge("⌥ SPACE  listen / answer", color: "#38BDF8", bg: "#0D1B2E")
                         }
                     }
                 }
@@ -1297,10 +1428,19 @@ struct MainView: View {
                                 .foregroundColor(.white)
                                 .shadow(color: .black.opacity(0.6), radius: 3, x: 0, y: 1)
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .background(GeometryReader { g in
+                                    Color.clear.preference(key: MainTranscriptHeightKey.self, value: g.size.height)
+                                })
                                 .id("transcriptBottom")
                         }
                     }
-                    .frame(height: 64)
+                    // GROWS WITH THE QUESTION, then scrolls. It was a fixed 64pt — about three
+                    // lines — so a long interviewer turn was read through a letterbox while the
+                    // window had room to show it. Capped at 152pt (about eight lines, the cap
+                    // Windows uses on its compact overlay) so the answer below keeps its space.
+                    .frame(height: vm.transcript.isEmpty ? 64 : min(max(transcriptContentHeight, 64), 152))
+                    .onPreferenceChange(MainTranscriptHeightKey.self) { transcriptContentHeight = $0 }
                     .onChange(of: vm.transcript) {
                         withAnimation { proxy.scrollTo("transcriptBottom", anchor: .bottom) }
                     }
@@ -1703,3 +1843,111 @@ struct MenuRowButtonStyle: ButtonStyle {
 
 
 
+
+// ══════════════════════════════════════════════════════════════════════════
+// Glass buttons — the Windows 1.0.21 spec (App.xaml + Glass.ApplyButtonMaterials).
+//
+// Fills are rgb(235,242,255) at alpha = value × strength, where strength follows the
+// window-opacity slider: strength = 0.35 + 0.65 × backdrop, backdrop =
+// clamp((opacity − 0.50) / 0.50, 0.06, 1). Only the FILLS follow the slider; the text
+// stays #F4F7FC at full strength so it never fades with the window. Neutral silver,
+// no green accents.
+// ══════════════════════════════════════════════════════════════════════════
+enum GlassMaterial {
+    static let text = Color(red: 0xF4 / 255, green: 0xF7 / 255, blue: 0xFC / 255)
+    static let disabledText = Color(red: 0x7C / 255, green: 0x88 / 255, blue: 0x99 / 255)
+
+    static func strength(windowOpacity: Double) -> Double {
+        let backdrop = min(max((windowOpacity - 0.50) / 0.50, 0.06), 1.0)
+        return 0.35 + 0.65 * backdrop
+    }
+
+    static func fill(_ value: Double, windowOpacity: Double) -> Color {
+        Color(red: 235 / 255, green: 242 / 255, blue: 1.0)
+            .opacity(value * strength(windowOpacity: windowOpacity))
+    }
+
+    // The Windows resource values.
+    static let surface = 0.20          // ScreenActionSurface / ActionSilverSurface
+    static let stroke = 0.38           // ScreenActionStroke
+    static let hoverSurface = 0.30     // ScreenActionHoverSurface
+    static let hoverStroke = 0.50      // GlassButtonHoverStroke
+    static let pressedSurface = 0.07   // GlassButtonPressedSurface
+    static let selectedSegment = 0.20  // GlassButtonSelectedSurface (AUTO | MANUAL)
+}
+
+struct GlassButtonStyle: ButtonStyle {
+    var windowOpacity: Double
+    var minHeight: CGFloat
+    var minWidth: CGFloat = 0
+    var horizontalPadding: CGFloat
+    var verticalPadding: CGFloat
+
+    func makeBody(configuration: Configuration) -> some View {
+        GlassButtonBody(configuration: configuration, style: self)
+    }
+
+    private struct GlassButtonBody: View {
+        let configuration: ButtonStyle.Configuration
+        let style: GlassButtonStyle
+        @State private var hovering = false
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            let surface: Double = !isEnabled ? 0.05
+                : configuration.isPressed ? GlassMaterial.pressedSurface
+                : hovering ? GlassMaterial.hoverSurface : GlassMaterial.surface
+            let stroke: Double = hovering && isEnabled ? GlassMaterial.hoverStroke : GlassMaterial.stroke
+            configuration.label
+                .foregroundColor(isEnabled ? GlassMaterial.text : GlassMaterial.disabledText)
+                .padding(.horizontal, style.horizontalPadding)
+                .padding(.vertical, style.verticalPadding)
+                .frame(minWidth: style.minWidth, minHeight: style.minHeight)
+                .background(RoundedRectangle(cornerRadius: 6)
+                    .fill(GlassMaterial.fill(surface, windowOpacity: style.windowOpacity)))
+                .overlay(RoundedRectangle(cornerRadius: 6)
+                    .stroke(GlassMaterial.fill(stroke, windowOpacity: style.windowOpacity), lineWidth: 1))
+                .contentShape(RoundedRectangle(cornerRadius: 6))
+                .onHover { hovering = $0 }
+        }
+    }
+}
+
+/// The Windows "scan frame": four corner brackets and a line across the middle.
+struct ScanFrameIcon: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let arm = rect.width * 0.30
+        let (minX, minY, maxX, maxY) = (rect.minX, rect.minY, rect.maxX, rect.maxY)
+        p.move(to: CGPoint(x: minX, y: minY + arm)); p.addLine(to: CGPoint(x: minX, y: minY)); p.addLine(to: CGPoint(x: minX + arm, y: minY))
+        p.move(to: CGPoint(x: maxX - arm, y: minY)); p.addLine(to: CGPoint(x: maxX, y: minY)); p.addLine(to: CGPoint(x: maxX, y: minY + arm))
+        p.move(to: CGPoint(x: maxX, y: maxY - arm)); p.addLine(to: CGPoint(x: maxX, y: maxY)); p.addLine(to: CGPoint(x: maxX - arm, y: maxY))
+        p.move(to: CGPoint(x: minX + arm, y: maxY)); p.addLine(to: CGPoint(x: minX, y: maxY)); p.addLine(to: CGPoint(x: minX, y: maxY - arm))
+        p.move(to: CGPoint(x: minX + rect.width * 0.2, y: rect.midY)); p.addLine(to: CGPoint(x: maxX - rect.width * 0.2, y: rect.midY))
+        return p
+    }
+}
+
+/// "Read screen", as specified for both windows: 14pt scan frame, label, F8 at 55%.
+struct ReadScreenButtonLabel: View {
+    var busy: Bool
+    var body: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                if busy {
+                    ProgressView().scaleEffect(0.45).frame(width: 14, height: 14)
+                } else {
+                    ScanFrameIcon()
+                        .stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                        .frame(width: 14, height: 14)
+                }
+                Text("Read screen")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .lineLimit(1).fixedSize()
+            }
+            Text("F8")
+                .font(.system(size: 9, weight: .semibold))
+                .opacity(0.55)
+        }
+    }
+}

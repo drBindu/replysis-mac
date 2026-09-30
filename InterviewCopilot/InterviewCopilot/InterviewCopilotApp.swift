@@ -166,7 +166,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // width and 82% of the height: 64% of the whole screen, for a tool whose job is
         // to sit beside a video call rather than bury it. Measured, after the owner said
         // the window was too large.
-        let w = min(880, round(screen.width  * 0.60))
+        // WIDE ENOUGH FOR THE HEADER, which Windows learned the hard way: its controls
+        // needed ~1,180px inside a 980px window and "Read screen" was drawn over
+        // "Practice" (MAC_CATCHUP, 2026-09-20). Measured on this toolbar: AUTO|MANUAL 152,
+        // Interview|Practice 167, Read screen 123, Compact 89, plus the pin, the separator,
+        // the status pill, the timer and the account — about 1,100pt in all. A window that
+        // fits only on a big display is the same bug, so the window opens to fit the row.
+        let w = min(1200, round(screen.width  * 0.88))
         let h = min(520, round(screen.height * 0.58))
         let origin = NSPoint(x: screen.midX - w / 2, y: screen.midY - h / 2)
 
@@ -218,7 +224,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 820x560 was a floor no user could get under, so "make the window smaller" had a
         // hard limit well above what was being asked for. Lowered so the default can shrink
         // and so someone on a small display can shrink it further still.
-        panel.contentMinSize = CGSize(width: 660, height: 460)
+        panel.contentMinSize = CGSize(width: 1120, height: 460)
         panel.contentMaxSize = CGSize(width: screen.width, height: screen.height)
 
         // Plain NSHostingView — DO NOT override hitTest, it breaks SwiftUI event routing.
@@ -253,6 +259,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         self.panel = panel
         vm.mainPanel = panel   // give ViewModel a direct reference (needed with .accessory policy)
+        panel.level = vm.isPinnedOnTop ? .floating : .normal   // pinned by default, remembered
     }
 
     // Keep the app alive when sheets/popovers close (the borderless panel isn't
@@ -270,7 +277,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // so without this it orphans, keeps holding the mic, and keeps streaming audio to
     // Speechmatics (burning API quota) until the next launch. Runs synchronously here,
     // before the app exits, so the SIGTERM is actually delivered.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // ASK BEFORE ENDING AN INTERVIEW. ✕ was one line calling terminate: a mis-click
+        // mid-interview ended the session, with nothing on screen and nothing in the log to
+        // explain it. Windows had the identical bug and fixed it the same way (5ad20ba).
+        // An idle window still closes instantly, and the kill chord is never prompted.
+        let busy = MainActor.assumeIsolated { vm.isListening || vm.isProcessing || vm.isScreenAnalyzing }
+        if busy, !MainViewModel.quitWithoutAsking {
+            let alert = NSAlert()
+            alert.messageText = "Quit Replysis?"
+            alert.informativeText = "An interview is still running. Quitting stops listening and closes the answers."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Keep running")
+            alert.addButton(withTitle: "Quit")
+            // AN ACCESSORY APP DOES NOT GET FOCUS FOR FREE. Without this the alert can come
+            // up behind the meeting window, so the app looks frozen and the keystroke that
+            // would answer it goes somewhere else entirely — measured here, the dialog was
+            // unreachable and the quit never resolved. Raise it deliberately, above
+            // full-screen windows, and make it key.
+            NSApp.activate(ignoringOtherApps: true)
+            alert.window.level = .modalPanel
+            alert.window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            alert.window.makeKeyAndOrderFront(nil)
+            let quit = alert.runModal() == .alertSecondButtonReturn
+            dlog("Quit requested while busy — \(quit ? "confirmed by the user" : "cancelled, the app keeps running")", tag: "LIFECYCLE")
+            if !quit { return .terminateCancel }
+            return .terminateNow
+        }
+
+        // WHO ASKED. The app was found closed twice during testing with nothing in the log
+        // to say why, which from the outside is indistinguishable from "it stopped
+        // answering". Recording the moment and the cause turns that into something
+        // diagnosable: a quit from the menu or ⌘Q, a kill chord, a logout, or macOS.
+        dlog("Quit requested — the app is terminating (frontmost=\(NSApp.isActive))", tag: "LIFECYCLE")
+        return .terminateNow
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        dlog("Terminating now", tag: "LIFECYCLE")
         MainActor.assumeIsolated {
             // The sitting ends here, so the banked listening remainder is billed here —
             // this is the only place it ever is. Blocking, because a Task started during

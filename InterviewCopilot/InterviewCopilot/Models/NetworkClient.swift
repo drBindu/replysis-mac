@@ -85,7 +85,7 @@ class NetworkClient {
 
     func streamScreenAnalysis(imageBase64: String, resumeCtx: String, provider: String,
                               transcript: String = "", jobContext: String = "",
-                              captureSource: String = "", imageId: String? = nil,
+                              captureSource: String = "", imageIds: [String]? = nil,
                               onToken: @escaping (String) -> Void,
                               onDone: @escaping () -> Void,
                               onError: @escaping (String) -> Void) {
@@ -99,8 +99,8 @@ class NetworkClient {
         ]
         // Reference an already-uploaded picture when there is one; otherwise send the bytes,
         // which is what happens whenever the pre-upload did not finish in time or failed.
-        if let imageId, !imageId.isEmpty {
-            payload["imageIds"] = [imageId]
+        if let imageIds, !imageIds.isEmpty {
+            payload["imageIds"] = imageIds
         } else {
             payload["image"] = imageBase64
         }

@@ -34,6 +34,9 @@ struct AutoTurnDetector {
     /// Accept an utterance unless it repeats the one just answered.
     mutating func acceptUtterance(_ question: String, now: Date = Date()) -> Bool {
         let normalized = Self.normalize(question)
+        // Nothing said is nothing to answer. Accepting it would also overwrite the question
+        // just answered, so the duplicate guard would stop recognising a real repeat of it.
+        guard !normalized.isEmpty else { return false }
         if normalized.caseInsensitiveCompare(lastSubmitted) == .orderedSame,
            now.timeIntervalSince(lastSubmittedAt) < Self.duplicateWindow {
             return false
@@ -649,6 +652,15 @@ struct AutoTurnDetector {
         // mid-air no matter what the recogniser punctuated.
         if neverEndsSentence.contains(tail) { return punctuated ? .unclear : .unfinished }
 
+        // "What is the difference between an abstract" — a comparison with only one side
+        // named cannot be the whole question, whatever word it stopped on. Measured: the
+        // 0.9s pause before "an abstract class and an interface?" got the half answered.
+        let lowered = trimmed.lowercased()
+        if let between = lowered.range(of: #"\b(?:differences?|difference) between\b"#, options: .regularExpression),
+           lowered[between.upperBound...].range(of: #"\b(?:and|vs|versus|or)\b|&"#, options: .regularExpression) == nil {
+            return punctuated ? .unclear : .unfinished
+        }
+
         // No full stop yet, and hanging on an auxiliary or a pronoun: still going. Waiting
         // costs nothing, because their next word submits it.
         if !punctuated && danglingTailWords.contains(tail) { return .unfinished }
@@ -668,6 +680,64 @@ struct AutoTurnDetector {
     ///   of answering its own answers, one credit at a time. An interviewer, by contrast,
     ///   really does ask in statements ("I'd like to hear about your Kafka work."), so
     ///   Interview Auto keeps the looser reading.
+    /// When one turn carries several complete questions, the one to answer is the LAST.
+    ///
+    /// Measured with questions two seconds apart: the interviewer never pauses long enough
+    /// for a turn to end, the transcript keeps growing, and what finally goes out is
+    /// "What is a thread pool? What is garbage collection? What is a memory" — one answer
+    /// covering three questions and properly answering none. An interviewer who has moved
+    /// on wants the question they just asked, so that is the one that gets answered; the
+    /// earlier ones are already behind them.
+    ///
+    /// Returns nil when the turn holds one question or none, which is the ordinary case:
+    /// context plus a question ("Our team runs 40 services. How would you debug one?") has
+    /// a single interrogative and must stay whole.
+    static func latestQuestionIfMultiple(_ text: String) -> String? {
+        var segments: [String] = []
+        var current = ""
+        for ch in text {
+            current.append(ch)
+            if ch == "?" || ch == "." || ch == "!" {
+                segments.append(current.trimmingCharacters(in: .whitespaces))
+                current = ""
+            }
+        }
+        let tail = current.trimmingCharacters(in: .whitespaces)
+        if !tail.isEmpty { segments.append(tail) }
+
+        let questions = segments.filter { isLikelyCompleteQuestion($0, requireInterrogative: true) }
+        guard questions.count >= 2 else { return nil }
+        // Prefer the last question the speaker actually FINISHED. The finished ones carry
+        // their question mark; a trailing "What is a memory" is still being said, and
+        // answering that half asks the model about nothing. It arrives on its own turn.
+        let finished = questions.filter { $0.hasSuffix("?") || $0.hasSuffix("!") }
+        return finished.last ?? questions.last
+    }
+
+    /// Does this addition BELONG to the question just asked, or is it a new question?
+    ///
+    /// Measured with questions two seconds apart, the way an impatient interviewer asks:
+    /// speech that began while the answer was still streaming was merged whatever it said,
+    /// so "What is a memory leak?" arrived as "What is garbage collection? What is a memory
+    /// leak?" and then "... What is a race condition?" on top — one answer for three
+    /// questions, each merge spending a credit, and five of eight questions never answered
+    /// on their own.
+    ///
+    /// A real addition is either not a question at all ("With an example from Spring") or a
+    /// question that points BACK at what was just asked ("Where have you used it?"). A
+    /// question that names its own new subject is a new question.
+    static func isFollowUpAddition(_ addition: String) -> Bool {
+        let a = addition.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !a.isEmpty else { return false }
+        // Not a standalone question ASKED AS ONE: a tail, a fragment, or a statement such
+        // as "With an example from Spring" — judged in interrogative form, because in an
+        // interview a statement is usually the rest of the sentence, not a new question.
+        if !isLikelyCompleteQuestion(addition, requireInterrogative: true) { return true }
+        // A question that refers back to the thing just asked about.
+        return a.range(of: #"\b(it|that|this|them|those|these|there|the same|instead|again)\b"#,
+                       options: .regularExpression) != nil
+    }
+
     static func isLikelyCompleteQuestion(_ question: String, requireInterrogative: Bool = false) -> Bool {
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return false }
@@ -688,7 +758,7 @@ struct AutoTurnDetector {
         while let f = words.first, leadingFiller.contains(f), words.count > 1 {
             words.removeFirst()
         }
-        guard let first = words.first else { return false }
+        guard var first = words.first else { return false }
 
         // Pure acknowledgement — never worth answering.
         let normalized = words.joined(separator: " ")
@@ -720,9 +790,15 @@ struct AutoTurnDetector {
         }
         // Re-derive the words from what actually remains after the correction.
         if remainder != normalized {
-            let rest = remainder.components(separatedBy: " ").filter { !$0.isEmpty }
-            guard rest.count >= 3 else { return false }         // only a fragment left
+            var rest = remainder.components(separatedBy: " ").filter { !$0.isEmpty }
+            while let f = rest.first, leadingFiller.contains(f), rest.count > 1 { rest.removeFirst() }
+            guard rest.count >= 3, let lead = rest.first else { return false }   // only a fragment left
             words = rest
+            // And the first word with them. It was taken before the correction was stripped,
+            // so "I want to ask what is Kafka" was still judged by "I" — the candidate
+            // talking — and refused as a question in strict mode, even though what remains is
+            // plainly one. Caught by the regression harness.
+            first = lead
         }
 
         let hasQuestionMark = q.contains("?")
