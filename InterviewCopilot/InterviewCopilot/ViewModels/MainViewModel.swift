@@ -891,8 +891,18 @@ class MainViewModel {
 
         dlog("⌥ SPACE pressed from \(source) | loggedIn=\(session.isLoggedIn) | engineRunning=\(engine.isRunning) | isMuted=\(isMuted) | isProcessing=\(isProcessing)", tag: "SPACE")
 
-        guard !isProcessing else {
-            dlog("⌥ SPACE ignored — AI is processing", tag: "SPACE"); return
+        if isProcessing {
+            // One press cancels the answer on its way and listens again, as on Windows
+            // (InterruptAiAndListen). The interviewer who follows up fast must not have to wait
+            // for an answer they no longer need before they can ask. Only in Manual, where the
+            // mic is shut while answering: in Auto the mic is open and Space means something else.
+            guard isMuted, !autoModeEnabled, !isScreenAnalyzing else {
+                dlog("⌥ SPACE ignored — AI is processing", tag: "SPACE"); return
+            }
+            dlog("⌥ SPACE: interrupting the answer — back to listening", tag: "SPACE")
+            answerEpoch += 1
+            isProcessing = false
+            showThinking = false
         }
         let now = Date()
         guard now.timeIntervalSince(lastSpaceTime) >= spaceDebounceMs else {
@@ -956,7 +966,11 @@ class MainViewModel {
             dlog("⌥ SPACE: muting → sending to AI. transcript='\(transcript.prefix(80))'", tag: "SPACE")
             listenTurnID = UUID()      // any recheck still running belongs to the turn that just ended
             isListening = false
-            engine.writePauseFlag()
+            // The engine is NOT paused here. It is paused when the flush below has the end of
+            // the question. Pausing first and then waiting for the tail waited for words that
+            // could no longer come: pressed as the voice stopped, the last words were still
+            // inside the engine, the pause dropped them, and "What is a binary search tree?" was
+            // answered as "What is a" (found by testing, 2026-10-01).
             isMuted = true
             updateMicUI()
             Task { @MainActor [weak self] in
@@ -988,8 +1002,15 @@ class MainViewModel {
         // so the ordinary case pays nothing.
         let stableTicksFinished = 5              // 5 x 20ms = 100ms of no growth
         let stableTicksUnfinished = 40           // 40 x 20ms = 800ms, still inside maxTicks
-        let emptyTicksNeeded  = 20               // 20 x 20ms = 400ms of nothing at all
-        let maxTicks = 64                        // hard ceiling, same ~1.28s worst case
+        // Nothing transcribed yet is not the same as nothing said. The speech service answers a
+        // second or two behind the voice, so a short question pressed the instant it ended has
+        // no text for a while ("What is a binary search tree?" answered nothing). When the audio
+        // was loud a moment ago, wait for the words; when it was silent, the old 400ms is plenty
+        // to say "no speech was captured".
+        var heardAudioJustNow = micCaptureActive
+        if #available(macOS 14.2, *), SystemAudioTapper.shared.secondsSinceAudio < 3.0 { heardAudioJustNow = true }
+        let emptyTicksNeeded  = heardAudioJustNow ? 110 : 20     // 2.2s, or 400ms of nothing at all
+        let maxTicks = heardAudioJustNow ? 130 : 64              // hard ceiling: 2.6s, or ~1.28s
 
         var question = engine.readLatestTxt().trimmingCharacters(in: .whitespacesAndNewlines)
         var stable = 0
@@ -1017,6 +1038,8 @@ class MainViewModel {
             }
         }
 
+        // Now the question is whole, stop listening.
+        engine.writePauseFlag()
         if !question.isEmpty { transcript = question }
         startAI()
     }
@@ -1124,9 +1147,12 @@ class MainViewModel {
         guard session.isLoggedIn else { aiAnswer = "⚠ Please sign in to use AI answers."; return }
         // Blocked below ONE answer, not below one credit: 1 to 4 credits buys nothing, and
         // letting it through only earns a refusal from the server mid-question.
-        guard session.isUnlimited || !PlanFacts.isEmpty(session.credits) else {
+        guard PlanFacts.mayAsk(balanceKnown: session.creditsKnown, credits: session.credits,
+                               isUnlimited: session.isUnlimited) else {
             showOutOfAnswers(); return
         }
+        // Not known yet: ask the server (it has the real number) and look again in the background.
+        if !session.creditsKnown { Task { [weak self] in await self?.fetchCredits() } }
 
         isProcessing = true; showThinking = true; thinkingStep = 0
         startBusyWatchdog()
@@ -1155,7 +1181,7 @@ class MainViewModel {
                                              hints: liveHints, screening: screeningContext)
         let provider = Self.providerLabel
         // Amber at two answers left or fewer, in answers, never credits.
-        let lowBanner = (!session.isUnlimited && PlanFacts.isLow(session.credits) && !PlanFacts.isEmpty(session.credits))
+        let lowBanner = (session.creditsKnown && !session.isUnlimited && PlanFacts.isLow(session.credits) && !PlanFacts.isEmpty(session.credits))
             ? PlanFacts.lowWarning(credits: session.credits, freeTrial: onFreeTrial) + "\n\n" : ""
 
         aiAnswer = "Q: \(q)\n\n\(lowBanner)"
@@ -3929,6 +3955,8 @@ class MainViewModel {
         dlog("Credits fetch starting...", tag: "CREDITS")
         if let result = await NetworkClient.shared.fetchCredits() {
             session.credits = result.credits
+            session.creditsKnown = true
+            creditsRetryAttempt = 0
             session.plan = result.plan
             session.isUnlimited = result.isUnlimited
             dlog("Credits: \(result.credits), plan=\(result.plan), unlimited=\(result.isUnlimited)", tag: "CREDITS")
@@ -3936,6 +3964,26 @@ class MainViewModel {
             await fetchListeningTime()
         } else {
             dlog("Credits fetch failed — no result returned", tag: "CREDITS")
+            // Say "checking", never "none". And ask again soon: the next scheduled refresh is
+            // five minutes away, and the badge and the answers should not wait for it.
+            updateCreditsUI(credits: session.credits, plan: session.plan, isUnlimited: session.isUnlimited)
+            scheduleCreditsRetry()
+        }
+    }
+
+    private var creditsRetryAttempt = 0
+    private var creditsRetryTask: Task<Void, Never>?
+
+    /// 4, 10, 20, then 40 seconds, then the five-minute refresh takes over.
+    private func scheduleCreditsRetry() {
+        guard creditsRetryAttempt < 4 else { return }
+        let wait = [4.0, 10.0, 20.0, 40.0][creditsRetryAttempt]
+        creditsRetryAttempt += 1
+        creditsRetryTask?.cancel()
+        creditsRetryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await self?.fetchCredits()
         }
     }
 
@@ -3955,6 +4003,7 @@ class MainViewModel {
     /// The hover text on the answers badge.
     var creditsTooltip: String {
         if session.isUnlimited { return "Unlimited answers.\nClick for details." }
+        if !session.creditsKnown { return "Checking how many answers you have left.\nClick to try again." }
         return PlanFacts.tooltip(credits: session.credits, freeTrial: onFreeTrial,
                                  listeningLimitReached: audioMinutesRemaining == 0)
     }
@@ -4069,6 +4118,13 @@ class MainViewModel {
     private func updateCreditsUI(credits: Int, plan: String, isUnlimited: Bool) {
         showCreditsBadge = true
         creditsIcon = ""
+        // A balance that was never fetched is not a balance of zero. See PlanFacts.mayAsk.
+        if !session.creditsKnown && !isUnlimited {
+            creditsText = "Checking answers"
+            creditsColor = Color(white: 0.62)
+            creditsPlanText = "Checking"
+            return
+        }
         if isUnlimited {
             // A retired unlimited account. Nobody can buy this now; it still has to read right.
             creditsText = "Unlimited"

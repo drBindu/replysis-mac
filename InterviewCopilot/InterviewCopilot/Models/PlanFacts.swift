@@ -113,6 +113,16 @@ enum PlanFacts {
     /// Less than one answer: nothing can be asked until more are added.
     static func isEmpty(_ credits: Int) -> Bool { credits < answerCost }
 
+    /// Whether to let a question go to the server. NOT knowing the balance is not the same as
+    /// having none: the balance request timed out at launch on a poor connection, the count
+    /// stayed at its starting zero, and a paying customer was told "Your free answers are used"
+    /// and refused until the next refresh (found by testing, 2026-10-01). Only a balance that is
+    /// KNOWN to be empty stops a question here. Otherwise the server decides, and it is the one
+    /// that has the real number.
+    static func mayAsk(balanceKnown: Bool, credits: Int, isUnlimited: Bool) -> Bool {
+        isUnlimited || !balanceKnown || !isEmpty(credits)
+    }
+
     /// What someone reads when an answer is refused for having none left. A free trial is
     /// the end of a trial, not a limit that renews, so it says what Pro gives. No numbers:
     /// those belong to the server and the website.

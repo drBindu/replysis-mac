@@ -290,6 +290,12 @@ func clean(_ text: String, _ label: String) {
     }
     check(true, "clean: \(label)")
 }
+// A balance that was never fetched is not a balance of zero (found by testing, 2026-10-01).
+check(PlanFacts.mayAsk(balanceKnown: false, credits: 0, isUnlimited: false), "balance unknown (the request timed out): the question goes to the server")
+check(!PlanFacts.mayAsk(balanceKnown: true, credits: 0, isUnlimited: false), "balance known to be empty: no question")
+check(!PlanFacts.mayAsk(balanceKnown: true, credits: 4, isUnlimited: false), "under one answer: no question")
+check(PlanFacts.mayAsk(balanceKnown: true, credits: 5, isUnlimited: false), "one answer left: asks")
+check(PlanFacts.mayAsk(balanceKnown: true, credits: 0, isUnlimited: true), "unlimited asks")
 check(PlanFacts.answerCost == 5, "one answer costs 5 credits, in one place")
 check(PlanFacts.answers(12) == 2, "12 credits is 2 answers, rounded down")
 check(PlanFacts.answers(4) == 0, "under 5 credits buys nothing")

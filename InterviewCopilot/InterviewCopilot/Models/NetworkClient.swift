@@ -349,9 +349,20 @@ class NetworkClient {
         req.setValue(DeviceIdentity.current, forHTTPHeaderField: "X-Device-Id")
 
         do {
-            let (data, _) = try await shortSession.data(for: req)
-            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-            let credits = obj["credits"] as? Int ?? 0
+            let (data, response) = try await shortSession.data(for: req)
+            // Only a successful reply carrying a real balance counts. An error reply (a 503 from
+            // a server having a bad moment, a 401) has a JSON body too, and with every field
+            // defaulted it read as "0 credits, free plan": a paying customer was told their free
+            // answers were used and was refused (found by testing, 2026-10-01).
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                dlog("Credits: the server answered HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0) — not a balance", tag: "CREDITS")
+                return nil
+            }
+            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let credits = obj["credits"] as? Int else {
+                dlog("Credits: the reply had no balance in it", tag: "CREDITS")
+                return nil
+            }
             let plan = obj["plan"] as? String ?? "free"
             let isUnlimited = obj["isUnlimited"] as? Bool ?? false
             return (credits, plan, isUnlimited)

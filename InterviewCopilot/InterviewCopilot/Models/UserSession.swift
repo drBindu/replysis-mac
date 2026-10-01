@@ -98,6 +98,9 @@ class UserSession {
     var refreshToken = ""
     var userId = ""
     var credits = 0
+    /// False until a balance has actually been fetched. `credits` starts at 0, and a count that
+    /// was never fetched must not be read as a count of zero. See PlanFacts.mayAsk.
+    var creditsKnown = false
     var plan = "free"
     var isUnlimited = false
     var speechmaticsKey = ""
@@ -237,7 +240,7 @@ class UserSession {
         isLoggedIn = false
         isGuestSession = false
         email = ""; name = ""; idToken = ""; refreshToken = ""
-        userId = ""; credits = 0; plan = "free"; isUnlimited = false
+        userId = ""; credits = 0; creditsKnown = false; plan = "free"; isUnlimited = false
         speechmaticsKey = ""
         deepgramToken = ""
         Keychain.delete(account: "session")
@@ -307,6 +310,7 @@ class UserSession {
         isGuestSession = true
         isLoggedIn = true
         credits = result.credits
+        creditsKnown = true
         plan = result.plan
         isUnlimited = result.isUnlimited
         name = "Guest"

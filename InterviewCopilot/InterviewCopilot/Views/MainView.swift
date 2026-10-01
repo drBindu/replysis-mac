@@ -755,7 +755,9 @@ struct MainView: View {
                 } else if !vm.session.isUnlimited {
                     // Paid but metered: the useful action is more answers, not a new plan.
                     menuRow(icon: "creditcard.fill", title: "Get more answers",
-                            subtitle: "\(vm.session.plan.capitalized) plan, \(PlanFacts.answersLabel(vm.session.credits)) left",
+                            subtitle: vm.session.creditsKnown
+                                ? "\(vm.session.plan.capitalized) plan, \(PlanFacts.answersLabel(vm.session.credits)) left"
+                                : "Checking how many answers are left",
                             accent: Color(hex: "#34E08A")) {
                         showProfileMenu = false
                         NSWorkspace.shared.open(PlanFacts.addAnswersURL)
@@ -807,7 +809,7 @@ struct MainView: View {
                         .font(.system(size: 16))
                         .foregroundColor(creditsAccent)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(PlanFacts.answersLabel(vm.session.credits))
+                        Text(vm.session.creditsKnown ? PlanFacts.answersLabel(vm.session.credits) : "Checking answers")
                             .font(.system(size: 14, weight: .bold))
                             .foregroundColor(creditsAccent)
                         Text(vm.onFreeTrial
@@ -847,6 +849,7 @@ struct MainView: View {
 
     var creditsAccent: Color {
         let c = vm.session.credits
+        if !vm.session.creditsKnown { return Color(white: 0.62) }
         if !PlanFacts.isLow(c)  { return Color(hex: "#4ade80") }
         if !PlanFacts.isEmpty(c) { return Color(hex: "#f59e0b") }
         return Color(hex: "#ef4444")
@@ -1639,7 +1642,7 @@ struct MainView: View {
     }
 
     func creditsTapped() {
-        if vm.session.credits == 0 && !vm.session.isUnlimited {
+        if vm.session.creditsKnown && vm.session.credits == 0 && !vm.session.isUnlimited {
             NSWorkspace.shared.open(URL(string: "https://replysis.com/pricing")!)
         } else {
             Task { await vm.fetchCredits() }

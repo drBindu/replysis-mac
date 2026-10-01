@@ -15,6 +15,7 @@ port = int(sys.argv[2]) if len(sys.argv) > 2 else 18081
 delay = float(sys.argv[3]) if len(sys.argv) > 3 else 0.0
 FRESH = "Bearer fresh-token"
 key_requests = 0
+credit_requests = 0
 
 def woke(h):   # a stale token is refused; a fresh one gets a real answer (fair use)
     return (402, {"error": "fair use", "reason": "audio-limit"}, {}) if h.headers.get("Authorization") == FRESH \
@@ -33,6 +34,9 @@ S = {
         key=lambda h: (402, {"error": "fair use", "reason": "audio-limit"}, {}) if key_requests == 1
         else (429, {"error": "Too many"}, {"Retry-After": "15"})),
     "healthy-credits": dict(credits=55, minutes=30, key=lambda h: (200, {"key": "", "expiresIn": 3600}, {})),
+    # The balance request fails twice (a poor connection at launch), then works. The app must say
+    # "checking", not "no answers left", and must ask again by itself.
+    "credits-flaky": dict(credits=55, minutes=30, key=lambda h: (200, {"key": "", "expiresIn": 3600}, {})),
 }
 if scenario not in S:
     print("unknown scenario", scenario, list(S), file=sys.stderr); sys.exit(2)
@@ -41,7 +45,7 @@ s = S[scenario]
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def _do(self):
-        global key_requests
+        global key_requests, credit_requests
         url = self.path.split("?")[0]
         status, body, headers = 200, {}, {}
         if url == "/token":
@@ -49,7 +53,11 @@ class H(BaseHTTPRequestHandler):
         elif url == "/api/v1/stt/key":
             key_requests += 1; status, body, headers = s["key"](self)
         elif url == "/api/v1/interview/credits":
-            body = {"credits": s["credits"], "plan": "free", "isUnlimited": False}
+            credit_requests += 1
+            if scenario == "credits-flaky" and credit_requests <= 2:
+                status, body = 503, {"error": "temporarily unavailable"}
+            else:
+                body = {"credits": s["credits"], "plan": "free", "isUnlimited": False}
         elif url == "/api/v1/usage/listening":
             body = {"remainingMinutes": s["minutes"], "usedMinutes": 15 - s["minutes"]}
         elif url == "/health":
