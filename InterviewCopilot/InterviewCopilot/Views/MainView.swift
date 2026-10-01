@@ -203,7 +203,8 @@ struct MainView: View {
     @ViewBuilder
     var transientMessageRow: some View {
         if !vm.alertTitle.isEmpty || !vm.listeningNotice.isEmpty {
-            HStack(spacing: 10) {
+            // One above the other: side by side, a full-width message left the notice no room.
+            VStack(alignment: .leading, spacing: 6) {
                 if !vm.alertTitle.isEmpty {
                     audioSourceAlert
                 }
@@ -223,8 +224,8 @@ struct MainView: View {
                     .overlay(Capsule().stroke(Color(hex: "#7c5e1e"), lineWidth: 1))
                     .help("Press Space to start listening again")
                 }
-                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 18)
             .padding(.vertical, 6)
             .transition(.opacity)
@@ -523,7 +524,12 @@ struct MainView: View {
                     .foregroundColor(Color(hex: "#c3ccd8"))
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(maxWidth: 320, alignment: .leading)
+            // The whole width of the window, not a 320 point column. A message of three sentences
+            // in that column was six lines tall, and because this row sits in the layout rather
+            // than over it, the answer and transcript boxes below were pushed down and squeezed
+            // (owner, 2026-10-01: "why the box goes like that"). Across the window it is one or
+            // two lines.
+            .frame(maxWidth: .infinity, alignment: .leading)
             if !vm.alertActionLabel.isEmpty {
                 Button(action: { vm.runAlertAction() }) {
                     Text(vm.alertActionLabel)
@@ -541,7 +547,8 @@ struct MainView: View {
             .buttonStyle(.plain)
             .help("Dismiss")
         }
-        .padding(.horizontal, 12).padding(.vertical, 9)
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .frame(maxWidth: 1000, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color(hex: "#161b22").opacity(0.96)))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.12), lineWidth: 1))
         .transition(.opacity)
