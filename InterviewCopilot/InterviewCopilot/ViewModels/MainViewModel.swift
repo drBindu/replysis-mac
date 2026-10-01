@@ -2602,7 +2602,23 @@ class MainViewModel {
     /// stretch of listening. Left standing across a mode change or a new session they get
     /// applied to speech they have nothing to do with — the first thing said in Practice
     /// Auto was being glued onto a question asked in Interview Auto.
+    /// Pieces of a question set aside as filler or as an echo, kept for a moment in case the rest
+    /// of the sentence follows. See AutoTurnDetector.question(afterCarrying:then:).
+    private var carriedFragments: [(text: String, at: Date)] = []
+    private let fragmentCarrySeconds: TimeInterval = 10
+    /// The start of a question put back on the front of what is being submitted.
+    private var carriedPrefixForTurn = ""
+    private var carriedPrefixAt = Date.distantPast
+
+    private func carryFragment(_ text: String) {
+        guard AutoTurnDetector.isQuestionOpening(text) else { return }
+        carriedFragments.append((text, Date()))
+        if carriedFragments.count > 4 { carriedFragments.removeFirst(carriedFragments.count - 4) }
+        dlog("AUTO: keeping '\(text.prefix(30))' for a moment, in case the rest of the question follows", tag: "AUTO")
+    }
+
     private func resetAutoTurnState() {
+        carriedFragments = []; carriedPrefixForTurn = ""
         // Cleared here too: a mode change or a new session must never inherit a latch that
         // blocks answering.
         autoTurnSubmitting = false
@@ -2659,6 +2675,7 @@ class MainViewModel {
         // one. See AutoTurnDetector.isStallPhrase.
         if !lastAnsweredQuestion.isEmpty, AutoTurnDetector.isStallPhrase(text) {
             dlog("AUTO: filler while waiting — stepping past: '\(text.prefix(40))'", tag: "AUTO")
+            carryFragment(text)
             consumedPrefix = rawNow
             pendingSpeechStartedAt = nil
             return
@@ -2668,6 +2685,7 @@ class MainViewModel {
         // already delivered it. Joining it on would re-answer a stutter. See repeatsQuestion.
         if !lastAnsweredQuestion.isEmpty, AutoTurnDetector.repeatsQuestion(text, lastAnsweredQuestion) {
             dlog("AUTO: the question heard a second time — stepping past: '\(text.prefix(40))'", tag: "AUTO")
+            carryFragment(text)
             consumedPrefix = rawNow
             pendingSpeechStartedAt = nil
             return
@@ -2870,11 +2888,33 @@ class MainViewModel {
         // Context and then the question is judged by its last sentence too. Judged whole, "We are
         // building a payments platform ... fifty milliseconds. How would you design the database
         // layer?" had full stops before any question word and read as background talk.
-        let endsOnQuestion = text.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?")
-            || AutoTurnDetector.isLikelyCompleteQuestion(AutoTurnDetector.lastSentence(text),
-                                                         requireInterrogative: true)
-        guard endsOnQuestion || AutoTurnDetector.isLikelyCompleteQuestion(AutoTurnDetector.normalize(text),
-                                                        requireInterrogative: false) else {
+        func endsOnQuestionNow(_ t: String) -> Bool {
+            t.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?")
+                || AutoTurnDetector.isLikelyCompleteQuestion(AutoTurnDetector.lastSentence(t), requireInterrogative: true)
+        }
+        var endsOnQuestion = endsOnQuestionNow(text)
+        var answerable = endsOnQuestion || AutoTurnDetector.isLikelyCompleteQuestion(AutoTurnDetector.normalize(text),
+                                                                                       requireInterrogative: false)
+        // A very slow speaker: the start of the question was set aside a moment ago. Put it back
+        // when this is not a question by itself and the two together are.
+        carriedFragments.removeAll { Date().timeIntervalSince($0.at) > fragmentCarrySeconds }
+        // Not a question by itself, or a start that stops mid-sentence ("How would you") followed by
+        // words that are not a question's own start ("design a rate limiter...?"): the second half
+        // of that sentence, which answered alone loses what was asked.
+        if !answerable
+            || (AutoTurnDetector.carriedPrefixLeavesSentenceOpen(carriedFragments.map(\.text))
+                && !AutoTurnDetector.opensLikeQuestion(text)) {
+            if let joined = AutoTurnDetector.question(afterCarrying: carriedFragments.map(\.text), then: text) {
+                dlog("AUTO: slow speaker — joined '\(joined.prefix)' with '\(text.prefix(40))' into one question", tag: "AUTO")
+                carriedPrefixForTurn = joined.prefix
+                carriedPrefixAt = Date()
+                carriedFragments = []
+                text = joined.question
+                endsOnQuestion = endsOnQuestionNow(text)
+                answerable = true
+            }
+        }
+        guard answerable else {
             // IGNORING IS NOT ENOUGH. Rejected speech stays in the file and gets glued to the
             // next real question, and once the pile carries two full stops with no
             // interrogative in its opening words it is rejected FOREVER — every later
@@ -3190,8 +3230,11 @@ class MainViewModel {
             // arriving. Record what we are ACTUALLY answering, not the shorter text that
             // triggered the turn — otherwise a continuation merges against a truncated copy
             // and re-asks half the question back to the model.
+            // The start of the question that was set aside for a slow speaker, put back in front.
+            let carried = Date().timeIntervalSince(self.carriedPrefixAt) < 8 ? self.carriedPrefixForTurn : ""
+            self.carriedPrefixForTurn = ""
             if !heard.isEmpty {
-                let asked = Self.questionText(from: heard)
+                let asked = Self.questionText(from: carried.isEmpty ? heard : carried + " " + heard)
                 self.transcript = asked
                 self.lastAnsweredQuestion = asked
                 self.lastAnsweredAt = Date()

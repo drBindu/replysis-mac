@@ -295,6 +295,93 @@ struct AutoTurnDetector {
         return left.allSatisfy { fillers.contains($0) || stallWords.contains($0) || joiners.contains($0) }
     }
 
+    // ── A very slow speaker ────────────────────────────────────────────────────
+    //
+    // "What" ... two seconds ... "is a" ... two seconds ... "deadlock?" was never answered. Each
+    // piece was judged alone: "What?" is inside the question answered a moment before, so it was
+    // dropped as that question heard a second time; "Is a" is made of filler words, so it was
+    // dropped as a stall; and "deadlock" alone is not a question, so it was held and dropped. All
+    // three guards are right about the thing they exist for. The loss was that a dropped piece was
+    // gone for good. These pieces are now remembered for a few seconds and put back on the front of
+    // the next speech, only when that speech is not a question by itself and the two together are.
+
+    /// Words a question starts with, and the little words that follow them.
+    private static let questionOpeningWords: Set<String> = [
+        "what", "whats", "what's", "how", "why", "when", "where", "who", "which", "whom",
+        "is", "are", "was", "were", "do", "does", "did", "can", "could", "would", "will", "should",
+        "a", "an", "the", "of", "in", "on", "to", "for", "between", "about", "and", "so",
+        "tell", "me", "explain", "describe", "walk", "through", "you", "your", "it", "that", "this",
+        "there", "difference", "mean", "means", "give", "an", "example",
+    ]
+
+    /// A few words that could only be the start of a question: "What", "Is a", "How do you".
+    /// Not a stall ("let me think") and not a sentence of its own.
+    static func isQuestionOpening(_ fragment: String) -> Bool {
+        let words = fragment.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted.subtracting(CharacterSet(charactersIn: "'")))
+            .filter { !$0.isEmpty }
+        guard (1...4).contains(words.count) else { return false }
+        return words.allSatisfy { questionOpeningWords.contains($0) }
+    }
+
+    /// The remembered pieces as the start of one sentence: no full stops or question marks in the
+    /// middle of it, and the capital a recogniser puts on each new piece taken off the little words.
+    static func carriedPrefix(_ fragments: [String]) -> String {
+        var parts: [String] = []
+        for (i, raw) in fragments.enumerated() {
+            var p = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            while let last = p.last, ".?!,;:".contains(last) { p.removeLast() }
+            if i > 0 { p = lowercasingLittleWord(p) }
+            if !p.isEmpty { parts.append(p) }
+        }
+        return parts.joined(separator: " ")
+    }
+
+    /// "Is a" to "is a" when the piece starts with a little word. A name ("Java") keeps its capital.
+    private static func lowercasingLittleWord(_ piece: String) -> String {
+        let first = piece.split(separator: " ").first.map(String.init) ?? ""
+        guard questionOpeningWords.contains(first.lowercased()), first != "I" else { return piece }
+        return first.lowercased() + piece.dropFirst(first.count)
+    }
+
+    /// Whether speech opens the way a question does: a question word, a verb that starts a yes/no
+    /// question, or "tell me", "explain", "describe". "design a rate limiter..." does not, which is
+    /// how it is told apart from a new question when it follows "How would you".
+    static func opensLikeQuestion(_ text: String) -> Bool {
+        let opening: Set<String> = [
+            "what", "whats", "what's", "how", "why", "when", "where", "who", "whom", "which",
+            "do", "does", "did", "can", "could", "would", "will", "should", "is", "are", "was", "were",
+            "have", "has", "tell", "explain", "describe", "walk", "give", "compare", "define", "name", "list",
+        ]
+        let skipped: Set<String> = ["so", "okay", "ok", "and", "um", "uh", "well", "now", "alright", "right", "also"]
+        let words = text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted.subtracting(CharacterSet(charactersIn: "'")))
+            .filter { !$0.isEmpty }
+        guard let first = words.first(where: { !skipped.contains($0) }) else { return false }
+        return opening.contains(first)
+    }
+
+    /// The remembered pieces stop where no sentence can stop ("How would you", "What is a"), so
+    /// the speaker is plainly mid-sentence and whatever comes next finishes it.
+    static func carriedPrefixLeavesSentenceOpen(_ fragments: [String]) -> Bool {
+        let prefix = carriedPrefix(fragments)
+        return !prefix.isEmpty && classifyTurnEnding(prefix) == .unfinished
+    }
+
+    /// The remembered start and the speech that came after it, as one sentence, when that makes
+    /// a question and the speech alone does not. nil otherwise, so a stale or unrelated piece is
+    /// never glued onto a question that stands by itself.
+    static func question(afterCarrying fragments: [String], then text: String) -> (prefix: String, question: String)? {
+        guard !fragments.isEmpty else { return nil }
+        let prefix = carriedPrefix(fragments)
+        guard !prefix.isEmpty else { return nil }
+        let joined = prefix + " " + lowercasingLittleWord(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        // Four words at least: "What is a deadlock" is a question, "What deadlock" is a stray word.
+        guard joined.split(separator: " ").count >= 4,
+              isLikelyCompleteQuestion(joined, requireInterrogative: true) else { return nil }
+        return (prefix, joined)
+    }
+
     /// The same words twice in a row, kept once.
     ///
     /// With one mode the microphone is always open, and on a laptop without headphones it

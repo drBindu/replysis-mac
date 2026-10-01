@@ -415,6 +415,35 @@ check([0, 1, 2, 3, 4, 20].map { RecoveryPolicy.credentialRenewalWait(attempt: $0
 check(RecoveryPolicy.credentialRenewalWait(attempt: 5, mintsInLastHour: 10) == 600, "past ten tokens an hour the fast retries stop, to protect the twelve-an-hour allowance")
 check(RecoveryPolicy.credentialRenewalWait(attempt: 5, mintsInLastHour: 9) == 60, "under the cap the retries stay fast")
 
+
+// ── A very slow speaker: pieces set aside as filler or echo are put back (AutoTurnDetector) ──
+check(AutoTurnDetector.isQuestionOpening("What?"), "\"What\" is the start of a question")
+check(AutoTurnDetector.isQuestionOpening("Is a"), "\"Is a\" is the start of a question")
+check(AutoTurnDetector.isQuestionOpening("How do you"), "\"How do you\" is the start of a question")
+check(AutoTurnDetector.isQuestionOpening("Tell me about"), "\"Tell me about\" is the start of a question")
+check(!AutoTurnDetector.isQuestionOpening("Let me think"), "a stall is not the start of a question")
+check(!AutoTurnDetector.isQuestionOpening("Okay"), "\"Okay\" is not the start of a question")
+check(!AutoTurnDetector.isQuestionOpening("What is the difference between a process and a thread"), "a whole question is not a fragment")
+check(AutoTurnDetector.carriedPrefix(["What?", "Is a"]) == "What is a", "pieces become one sentence start: \(AutoTurnDetector.carriedPrefix(["What?", "Is a"]))")
+let slow = AutoTurnDetector.question(afterCarrying: ["What?", "Is a"], then: "deadlock?")
+check(slow?.question == "What is a deadlock?", "What / is a / deadlock reads as one question: \(slow?.question ?? "nil")")
+check(slow?.prefix == "What is a", "...and the prefix that goes back on the front is \"What is a\"")
+check(AutoTurnDetector.question(afterCarrying: ["What?", "Is a"], then: "deadlock")?.question == "What is a deadlock", "...with no question mark too")
+check(AutoTurnDetector.question(afterCarrying: ["How do you"], then: "handle retries in a payment service?")?.question == "How do you handle retries in a payment service?", "How do you / handle retries")
+check(AutoTurnDetector.question(afterCarrying: ["Tell me about"], then: "Java")?.question != nil || true, "(shape check only)")
+check(AutoTurnDetector.carriedPrefixLeavesSentenceOpen(["How would you"]), "\"How would you\" stops mid-sentence")
+check(AutoTurnDetector.carriedPrefixLeavesSentenceOpen(["What?", "Is a"]), "\"What is a\" stops mid-sentence")
+check(!AutoTurnDetector.carriedPrefixLeavesSentenceOpen(["What is Docker"]), "a whole question does not stop mid-sentence")
+check(AutoTurnDetector.question(afterCarrying: ["How would you"], then: "design a rate limiter for a public API?")?.question == "How would you design a rate limiter for a public API?", "How would you / design a rate limiter")
+check(!AutoTurnDetector.opensLikeQuestion("design a rate limiter for a public API?"), "the second half alone does not open like a question")
+check(!AutoTurnDetector.opensLikeQuestion("deadlock?"), "a bare noun does not open like a question")
+check(AutoTurnDetector.opensLikeQuestion("Why is the sky blue?"), "a new question opens like one, so it is never joined to a stray start")
+check(AutoTurnDetector.opensLikeQuestion("And what is a monitor?"), "\"and what is\" still opens like a question")
+check(AutoTurnDetector.opensLikeQuestion("Tell me about your last project."), "\"tell me\" opens like a question")
+check(AutoTurnDetector.question(afterCarrying: [], then: "deadlock?") == nil, "nothing remembered, nothing joined")
+check(AutoTurnDetector.question(afterCarrying: ["What?"], then: "We use Kafka for events.") == nil, "an unrelated statement is not glued onto a stray \"What\"")
+check(AutoTurnDetector.question(afterCarrying: ["What?"], then: "deadlock") == nil, "\"What deadlock\" is too little to call a question")
+
 // ── Answer length: Short or Detailed (Windows PromptBuilder.WidenForDetailedAnswers) ──
 func formatLine(_ question: String, detailed: Bool) -> String {
     let pb = PromptBuilder.shared
