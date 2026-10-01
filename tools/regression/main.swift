@@ -431,6 +431,11 @@ check(slow?.prefix == "What is a", "...and the prefix that goes back on the fron
 check(AutoTurnDetector.question(afterCarrying: ["What?", "Is a"], then: "deadlock")?.question == "What is a deadlock", "...with no question mark too")
 check(AutoTurnDetector.question(afterCarrying: ["How do you"], then: "handle retries in a payment service?")?.question == "How do you handle retries in a payment service?", "How do you / handle retries")
 check(AutoTurnDetector.question(afterCarrying: ["Tell me about"], then: "Java")?.question != nil || true, "(shape check only)")
+// The same question asked again: an echo for a few seconds, a real question after that.
+let rq = "How would you design a rate limiter for a public API?", ra = "A token bucket per client, refilled at the allowed rate."
+check(AutoTurnDetector.isEchoOfPrevious(rq, lastQuestion: rq, lastAnswer: ra, secondsSinceAnswer: 3), "the same question 3 seconds later is the late copy of it")
+check(!AutoTurnDetector.isEchoOfPrevious(rq, lastQuestion: rq, lastAnswer: ra, secondsSinceAnswer: 40), "the same question 40 seconds later is the interviewer asking again, and gets answered")
+check(AutoTurnDetector.isEchoOfPrevious(ra, lastQuestion: rq, lastAnswer: ra, secondsSinceAnswer: 90), "reading the ANSWER back is an echo however long after")
 check(AutoTurnDetector.carriedPrefixLeavesSentenceOpen(["How would you"]), "\"How would you\" stops mid-sentence")
 check(AutoTurnDetector.carriedPrefixLeavesSentenceOpen(["What?", "Is a"]), "\"What is a\" stops mid-sentence")
 check(!AutoTurnDetector.carriedPrefixLeavesSentenceOpen(["What is Docker"]), "a whole question does not stop mid-sentence")

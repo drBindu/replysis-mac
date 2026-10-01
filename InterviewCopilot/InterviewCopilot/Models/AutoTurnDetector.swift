@@ -166,15 +166,25 @@ struct AutoTurnDetector {
     /// Filler words are dropped first, since the recogniser inserts them into read speech.
     /// Below five words it does not judge: too few pairs for a ratio to mean anything, and
     /// swallowing a real follow-up is worse than one repeated answer.
-    static func isEchoOfPrevious(_ text: String, lastQuestion: String, lastAnswer: String) -> Bool {
+    ///
+    /// - Parameter secondsSinceAnswer: how long ago the last question was submitted. The same
+    ///   question again is an echo only while that echo can still be arriving (duplicateWindow).
+    ///   After that it is the interviewer asking again, and it was being ignored for good:
+    ///   "How would you design a rate limiter?", asked a second time a minute later, got no
+    ///   answer at all (found by testing, 2026-10-01). Reading the ANSWER aloud is a different
+    ///   test below and has no time limit.
+    static func isEchoOfPrevious(_ text: String, lastQuestion: String, lastAnswer: String,
+                                 secondsSinceAnswer: TimeInterval = 0) -> Bool {
         // The same question again, at any length, before the floor below. "So what is Java"
         // straight after "What is Java" has only four words and must still be caught.
         let a = strippedForRepeat(text), b = strippedForRepeat(lastQuestion)
-        if !a.isEmpty, a == b { return true }
+        if !a.isEmpty, a == b, secondsSinceAnswer < duplicateWindow { return true }
 
         let spoken = readBackTokens(text)
         guard spoken.count >= 5 else { return false }
-        let ref = readBackTokens(lastQuestion + " " + lastAnswer)
+        // Past the window the QUESTION is no longer a thing to echo, only the answer is: the
+        // interviewer asking it again must not look like it is being read back.
+        let ref = readBackTokens((secondsSinceAnswer < duplicateWindow ? lastQuestion + " " : "") + lastAnswer)
         guard ref.count >= 2 else { return false }
         var refPairs = Set<String>()
         for i in 0..<(ref.count - 1) { refPairs.insert(ref[i] + " " + ref[i + 1]) }

@@ -2683,7 +2683,11 @@ class MainViewModel {
 
         // The question again, late: the microphone hearing the speakers after the system tap
         // already delivered it. Joining it on would re-answer a stutter. See repeatsQuestion.
-        if !lastAnsweredQuestion.isEmpty, AutoTurnDetector.repeatsQuestion(text, lastAnsweredQuestion) {
+        // Only while that late copy can still be arriving. A minute later it is the interviewer
+        // asking again, and is answered like any other question.
+        if !lastAnsweredQuestion.isEmpty,
+           Date().timeIntervalSince(lastAnsweredAt) < AutoTurnDetector.duplicateWindow,
+           AutoTurnDetector.repeatsQuestion(text, lastAnsweredQuestion) {
             dlog("AUTO: the question heard a second time — stepping past: '\(text.prefix(40))'", tag: "AUTO")
             carryFragment(text)
             consumedPrefix = rawNow
@@ -2876,7 +2880,8 @@ class MainViewModel {
         if !speechBeganWhileLoading,
            AutoTurnDetector.isEchoOfPrevious(text,
                                              lastQuestion: lastAnsweredQuestion,
-                                             lastAnswer: lastAnsweredAnswer) {
+                                             lastAnswer: lastAnsweredAnswer,
+                                             secondsSinceAnswer: Date().timeIntervalSince(lastAnsweredAt)) {
             dlog("AUTO: that is our own previous turn being read back — not answering again",
                  tag: "AUTO")
             consumedPrefix = engine.readLatestTxt()
