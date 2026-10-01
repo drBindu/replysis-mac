@@ -20,7 +20,7 @@ enum ListeningProblems {
     enum Kind: CaseIterable {
         case noListeningTime, noAnswers, signInExpired, serviceUnavailable
         case waitingToReconnect, noMicrophone, noSpeechService, noNetwork
-        case anotherDevice
+        case anotherDevice, poorConnection
     }
 
     enum NextStep { case none, seePlans, moreAnswers }
@@ -70,6 +70,16 @@ enum ListeningProblems {
                 title: "Another device is using your account",
                 body: "Listening is already in use on this account. That usually means Replysis is open on another device, such as your Windows PC or another Mac. Close it there, or sign out there, and listening starts here by itself.",
                 step: .none)
+        case .poorConnection:
+            // Seen on a phone hotspot losing one packet in five: the speech connection timed out
+            // opening, was dropped for silence, and rejected with a timeout, over and over, and
+            // the only words on screen were "Connecting". The cause is the connection, so the
+            // words say so and say what fixes it.
+            return Description(
+                label: "WEAK CONNECTION",
+                title: "Your internet connection is unstable",
+                body: "Replysis cannot hold a steady connection to the speech service, so listening is delayed or cut off. This usually means a weak connection, such as a phone hotspot or a busy network. It keeps trying by itself. A stronger wireless network or a cable connection fixes it.",
+                step: .none)
         case .waitingToReconnect:
             return Description(
                 label: "RECONNECTING",
@@ -97,11 +107,21 @@ enum ListeningProblems {
         }
     }
 
+    /// A line from the speech engine describing the connection failing for the usual reasons of a
+    /// weak link: the handshake timing out, the session dropped for want of data that never got
+    /// through, a rejection with a timeout. Not an auth failure and not a full account.
+    static func isConnectionTrouble(_ line: String) -> Bool {
+        let low = line.lowercased()
+        return low.contains("timed out during opening handshake") || low.contains("http 408")
+            || low.contains("keepalive ping timeout") || low.contains("did not receive audio data")
+            || low.contains("no close frame")
+    }
+
     /// The state the app is in, from the facts it already tracks. nil when nothing is wrong.
     static func detect(engineOnline: Bool, speechStatusCode: Int, outOfListeningTime: Bool,
                        outOfAnswers: Bool, waitingToRetry: Bool, fatalNoMicrophone: Bool,
                        connectionStalled: Bool, noNetwork: Bool = false,
-                       anotherDevice: Bool = false) -> Kind? {
+                       anotherDevice: Bool = false, poorConnection: Bool = false) -> Kind? {
         if engineOnline { return nil }
         // A definite refusal outlives whatever the server said most recently. After a "no
         // listening time" the app kept asking, hit the hourly request limit, and the latest
@@ -116,6 +136,9 @@ enum ListeningProblems {
         if anotherDevice { return .anotherDevice }
         if speechStatusCode == 502 || speechStatusCode == 503 { return .serviceUnavailable }
         if noNetwork { return .noNetwork }
+        // Specific beats generic: repeated connection failures with the network up say more than
+        // "reconnecting" does.
+        if poorConnection { return .poorConnection }
         if waitingToRetry { return .waitingToReconnect }
         if fatalNoMicrophone { return .noMicrophone }
         if connectionStalled { return .noSpeechService }

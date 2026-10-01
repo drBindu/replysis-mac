@@ -404,6 +404,20 @@ func detectBusy(online: Bool = false, status: Int = 0, waiting: Bool = false, ne
                              outOfAnswers: false, waitingToRetry: waiting, fatalNoMicrophone: false,
                              connectionStalled: false, noNetwork: net, anotherDevice: true)
 }
+func detectWeak(online: Bool = false, status: Int = 0, waiting: Bool = false, net: Bool = false) -> ListeningProblems.Kind? {
+    ListeningProblems.detect(engineOnline: online, speechStatusCode: status, outOfListeningTime: false,
+                             outOfAnswers: false, waitingToRetry: waiting, fatalNoMicrophone: false,
+                             connectionStalled: true, noNetwork: net, anotherDevice: false, poorConnection: true)
+}
+check(detectWeak() == .poorConnection, "repeated connection failures read as an unstable connection, not just reconnecting")
+check(detectWeak(waiting: true) == .poorConnection, "...even while it waits to retry")
+check(detectWeak(online: true) == nil, "...and it clears the moment listening works")
+check(detectWeak(net: true) == .noNetwork, "no network at all is still no network")
+check(detectWeak(status: 401) == .signInExpired, "a rejected sign in is still a rejected sign in")
+check(ListeningProblems.isConnectionTrouble(">>> [DEEPGRAM] error: timed out during opening handshake"), "a handshake timeout is connection trouble")
+check(ListeningProblems.isConnectionTrouble(">>> [DEEPGRAM] HTTP 408: server rejected WebSocket connection: HTTP 408"), "an HTTP 408 is connection trouble")
+check(ListeningProblems.isConnectionTrouble(">>> [DEEPGRAM] error: received 1011 (internal error) Deepgram did not receive audio data or a text message"), "a drop for want of audio is connection trouble")
+check(!ListeningProblems.isConnectionTrouble(">>> STATUS: ONLINE"), "being online is not trouble")
 check(detectBusy() == .anotherDevice, "a full account reads as another device using it")
 check(detectBusy(waiting: true) == .anotherDevice, "...and the retry wait that follows does not turn it into reconnecting")
 check(detectBusy(online: true) == nil, "...and it clears the moment listening works")
@@ -458,6 +472,21 @@ check(AutoTurnDetector.question(afterCarrying: ["What?"], then: "deadlock") == n
 check(AutoTurnDetector.stripLeadingPleasantries("Actually, wait. Skip that. What is UDP?") == "What is UDP?", "taking back the last question is not part of the next one: \(AutoTurnDetector.stripLeadingPleasantries("Actually, wait. Skip that. What is UDP?"))")
 check(AutoTurnDetector.stripLeadingPleasantries("Sorry, what is a mutex?") == "what is a mutex?", "an apology in front is dropped")
 check(AutoTurnDetector.stripLeadingPleasantries("Waiting for a lock: what does that mean?") == "Waiting for a lock: what does that mean?", "\"wait\" must not eat the front of \"waiting\"")
+// ── The interviewer box types words in, and never trails the real text by more than a third of a second ──
+check((1...8).contains(TranscriptTyping.advance(shown: "", toward: "What is a queue?", dt: 0.04).count), "a short phrase types in, a few characters a step, not all at once")
+check(TranscriptTyping.advance(shown: "What", toward: "What", dt: 0.04) == "What", "nothing new, nothing changes")
+let revisedStep = TranscriptTyping.advance(shown: "What is a cue", toward: "What is a queue?", dt: 0.04)
+check(revisedStep.hasPrefix("What is a q") && !revisedStep.contains("cue"), "a revised word is taken back and typed again: \(revisedStep)")
+check(TranscriptTyping.advance(shown: "What is a queue? And where", toward: "What is a queue?", dt: 0.04) == "What is a queue?", "text that got shorter is cut back")
+check(TranscriptTyping.advance(shown: "abc", toward: "", dt: 0.04) == "", "an empty target clears the box")
+var shownText = ""; var typingSteps = 0
+let burst = String(repeating: "the quick brown fox ", count: 8)   // 160 characters landing at once
+while shownText != burst && typingSteps < 100 { shownText = TranscriptTyping.advance(shown: shownText, toward: burst, dt: 0.04); typingSteps += 1 }
+check(Double(typingSteps) * 0.04 <= 0.4, "a 160 character burst is fully typed within about a third of a second (took \(typingSteps) steps of 40ms)")
+var shortText = ""; var shortSteps = 0
+while shortText != "What is a queue?" && shortSteps < 100 { shortText = TranscriptTyping.advance(shown: shortText, toward: "What is a queue?", dt: 0.04); shortSteps += 1 }
+check(shortSteps >= 2 && Double(shortSteps) * 0.04 <= 0.4, "a 16 character phrase types in over a few steps, not at once, and well inside a third of a second (took \(shortSteps))")
+
 // ── Several questions in one turn: the last, unless it leans on the one before ──
 let both = AutoTurnDetector.latestQuestionIfMultiple("What is the difference between a stack and a queue? And where would you use a queue in a real system?")
 check(both == "What is the difference between a stack and a queue? And where would you use a queue in a real system?", "a second question about the same thing keeps the first: \(both ?? "nil")")

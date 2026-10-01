@@ -27,7 +27,31 @@ class MainViewModel {
     /// and the box used to follow it, leaving the answer with no question beside it. Replaced the
     /// moment the interviewer speaks again, and cleared with the session.
     private(set) var lastQuestionShown = ""
-    var transcriptForDisplay: String { transcript.isEmpty ? lastQuestionShown : transcript }
+    var transcriptForDisplay: String { transcript.isEmpty ? lastQuestionShown : typedTranscript }
+
+    /// What the interviewer box shows of `transcript`: typed in, a few characters at a time, so a
+    /// burst of words flows instead of landing as a lump. Display only. See TranscriptTyping.
+    private(set) var typedTranscript = ""
+    @ObservationIgnored private var typingTimer: Timer?
+
+    private func startTypingTimer() {
+        guard typingTimer == nil else { return }
+        typingTimer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.tickTyping() }
+        }
+    }
+
+    private func tickTyping() {
+        let target = transcript
+        // Nothing to type, or the person has asked their Mac for less motion.
+        if target.isEmpty || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            if typedTranscript != target { typedTranscript = target }
+            return
+        }
+        guard typedTranscript != target else { return }
+        let next = TranscriptTyping.advance(shown: typedTranscript, toward: target, dt: 0.04)
+        if next != typedTranscript { typedTranscript = next }
+    }
     var aiAnswerHint = "Ready. Press SPACE to start listening, then SPACE again to get your answer."
 
     /// The idle prompt must match the ACTIVE mode. It was hardcoded to the manual
@@ -1009,8 +1033,17 @@ class MainViewModel {
         // to say "no speech was captured".
         var heardAudioJustNow = micCaptureActive
         if #available(macOS 14.2, *), SystemAudioTapper.shared.secondsSinceAudio < 3.0 { heardAudioJustNow = true }
-        let emptyTicksNeeded  = heardAudioJustNow ? 110 : 20     // 2.2s, or 400ms of nothing at all
-        let maxTicks = heardAudioJustNow ? 130 : 64              // hard ceiling: 2.6s, or ~1.28s
+        // On a poor connection the first words have been seen to take 5 seconds to come back, so
+        // when audio was heard the wait is long, and says what it is waiting for.
+        let emptyTicksNeeded  = heardAudioJustNow ? 300 : 20     // 6s, or 400ms of nothing at all
+        let maxTicks = heardAudioJustNow ? 450 : 64              // hard ceiling: 9s, or ~1.28s
+        let pressedAt = Date()
+        // When the last sound was heard, so an end-of-sentence signal from BEFORE it is not
+        // mistaken for the end of what is still arriving.
+        var lastSoundAt = Date.distantPast
+        if #available(macOS 14.2, *), SystemAudioTapper.shared.lastAudioAt > 0 {
+            lastSoundAt = Date(timeIntervalSinceReferenceDate: SystemAudioTapper.shared.lastAudioAt)
+        }
 
         var question = engine.readLatestTxt().trimmingCharacters(in: .whitespacesAndNewlines)
         var stable = 0
@@ -1029,9 +1062,15 @@ class MainViewModel {
                 question = t; stable = 0; empty = 0
             } else if !question.isEmpty {
                 stable += 1
-                let needed = AutoTurnDetector.classifyTurnEnding(question) == .finished
-                    ? stableTicksFinished : stableTicksUnfinished
-                if stable >= needed { break }
+                let ending = AutoTurnDetector.classifyTurnEnding(question)
+                let needed = ending == .finished ? stableTicksFinished : stableTicksUnfinished
+                // Text that still stops mid-sentence, with the voice only just over: the rest is
+                // arriving late (on a poor connection the words were seen 8 seconds behind, and the
+                // question was answered as its first 58 characters, the rest thrown away when the
+                // engine paused). Wait for the recogniser to say the sentence is over.
+                let sentenceOver = engine.lastUtteranceEndAt > pressedAt || engine.lastUtteranceEndAt > lastSoundAt
+                let lateWords = heardAudioJustNow && ending != .finished && !sentenceOver
+                if stable >= needed && !lateWords { break }
             } else {
                 empty += 1
                 if empty >= emptyTicksNeeded { break }
@@ -1352,6 +1391,7 @@ class MainViewModel {
                 case "finish": Task { _ = await self.finishInterview() }
                 case "closesessions": self.sessionsOpen = false
                 case "busy":   self.engine.debugSimulateConcurrencyRefusal()
+                case "weak":   self.engine.debugSimulateConnectionTrouble()
                 default: break
                 }
             }
@@ -2210,6 +2250,7 @@ class MainViewModel {
 
     // MARK: - Transcript Polling
     private func startTranscriptTimer() {
+        startTypingTimer()
         guard transcriptTimer == nil else { return }
         transcriptTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.updateTranscript() }
@@ -4039,7 +4080,8 @@ class MainViewModel {
             fatalNoMicrophone: micCaptureEnabled && micStatus == "NO MIC" && AVCaptureDevice.authorizationStatus(for: .audio) == .denied,
             connectionStalled: stalled,
             noNetwork: !network.isUp,
-            anotherDevice: engine.accountBusy)
+            anotherDevice: engine.accountBusy,
+            poorConnection: network.isUp && engine.connectionIsPoor)
         currentProblem = problem
         if let problem { showProblemOnce(problem) } else { problemsShown.removeAll() }
     }

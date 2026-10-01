@@ -21,6 +21,9 @@ class SpeechmaticsEngine {
     /// Fired when the recogniser reports, from the AUDIO, that the speaker has stopped.
     /// This is the real end-of-turn signal; everything text-based is a guess at it.
     var onUtteranceEnd: (() -> Void)?
+    /// When the recogniser last said a sentence was over, in any mode. Manual reads it to know the
+    /// tail of a question has arrived.
+    private(set) var lastUtteranceEndAt = Date.distantPast
 
     // ── Is the engine DEAF? ───────────────────────────────────────────────────
     //
@@ -516,6 +519,9 @@ class SpeechmaticsEngine {
             if !trimmed.isEmpty {
                 Task { @MainActor in dlog("SM \(source): \(trimmed)", tag: "SM") }
             }
+            if ListeningProblems.isConnectionTrouble(line) {
+                Task { @MainActor [weak self] in self?.noteConnectionTrouble() }
+            }
             if Self.isConcurrencyLimit(line) {
                 Task { @MainActor [weak self] in self?.handleConcurrencyLimit() }
             } else if Self.isAuthFailure(line) {
@@ -570,7 +576,10 @@ class SpeechmaticsEngine {
             // drop; watchForExit() below is the crash.
             // CONTRACT:RUNTIME — see ENGINE_CONTRACT.md and verify_engine_contract.py
             if line.contains("UTTERANCE END") {
-                Task { @MainActor [weak self] in self?.onUtteranceEnd?() }
+                Task { @MainActor [weak self] in
+                    self?.lastUtteranceEndAt = Date()
+                    self?.onUtteranceEnd?()
+                }
             }
             // CONTRACT:ONFAIL — see ENGINE_CONTRACT.md and verify_engine_contract.py
             //
@@ -610,6 +619,20 @@ class SpeechmaticsEngine {
         let low = line.lowercased()
         return low.contains("contract blocked") || low.contains("credit balance exhausted")
     }
+
+    private var connectionTroubleTimes: [Date] = []
+    private func noteConnectionTrouble() {
+        let now = Date()
+        connectionTroubleTimes = connectionTroubleTimes.filter { now.timeIntervalSince($0) < 90 } + [now]
+    }
+    /// Two or more of those in the last 90 seconds: not a hiccup, a weak connection.
+    var connectionIsPoor: Bool {
+        let now = Date()
+        return connectionTroubleTimes.filter { now.timeIntervalSince($0) < 90 }.count >= 2
+    }
+    #if DEBUG
+    func debugSimulateConnectionTrouble() { noteConnectionTrouble(); noteConnectionTrouble() }
+    #endif
 
     /// Speechmatics refusing because the ACCOUNT already has its allowed number of live
     /// sessions. Distinct from an auth failure: the key is fine and it clears by itself once
