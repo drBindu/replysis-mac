@@ -217,6 +217,23 @@ struct AutoTurnDetector {
     /// when something substantial remains after it, so "Hello, how are you?" is untouched
     /// while "Hello, how are you, what is Java?" becomes "what is Java".
     static func stripLeadingPleasantries(_ text: String) -> String {
+        let withoutTakeBacks = strippingTakeBacks(text)
+        if withoutTakeBacks != text { return stripLeadingPleasantries(withoutTakeBacks) }
+        return stripGreetings(text)
+    }
+
+    /// Taking back what was said just before the question ("Actually, wait. Skip that. What is
+    /// UDP?") is not part of what is asked, and it was being shown and sent as if it were.
+    /// Punctuation between the words is ignored, because the recogniser puts it anywhere.
+    /// Never strips down to less than a question: two words have to remain.
+    static func strippingTakeBacks(_ text: String) -> String {
+        let pattern = #"^(?:[\s,.!?-]*(?:actually|oh|um|uh|ok|okay)?[\s,.!?-]*(?:wait|hold on|never ?mind|scratch that|skip that|forget that|forget it|sorry(?: about that)?)(?![A-Za-z']))+[\s,.!?-]*"#
+        guard let range = text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) else { return text }
+        let rest = String(text[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return rest.split(separator: " ").count >= 2 ? rest : text
+    }
+
+    private static func stripGreetings(_ text: String) -> String {
         // Longest first: "how are you doing" must be tried before "how are you".
         let openers = ["good morning", "good afternoon", "good evening",
                        "nice to meet you", "how are you doing today", "how are you today",
@@ -808,7 +825,41 @@ struct AutoTurnDetector {
         // their question mark; a trailing "What is a memory" is still being said, and
         // answering that half asks the model about nothing. It arrives on its own turn.
         let finished = questions.filter { $0.hasSuffix("?") || $0.hasSuffix("!") }
-        return finished.last ?? questions.last
+        guard let last = finished.last ?? questions.last else { return nil }
+        // A second question that leans on the first is one question asked in two breaths: "What is
+        // the difference between a stack and a queue? And where would you use a queue in a real
+        // system?" Answering only the last threw the first away, and the recogniser decides where
+        // the full stop goes, so the same sentence arrived either way. Both go together.
+        if let at = questions.lastIndex(of: last), at > 0,
+           leansOnEarlierQuestion(last, earlier: questions[at - 1]) {
+            return questions[at - 1] + " " + last
+        }
+        return last
+    }
+
+    /// Words that carry no subject. What a question is ABOUT is whatever is left.
+    private static let subjectlessWords: Set<String> = [
+        "what", "whats", "is", "are", "was", "were", "a", "an", "the", "and", "or", "also", "plus", "but", "then",
+        "where", "when", "why", "how", "who", "which", "do", "does", "did", "can", "could", "would", "will",
+        "should", "you", "your", "i", "we", "it", "that", "this", "in", "on", "of", "to", "for", "with", "about",
+        "use", "used", "real", "difference", "between", "me", "tell", "explain", "describe", "give", "example",
+    ]
+
+    /// The later question starts with a joining word and is about something the earlier one was
+    /// about, or points back at it with "it", "that", "this", "them". "And what is a monitor?"
+    /// after "What is a semaphore?" is a new question about something else, and stays alone.
+    static func leansOnEarlierQuestion(_ later: String, earlier: String) -> Bool {
+        let l = later.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if l.range(of: #"\b(it|that|this|them|those|these|there|the same|instead|again)\b"#, options: .regularExpression) != nil {
+            return true
+        }
+        guard ["and ", "also ", "plus ", "or ", "but ", "then "].contains(where: { l.hasPrefix($0) }) else { return false }
+        func subjects(_ s: String) -> Set<String> {
+            Set(s.lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { $0.count > 2 && !subjectlessWords.contains($0) })
+        }
+        return !subjects(l).isDisjoint(with: subjects(earlier))
     }
 
     /// Does this addition BELONG to the question just asked, or is it a new question?

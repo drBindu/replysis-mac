@@ -449,6 +449,17 @@ check(AutoTurnDetector.question(afterCarrying: [], then: "deadlock?") == nil, "n
 check(AutoTurnDetector.question(afterCarrying: ["What?"], then: "We use Kafka for events.") == nil, "an unrelated statement is not glued onto a stray \"What\"")
 check(AutoTurnDetector.question(afterCarrying: ["What?"], then: "deadlock") == nil, "\"What deadlock\" is too little to call a question")
 
+check(AutoTurnDetector.stripLeadingPleasantries("Actually, wait. Skip that. What is UDP?") == "What is UDP?", "taking back the last question is not part of the next one: \(AutoTurnDetector.stripLeadingPleasantries("Actually, wait. Skip that. What is UDP?"))")
+check(AutoTurnDetector.stripLeadingPleasantries("Sorry, what is a mutex?") == "what is a mutex?", "an apology in front is dropped")
+check(AutoTurnDetector.stripLeadingPleasantries("Waiting for a lock: what does that mean?") == "Waiting for a lock: what does that mean?", "\"wait\" must not eat the front of \"waiting\"")
+// ── Several questions in one turn: the last, unless it leans on the one before ──
+let both = AutoTurnDetector.latestQuestionIfMultiple("What is the difference between a stack and a queue? And where would you use a queue in a real system?")
+check(both == "What is the difference between a stack and a queue? And where would you use a queue in a real system?", "a second question about the same thing keeps the first: \(both ?? "nil")")
+check(AutoTurnDetector.latestQuestionIfMultiple("What is a thread? How does it differ from a process?") == "What is a thread? How does it differ from a process?", "\"it\" points back, so both go together")
+check(AutoTurnDetector.latestQuestionIfMultiple("What is a mutex? What is a semaphore? And what is a monitor?") == "And what is a monitor?", "an \"And\" about something new stays alone")
+check(AutoTurnDetector.latestQuestionIfMultiple("What is a thread pool? What is garbage collection? What is a memory") == "What is garbage collection?", "the last FINISHED question, as before")
+check(AutoTurnDetector.latestQuestionIfMultiple("Our team runs 40 services. How would you debug one?") == nil, "context plus one question stays whole")
+
 // ── Answer length: Short or Detailed (Windows PromptBuilder.WidenForDetailedAnswers) ──
 func formatLine(_ question: String, detailed: Bool) -> String {
     let pb = PromptBuilder.shared
