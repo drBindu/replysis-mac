@@ -650,6 +650,12 @@ class SpeechmaticsEngine {
     var accountBusy: Bool { concurrencyBlockedUntil.map { Date() < $0 } ?? false }
 
     var onConcurrencyLimit: (() -> Void)?
+
+    #if DEBUG
+    /// For the flow test only: the speech service cannot be made to refuse on demand, so this
+    /// runs the same handler a real refusal runs.
+    func debugSimulateConcurrencyRefusal() { handleConcurrencyLimit() }
+    #endif
     private var concurrencyHandled = false
 
     /// Stop hammering, and say what is actually wrong.

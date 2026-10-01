@@ -1325,6 +1325,7 @@ class MainViewModel {
                 case "back":   self.backToSetup()
                 case "finish": Task { _ = await self.finishInterview() }
                 case "closesessions": self.sessionsOpen = false
+                case "busy":   self.engine.debugSimulateConcurrencyRefusal()
                 default: break
                 }
             }
