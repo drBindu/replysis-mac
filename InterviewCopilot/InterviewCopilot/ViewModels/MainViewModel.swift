@@ -34,6 +34,24 @@ class MainViewModel {
     private(set) var typedTranscript = ""
     @ObservationIgnored private var typingTimer: Timer?
 
+    /// Write this interview's own words for the speech engine to listen for. Plain text, because
+    /// the engine reads the file directly, so VocabTerms keeps personal details out of it. Only
+    /// the count is logged, never the terms.
+    private func writeVocabFile() {
+        let blob = [companyName, jobDescription, liveHints, resumeText].joined(separator: "\n")
+        let terms = VocabTerms.extract(from: blob, company: companyName)
+        let url = engine.appDataFolder.appendingPathComponent("vocab.txt")
+        do {
+            try terms.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            dlog(terms.isEmpty
+                 ? "VOCAB: no terms written; the engine only has its built-in list (resume \(resumeText.count) chars, company \(companyName.count), description \(jobDescription.count))"
+                 : "VOCAB: wrote \(terms.count) interview terms for the speech engine", tag: "VOCAB")
+        } catch {
+            dlog("VOCAB: could not write the terms file: \(error.localizedDescription)", tag: "VOCAB")
+        }
+    }
+
     private func startTypingTimer() {
         guard typingTimer == nil else { return }
         typingTimer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] _ in
@@ -374,6 +392,7 @@ class MainViewModel {
         engine.onKeyError = { [weak self] in self?.handleSpeechKeyError() }
         // Tell the user the one thing they can act on. Before this it showed "connecting"
         // forever, because a concurrency refusal matched none of the failure tests.
+        engine.prepareVocabulary = { [weak self] in self?.writeVocabFile() }
         engine.onConcurrencyLimit = { [weak self] in
             guard let self else { return }
             // The words live in ListeningProblems with the rest, so a test covers them. The
@@ -1378,24 +1397,47 @@ class MainViewModel {
     /// DEBUG builds only: "start:6,back:4,finish:4" runs each step, waiting N seconds after it.
     func runFlowScriptIfAny() {
         guard let script = DeveloperOverrides.flowScript, !script.isEmpty else { return }
+        // "watch": take one action name per line from a file, so a test driver can press the
+        // app's own controls between the things it says and the keys it sends.
+        if script == "watch" {
+            let url = engine.appDataFolder.appendingPathComponent("flow.cmd")
+            Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, let text = try? String(contentsOf: url, encoding: .utf8) else { return }
+                    try? FileManager.default.removeItem(at: url)
+                    for line in text.split(separator: "\n") { self.performFlowAction(String(line)) }
+                }
+            }
+            return
+        }
         var delay: TimeInterval = 8          // let the window settle first
         for part in script.split(separator: ",") {
             let bits = part.split(separator: ":")
             let action = String(bits.first ?? ""), wait = TimeInterval(bits.dropFirst().first ?? "3") ?? 3
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                guard let self else { return }
-                dlog("FLOWSCRIPT: \(action)", tag: "FLOW")
-                switch action {
-                case "start":  self.startInterview()
-                case "back":   self.backToSetup()
-                case "finish": Task { _ = await self.finishInterview() }
-                case "closesessions": self.sessionsOpen = false
-                case "busy":   self.engine.debugSimulateConcurrencyRefusal()
-                case "weak":   self.engine.debugSimulateConnectionTrouble()
-                default: break
-                }
-            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.performFlowAction(action) }
             delay += wait
+        }
+    }
+
+    private func performFlowAction(_ action: String) {
+        dlog("FLOWSCRIPT: \(action)", tag: "FLOW")
+        switch action {
+        case "start":  startInterview()
+        case "back":   backToSetup()
+        case "finish": Task { _ = await finishInterview() }
+        case "closesessions": sessionsOpen = false
+        case "busy":   engine.debugSimulateConcurrencyRefusal()
+        case "weak":   engine.debugSimulateConnectionTrouble()
+        // The buttons on the answer bar and the history controls, pressed by name.
+        case "clear":    clearAnswer()
+        case "new":      newSession()
+        case "short":    setAnswerDetailed(false)
+        case "detailed": setAnswerDetailed(true)
+        case "prev":     showPreviousAnswer()
+        case "next":     showNextAnswer()
+        case "live":     returnToLive()
+        case "dump":     dlog("FLOWSTATE: step=\(appStep) sessions=\(sessionsOpen) answer='\(aiAnswer.prefix(60))' transcript='\(transcript.prefix(40))' shownQuestion='\(transcriptForDisplay.prefix(40))' history=\(answerHistory.count) detailed=\(answerDetailed)", tag: "FLOW")
+        default: break
         }
     }
 
@@ -3600,7 +3642,6 @@ class MainViewModel {
         lastSpeechHeardAt = Date()
         heardAnythingThisSession = false
         engine.resetDeafDetection()   // a fresh turn never starts already accused
-        answerHistory.removeAll(); historyIndex = nil; newerAnswerWaiting = false; newerAnswerCount = 0
         listeningNoticeTimer?.invalidate(); listeningNotice = ""   // a new session, not the old one's news
         listeningMeterTimer?.invalidate()
         listeningMeterTimer = Timer.scheduledTimer(withTimeInterval: Self.listeningMeterInterval,
@@ -3848,6 +3889,15 @@ class MainViewModel {
     }
 
     // MARK: - Session
+    /// The answers of the interview just ended are not the next one's. Emptied when a SESSION
+    /// begins. It used to be emptied every time listening started, which in Manual is every press
+    /// of Space, so only the latest answer was ever there to go back to (found by testing,
+    /// 2026-10-01: three answers, "showing answer 1 of 1").
+    private func resetAnswerHistory() {
+        answerHistory.removeAll(); historyIndex = nil
+        newerAnswerWaiting = false; newerAnswerCount = 0
+    }
+
     func startNewSession() {
         prepareSession()
         // In the Interview step a new session starts the interview clock at once (New Session
@@ -3858,6 +3908,7 @@ class MainViewModel {
     /// A session file and number, ready for the first answer. Does NOT start listening, the
     /// timer, or anything that watches the screen: on the Setup page none of that may run.
     private func prepareSession() {
+        resetAnswerHistory()
         // BUG FIX: refresh the global-hotkey gate now that we're logged in. Session restore
         // is async, so the gate was seeded as "signed out" at launch and Space wasn't being
         // handled globally until the user first interacted with the app (e.g. opened the

@@ -158,6 +158,9 @@ class SpeechmaticsEngine {
     /// Set when Speechmatics refuses on concurrency. Until it passes, starting is refused.
     private var concurrencyBlockedUntil: Date?
 
+    /// Called just before the engine is launched, so vocab.txt is written fresh. See VocabTerms.
+    var prepareVocabulary: (() -> Void)?
+
     func start(smKey: String) {
         startedAt = Date()
         // The gate lives HERE because six places in MainViewModel call start() directly and
@@ -182,6 +185,7 @@ class SpeechmaticsEngine {
             return
         }
         isStarting = true
+        prepareVocabulary?()
         // BUG-7 FIX: cancel any pending retry timer — a manual/auto start supersedes it.
         retryTimer?.invalidate(); retryTimer = nil
 

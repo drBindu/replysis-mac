@@ -487,6 +487,19 @@ var shortText = ""; var shortSteps = 0
 while shortText != "What is a queue?" && shortSteps < 100 { shortText = TranscriptTyping.advance(shown: shortText, toward: "What is a queue?", dt: 0.04); shortSteps += 1 }
 check(shortSteps >= 2 && Double(shortSteps) * 0.04 <= 0.4, "a 16 character phrase types in over a few steps, not at once, and well inside a third of a second (took \(shortSteps))")
 
+// ── Interview vocabulary for the speech engine (Windows ExtractVocabTerms) ──
+let sampleResume = "Senior engineer at Acme Corp. Built Kafka pipelines on AWS using PostgreSQL, Node.js and TypeScript. Contact pavan@example.com, +1 555 123 4567, github.com/pavan, pavankrishna2528. Based in IL. Led the Kubernetes migration. Kubernetes cluster operations. Used gpt-oss-20b and C++ and CI/CD."
+let vocab = VocabTerms.extract(from: sampleResume, company: "Acme Corp")
+for term in ["Acme Corp", "AWS", "PostgreSQL", "Node.js", "TypeScript", "Kubernetes", "C++", "gpt-oss-20b"] {
+    check(vocab.contains(term), "vocabulary keeps \(term)")
+}
+for term in ["pavan@example.com", "github.com/pavan", "pavankrishna2528", "IL", "555", "4567", "CI/CD", "Senior", "Contact"] {
+    check(!vocab.contains(term), "vocabulary leaves out \(term)")
+}
+check(vocab.first == "Acme Corp", "the company goes first")
+check(VocabTerms.extract(from: String(repeating: "Alpha1 Beta2 Gamma3 ", count: 200) + (0..<400).map { "Term\($0)X" }.joined(separator: " "), company: "").count <= VocabTerms.limit, "never more than \(VocabTerms.limit) terms")
+check(VocabTerms.isPersonalDetail("a@b.com") && VocabTerms.isPersonalDetail("linkedin.com") && !VocabTerms.isPersonalDetail(".NET"), ".NET is a framework, a domain is not")
+check(VocabTerms.extract(from: "", company: "").isEmpty, "nothing in, nothing out")
 // ── Several questions in one turn: the last, unless it leans on the one before ──
 let both = AutoTurnDetector.latestQuestionIfMultiple("What is the difference between a stack and a queue? And where would you use a queue in a real system?")
 check(both == "What is the difference between a stack and a queue? And where would you use a queue in a real system?", "a second question about the same thing keeps the first: \(both ?? "nil")")
