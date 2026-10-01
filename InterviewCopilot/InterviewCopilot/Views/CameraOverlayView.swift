@@ -122,7 +122,7 @@ struct AnswerOverlayView: View {
 
             // Show the interviewer's question whenever we're listening OR have captured
             // text — with a "Listening…" placeholder — so the question area is never blank.
-            if vm.isListening || !vm.transcript.isEmpty {
+            if vm.isListening || !vm.transcriptForDisplay.isEmpty {
                 divider
                 ScrollView {
                     transcriptRow.background(GeometryReader { geometry in
@@ -256,9 +256,9 @@ struct AnswerOverlayView: View {
                 .padding(.horizontal, 6).padding(.vertical, 3)
                 .background(Color(hex: "#0d2540"))
                 .cornerRadius(4)
-            Text(vm.transcript.isEmpty ? "Listening…" : vm.transcript)
+            Text(vm.transcriptForDisplay.isEmpty ? "Listening…" : vm.transcriptForDisplay)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(vm.transcript.isEmpty
+                .foregroundColor(vm.transcriptForDisplay.isEmpty
                                  ? Color(hex: "#64748b") : Color(hex: "#cbd5e1"))
                 .lineLimit(nil)               // show the FULL question — never truncate
                 .fixedSize(horizontal: false, vertical: true)

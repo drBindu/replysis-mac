@@ -185,6 +185,10 @@ class SpeechmaticsEngine {
         engineCancelled = false
         stoppedByUser = false      // a fresh start supersedes any earlier deliberate stop
         authErrorHandled = false   // fresh start → allow a new auth error to be reported
+        // Same for a concurrency refusal. This flag was never cleared, so only the FIRST refusal
+        // in a whole app run was handled; every later one returned at the guard, nothing
+        // blocked the restarts and nothing told the person why.
+        concurrencyHandled = false
         isReady = false            // becomes true when the engine reports it's online
         nukePreviousProcesses()
         killAndDispose()
@@ -641,6 +645,9 @@ class SpeechmaticsEngine {
     /// Speechmatics rejected the key. Stop the futile fast-retry loop, tell the UI, and
     /// switch to a slow 60s re-fetch so we auto-recover the moment the server key is fixed.
     private(set) var balanceExhausted = false
+
+    /// True while the account is known to be full. The window reads this to explain itself.
+    var accountBusy: Bool { concurrencyBlockedUntil.map { Date() < $0 } ?? false }
 
     var onConcurrencyLimit: (() -> Void)?
     private var concurrencyHandled = false

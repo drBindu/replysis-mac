@@ -379,6 +379,18 @@ check(detect(waiting: true) == .waitingToReconnect, "waiting to retry reads as r
 check(detect(mic: true) == .noMicrophone, "no microphone")
 check(detect(stalled: true) == .noSpeechService, "connection stalled")
 check(detect(net: true) == .noNetwork, "no network")
+func detectBusy(online: Bool = false, status: Int = 0, waiting: Bool = false, net: Bool = false) -> ListeningProblems.Kind? {
+    ListeningProblems.detect(engineOnline: online, speechStatusCode: status, outOfListeningTime: false,
+                             outOfAnswers: false, waitingToRetry: waiting, fatalNoMicrophone: false,
+                             connectionStalled: false, noNetwork: net, anotherDevice: true)
+}
+check(detectBusy() == .anotherDevice, "a full account reads as another device using it")
+check(detectBusy(waiting: true) == .anotherDevice, "...and the retry wait that follows does not turn it into reconnecting")
+check(detectBusy(online: true) == nil, "...and it clears the moment listening works")
+check(detect(status: 402, listening: false, answers: true) == .noAnswers, "no answers still wins over a busy account")
+let other = ListeningProblems.describe(.anotherDevice)
+check(other.title == "Another device is using your account", "another device: exact title")
+check(other.body.contains("Windows PC or another Mac") && other.body.contains("sign out there"), "another device: says which device and what to do")
 // THE case that hid the reason on Windows: refused, then the app kept asking, hit the hourly
 // limit, and the newest status became 429 ("too many requests"). The refusal must outlive it.
 check(detect(status: 429, listening: true) == .noListeningTime, "a listening refusal outlives a later rate limit")
@@ -411,6 +423,24 @@ check(formatLine("What is Docker?", detailed: true).contains(PromptBuilder.easyT
 check(!formatLine("Write a function that reverses a string in Python.", detailed: false).contains(PromptBuilder.easyToSayRule), "code does not carry the easy-to-say rule")
 check(PromptBuilder.easyToSayRule.contains("no semicolons, brackets or symbols"), "easy-to-say rule text")
 check(!formatLine("Tell me about yourself.", detailed: false).contains("BREVITY MODE"), "the old brevity mode is gone")
+
+// ── gzip of the answer request: must round-trip through the system gunzip, byte for byte ──
+func gunzip(_ d: Data) -> Data? {
+    let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/gunzip"); p.arguments = ["-c"]
+    let i = Pipe(), o = Pipe(); p.standardInput = i; p.standardOutput = o; p.standardError = Pipe()
+    do { try p.run() } catch { return nil }
+    DispatchQueue.global().async { i.fileHandleForWriting.write(d); try? i.fileHandleForWriting.close() }
+    let out = o.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+    return p.terminationStatus == 0 ? out : nil
+}
+let sample = Data(String(repeating: "You ARE the candidate in a live job interview right now. Answer in short spoken sentences. ", count: 180).utf8)
+let packed = Gzip.compress(sample)
+check(packed != nil && packed!.count < sample.count / 3, "gzip makes repetitive prompt text under a third of its size (\(sample.count) -> \(packed?.count ?? 0))")
+check(packed.flatMap(gunzip) == sample, "gzip output is a valid gzip file that gunzip restores byte for byte")
+check(Gzip.compress(Data("tiny".utf8)) == nil, "a body under 1 KB is sent as it is")
+let json = Data(("{\"question\":\"What is a queue?\",\"messages\":[" + (0..<40).map { "{\"role\":\"user\",\"content\":\"Question \($0) about distributed systems and databases\"}" }.joined(separator: ",") + "]}").utf8)
+check(Gzip.compress(json).flatMap(gunzip) == json, "a realistic request body round-trips")
+check(Gzip.crc32(Data("123456789".utf8)) == 0xCBF43926, "CRC-32 matches the standard check value")
 
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

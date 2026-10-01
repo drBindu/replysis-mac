@@ -20,6 +20,7 @@ enum ListeningProblems {
     enum Kind: CaseIterable {
         case noListeningTime, noAnswers, signInExpired, serviceUnavailable
         case waitingToReconnect, noMicrophone, noSpeechService, noNetwork
+        case anotherDevice
     }
 
     enum NextStep { case none, seePlans, moreAnswers }
@@ -59,6 +60,16 @@ enum ListeningProblems {
                 title: "The speech service is busy",
                 body: "Our speech service is temporarily unavailable. Replysis keeps trying on its own and will start listening again as soon as it is back. Nothing needs to be done.",
                 step: .none)
+        case .anotherDevice:
+            // Windows says "Another device is using your account" (ConcurrentSessionLimit).
+            // "Usually" is deliberate: the refusal comes from the speech service having no
+            // free place for the account, which is nearly always the same person's other
+            // device, but the app cannot see that device and must not state it as certain.
+            return Description(
+                label: "ANOTHER DEVICE",
+                title: "Another device is using your account",
+                body: "Listening is already in use on this account. That usually means Replysis is open on another device, such as your Windows PC or another Mac. Close it there, or sign out there, and listening starts here by itself.",
+                step: .none)
         case .waitingToReconnect:
             return Description(
                 label: "RECONNECTING",
@@ -89,7 +100,8 @@ enum ListeningProblems {
     /// The state the app is in, from the facts it already tracks. nil when nothing is wrong.
     static func detect(engineOnline: Bool, speechStatusCode: Int, outOfListeningTime: Bool,
                        outOfAnswers: Bool, waitingToRetry: Bool, fatalNoMicrophone: Bool,
-                       connectionStalled: Bool, noNetwork: Bool = false) -> Kind? {
+                       connectionStalled: Bool, noNetwork: Bool = false,
+                       anotherDevice: Bool = false) -> Kind? {
         if engineOnline { return nil }
         // A definite refusal outlives whatever the server said most recently. After a "no
         // listening time" the app kept asking, hit the hourly request limit, and the latest
@@ -99,6 +111,9 @@ enum ListeningProblems {
         if outOfAnswers { return .noAnswers }
         if speechStatusCode == 402 { return .noAnswers }
         if speechStatusCode == 401 { return .signInExpired }
+        // A refusal for having no free place is as definite as the two above, and the retry
+        // that follows it must not turn it into "reconnecting".
+        if anotherDevice { return .anotherDevice }
         if speechStatusCode == 502 || speechStatusCode == 503 { return .serviceUnavailable }
         if noNetwork { return .noNetwork }
         if waitingToRetry { return .waitingToReconnect }

@@ -21,6 +21,13 @@ class MainViewModel {
     // MARK: - UI Content
     var aiAnswer = ""
     var transcript = ""
+    /// The question the latest answer is FOR. The interviewer box shows this when nothing new has
+    /// been said, so the question does not vanish the moment its answer finishes: the turn logic
+    /// clears `transcript` after every answer to get ready for the next question (correctly),
+    /// and the box used to follow it, leaving the answer with no question beside it. Replaced the
+    /// moment the interviewer speaks again, and cleared with the session.
+    private(set) var lastQuestionShown = ""
+    var transcriptForDisplay: String { transcript.isEmpty ? lastQuestionShown : transcript }
     var aiAnswerHint = "Ready. Press ⌥ SPACE to start listening, then ⌥ SPACE again to get your answer."
 
     /// The idle prompt must match the ACTIVE mode. It was hardcoded to the manual
@@ -324,6 +331,9 @@ class MainViewModel {
         // The admin dashboard shows a signed-in user as "Live" from this. Each beat checks
         // the session itself, so starting it once at launch covers signing in later.
         PresenceTracker.shared.start()
+        // Keeps the answer connection warm, so the first question after a quiet minute does
+        // not pay for a new connection and a cold server (see NetworkClient.startKeepWarm).
+        NetworkClient.shared.startKeepWarm()
         guard !didAppear else { return }
         didAppear = true
         // Apply the persisted Stealth Mode setting to the window immediately — default is
@@ -342,10 +352,13 @@ class MainViewModel {
         // forever, because a concurrency refusal matched none of the failure tests.
         engine.onConcurrencyLimit = { [weak self] in
             guard let self else { return }
-            self.listeningNotice = "Another session is already running"
-            // No provider names and no durations in customer text (owner's copy rules).
-            self.aiAnswer = "Replysis is already listening somewhere else.\n\nClose any other copy of Replysis, including one on another Mac. A copy that was force quit can keep its place for a short while.\n\nListening starts again by itself as soon as it is free."
+            // The words live in ListeningProblems with the rest, so a test covers them. The
+            // window is told through the same once-per-occurrence path as every other problem.
+            let d = ListeningProblems.describe(.anotherDevice)
+            self.listeningNotice = d.title
+            self.aiAnswer = "\(d.title)\n\n\(d.body)"
             self.updateMicUI()
+            self.tickListeningProblem()
         }
         // No audio source is permitted — say so loudly rather than capturing something the
         // active mode promised not to.
@@ -1032,6 +1045,7 @@ class MainViewModel {
 
     private func startAI(manualQuestion: String? = nil) {
         let q = manualQuestion ?? extractLatestQuestion(from: transcript)
+        if !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { lastQuestionShown = q }
         // WATCH MODE: the interviewer is sharing their screen, so every question is about
         // what is on it. Answer from the screen rather than from the words alone — but only
         // now, when a question actually exists, rather than on a timer.
@@ -1333,7 +1347,7 @@ class MainViewModel {
         // prepares a fresh transcript instead of reusing the finished file.
         let needsFreshSession = !isRecording
         if needsFreshSession {
-            transcript = ""; aiAnswer = ""; answerEpoch += 1
+            transcript = ""; aiAnswer = ""; lastQuestionShown = ""; answerEpoch += 1
             liveHints = ""; saveHints()
         }
         appStep = .interview
@@ -3765,7 +3779,7 @@ class MainViewModel {
 
     func newSession() {
         guard !isProcessing else { return }
-        endSession(); transcript = ""; aiAnswer = ""
+        endSession(); transcript = ""; aiAnswer = ""; lastQuestionShown = ""
         answerEpoch += 1   // cancel any in-flight streaming callbacks
         liveHints = ""; saveHints()   // fresh interview → fresh hints
         // Same reason as the launch hint: an automatic mode needs no keypress to begin.
@@ -3925,7 +3939,8 @@ class MainViewModel {
             waitingToRetry: now < session.speechRetryAfter,
             fatalNoMicrophone: micCaptureEnabled && micStatus == "NO MIC" && AVCaptureDevice.authorizationStatus(for: .audio) == .denied,
             connectionStalled: stalled,
-            noNetwork: !network.isUp)
+            noNetwork: !network.isUp,
+            anotherDevice: engine.accountBusy)
         currentProblem = problem
         if let problem { showProblemOnce(problem) } else { problemsShown.removeAll() }
     }
@@ -4737,7 +4752,7 @@ class MainViewModel {
     func clearAnswer() {
         resumeLocked = false
         answerEpoch += 1   // invalidate any in-flight stream so it can't re-populate
-        transcript = ""; aiAnswer = ""; answerIsBehavioral = false
+        transcript = ""; aiAnswer = ""; lastQuestionShown = ""; answerIsBehavioral = false
         aiAnswerHint = idleHintForCurrentMode
         PromptBuilder.shared.clearHistory()
         disarmScrollWatch()

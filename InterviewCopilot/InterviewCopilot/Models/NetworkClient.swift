@@ -23,6 +23,28 @@ class NetworkClient {
 
     private init() {}
 
+    /// Logs what the network did for one answer request: whether the connection was reused or
+    /// had to be opened, and how long each stage took. A cold start shows up here as
+    /// reused=false with real DNS/connect/TLS time, or as a long wait with the connection reused,
+    /// which is the server's container being cold. Times only, never content.
+    private final class AnswerTimingDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        didFinishCollecting metrics: URLSessionTaskMetrics) {
+            guard let t = metrics.transactionMetrics.last else { return }
+            func ms(_ a: Date?, _ b: Date?) -> Int {
+                guard let a, let b else { return 0 }
+                return Int(b.timeIntervalSince(a) * 1000)
+            }
+            let line = "NET: answer request — connection \(t.isReusedConnection ? "REUSED" : "NEW"), "
+                + "dns \(ms(t.domainLookupStartDate, t.domainLookupEndDate))ms, "
+                + "connect \(ms(t.connectStartDate, t.connectEndDate))ms, "
+                + "tls \(ms(t.secureConnectionStartDate, t.secureConnectionEndDate))ms, "
+                + "server wait \(ms(t.requestEndDate, t.responseStartDate))ms, "
+                + "protocol \(t.networkProtocolName ?? "?")"
+            Task { @MainActor in dlog(line, tag: "NET") }
+        }
+    }
+
     // MARK: - AI Stream
 
     func streamAnswer(question: String, resume: String, provider: String,
@@ -116,6 +138,9 @@ class NetworkClient {
     ///   • network blip / 5xx before the first token → retry once, automatically & silently.
     ///   • connection drop *mid-answer* → keep the partial answer instead of wiping it
     ///     with a scary error (a truncated answer beats a blank one in front of an interviewer).
+    /// Set when the server refuses a gzip body; every later request in this run goes plain.
+    private static var gzipRefused = false
+
     /// How long to wait before the one silent retry of a failed answer request.
     private static let answerRetryDelay: UInt64 = 250_000_000
 
@@ -125,6 +150,13 @@ class NetworkClient {
                            onError: @escaping (String) -> Void) {
         Task {
             var yielded = false
+            // Compress once. If the server ever refuses a compressed body (400, 415 or 501), the
+            // request is resent PLAIN, once, and stays plain for the rest of this run.
+            let gzipped = (Self.gzipRefused || body == nil) ? nil : body.flatMap { Gzip.compress($0) }
+            if let body, let gzipped {
+                dlog("NET: request body \(body.count / 1024)KB → \(max(1, gzipped.count / 1024))KB with gzip", tag: "NET")
+            }
+            var sendPlain = gzipped == nil
             for attempt in 0..<2 {
                 // Read the freshest token each attempt (it may have just been refreshed).
                 let token = await MainActor.run { UserSession.shared.idToken }
@@ -137,10 +169,22 @@ class NetworkClient {
                 // for the free-trial-without-sign-in path, and ignores it whenever the
                 // Authorization header carries a valid Firebase token (see IdentityResolverService).
                 req.setValue(DeviceIdentity.current, forHTTPHeaderField: "X-Device-Id")
-                req.httpBody = body
+                if sendPlain || gzipped == nil {
+                    req.httpBody = body
+                } else {
+                    req.httpBody = gzipped
+                    req.setValue("gzip", forHTTPHeaderField: "Content-Encoding")
+                }
                 do {
-                    let (bytes, response) = try await session.bytes(for: req)
+                    let (bytes, response) = try await session.bytes(for: req, delegate: AnswerTimingDelegate())
                     if let http = response as? HTTPURLResponse {
+                        // A server that cannot read a compressed body says so BEFORE it charges
+                        // anything, so resending the same question plain is safe.
+                        if !sendPlain, gzipped != nil, [400, 415, 501].contains(http.statusCode) {
+                            Self.gzipRefused = true; sendPlain = true
+                            dlog("NET: server refused the compressed request (HTTP \(http.statusCode)) — sending plain from now on", tag: "NET")
+                            continue
+                        }
                         if http.statusCode == 402 { onMain { onError("NO_CREDITS") }; return }
                         if http.statusCode == 401 {
                             // Token expired mid-interview — refresh and retry before giving up.
@@ -162,6 +206,7 @@ class NetworkClient {
                             // Transient 5xx → ONE silent retry, after a beat. Straight away it can
                             // hit the very same fault; 250 ms is Windows' measured wait, and safe
                             // because nothing has streamed and the server has refunded.
+                            dlog("NET: answer request refused with HTTP \(http.statusCode)\(attempt == 0 ? ", retrying once" : "")", tag: "NET")
                             if attempt == 0 { try? await Task.sleep(nanoseconds: Self.answerRetryDelay); continue }
                             onMain { onError("Server error (\(http.statusCode))") }; return
                         }
@@ -170,6 +215,10 @@ class NetworkClient {
                         // The server's own words, when it has them. Retrying this would only
                         // hit the same limit and double the time before the user is told.
                         if let serverError = Self.errorFromSSELine(line) {
+                            // The server's own words, kept in the log: the screen may only show
+                            // a generic line, and without this there is no way to tell afterwards
+                            // which limit or fault the person actually hit.
+                            dlog("NET: server answered with an error instead of an answer: \(serverError.prefix(200))", tag: "NET")
                             onMain { onError("SERVER_MSG:" + serverError) }
                             return
                         }
@@ -218,17 +267,41 @@ class NetworkClient {
 
     /// Best-effort warm-up: open the TLS connection and wake the backend so the FIRST
     /// answer of the interview isn't slowed by a cold server. Fire-and-forget.
+    // ── Keep the connection to the answer server warm ────────────────────────────────
+    //
+    // The first question after a quiet gap used to cost 2 to 5 seconds (measured 2026-10-01:
+    // 2.35s, 1.99s, 4.91s against 0.3s to 0.6s for a question asked right after another).
+    // Two things go cold: the connection itself (DNS, TCP and TLS, which on a jittery link is
+    // 0.1s to 1.5s) and the answer server's container, which spins down when idle. Windows
+    // measured and fixed the same thing (MAC_CATCHUP, "keep-warm"), and the Mac had three faults
+    // of its own:
+    //   1. it warmed ONCE, when the mic was unmuted, never again;
+    //   2. it used `shortSession`, a different connection pool from the one answers use, so it
+    //      kept warm a connection no answer ever touched;
+    //   3. it called /interview/credits with a token, a heavy route, to do a job a constant
+    //      one does.
+    // Now: every 25 seconds (shorter than a proxy or home router keeps a quiet connection),
+    // a HEAD to the answer server's own constant status route, on the SAME session as answers.
+    private var keepWarmTimer: Timer?
+    private static let keepWarmInterval: TimeInterval = 25
+
+    func startKeepWarm() {
+        guard keepWarmTimer == nil else { return }
+        warmUp()
+        keepWarmTimer = Timer.scheduledTimer(withTimeInterval: Self.keepWarmInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.warmUp() }
+        }
+    }
+
+    func stopKeepWarm() { keepWarmTimer?.invalidate(); keepWarmTimer = nil }
+
     func warmUp() {
-        guard let url = URL(string: "\(AppConfig.backendUrl)/api/v1/interview/credits") else { return }
+        guard let url = URL(string: "\(AppConfig.backendUrl)/api/v1/resume/status") else { return }
         Task {
-            // BUG-23 FIX: read idToken inside the Task so we get the freshest token even if a
-            // concurrent tryRefreshAsync() updated it between warmUp() being called and now.
-            let token = await MainActor.run { UserSession.shared.idToken }
             var req = URLRequest(url: url)
-            req.timeoutInterval = 8
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            req.setValue(DeviceIdentity.current, forHTTPHeaderField: "X-Device-Id")
-            _ = try? await shortSession.data(for: req)
+            req.httpMethod = "HEAD"          // no body to carry; any reply, even a 404, proves the connection is open
+            req.timeoutInterval = 6
+            _ = try? await session.data(for: req)
         }
     }
 

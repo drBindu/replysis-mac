@@ -1455,7 +1455,7 @@ struct MainView: View {
                 // Transcript or hint
                 ScrollViewReader { proxy in
                     ScrollView {
-                        if vm.transcript.isEmpty {
+                        if vm.transcriptForDisplay.isEmpty {
                             HStack(spacing: 8) {
                                 Image(systemName: "waveform")
                                     .font(.system(size: 14, weight: .light))
@@ -1467,7 +1467,7 @@ struct MainView: View {
                             .frame(maxWidth: .infinity, alignment: .center)
                             .padding(.top, 6)
                         } else {
-                            Text(vm.transcript)
+                            Text(vm.transcriptForDisplay)
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundColor(.white)
                                 .shadow(color: .black.opacity(0.6), radius: 3, x: 0, y: 1)
@@ -1483,9 +1483,9 @@ struct MainView: View {
                     // lines — so a long interviewer turn was read through a letterbox while the
                     // window had room to show it. Capped at 152pt (about eight lines, the cap
                     // Windows uses on its compact overlay) so the answer below keeps its space.
-                    .frame(height: vm.transcript.isEmpty ? 64 : min(max(transcriptContentHeight, 64), 152))
+                    .frame(height: vm.transcriptForDisplay.isEmpty ? 64 : min(max(transcriptContentHeight, 64), 152))
                     .onPreferenceChange(MainTranscriptHeightKey.self) { transcriptContentHeight = $0 }
-                    .onChange(of: vm.transcript) {
+                    .onChange(of: vm.transcriptForDisplay) {
                         withAnimation { proxy.scrollTo("transcriptBottom", anchor: .bottom) }
                     }
                 }
