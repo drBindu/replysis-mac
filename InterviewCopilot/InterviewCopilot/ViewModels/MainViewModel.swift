@@ -28,7 +28,7 @@ class MainViewModel {
     /// moment the interviewer speaks again, and cleared with the session.
     private(set) var lastQuestionShown = ""
     var transcriptForDisplay: String { transcript.isEmpty ? lastQuestionShown : transcript }
-    var aiAnswerHint = "Ready. Press ⌥ SPACE to start listening, then ⌥ SPACE again to get your answer."
+    var aiAnswerHint = "Ready. Press SPACE to start listening, then SPACE again to get your answer."
 
     /// The idle prompt must match the ACTIVE mode. It was hardcoded to the manual
     /// instructions, so Practice Auto told the user to press SPACE — advice that is simply
@@ -39,11 +39,11 @@ class MainViewModel {
         // tester who spoke to the app for minutes saw nothing and decided it was broken
         // (Windows, 2026-09-29). Practice hears them, so it needs no such line.
         case .manual: return practiceAudioOn
-            ? "Ready. Press ⌥ SPACE to start listening, then ⌥ SPACE again to get your answer."
-            : "Ready. Press ⌥ SPACE to start listening, then ⌥ SPACE again to get your answer. Interview mode does not pick up your own voice. To try it by speaking, choose Practice above."
+            ? "Ready. Press SPACE to start listening, then SPACE again to get your answer."
+            : "Ready. Press SPACE to start listening, then SPACE again to get your answer. Interview mode does not pick up your own voice. To try it by speaking, choose Practice above."
         case .auto:   return practiceAudioOn
             ? "Listening. The answer appears when the question ends."
-            : "Auto is on. When the interviewer asks a question in your meeting, the answer appears here on its own. Interview mode does not pick up your own voice. To try it by speaking, choose Practice above. If an answer does not come, press ⌥ SPACE."
+            : "Auto is on. When the interviewer asks a question in your meeting, the answer appears here on its own. Interview mode does not pick up your own voice. To try it by speaking, choose Practice above. If an answer does not come, press SPACE."
         }
     }
     var showThinking = false
@@ -180,7 +180,7 @@ class MainViewModel {
     // the instant it's downloaded, with no System Settings wall.
     var needsPermissionSetup = false   // true only while the OPTIONAL hotkey setup sheet is up
     var hotkeyActive = false           // is the global hotkey currently working?
-    var showHotkeyBanner = false       // subtle "enable ⌥Space bar" upsell in the main UI
+    var showHotkeyBanner = false       // subtle "enable Space bar" upsell in the main UI
     private var hotkeyBannerDismissed = false
     var permInputMonitoring = false    // needed (with Accessibility) for the global hotkey
     var permAccessibility   = false
@@ -760,7 +760,8 @@ class MainViewModel {
                 switch event.keyCode {
                 case 49:
                     guard GlobalHotkey.isListeningShortcut(keyCode: Int64(event.keyCode),
-                            flags: CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue))) else { return event }
+                            flags: CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue)),
+                            secondsSinceTyping: GlobalHotkey.instance?.secondsSinceTyping ?? .infinity) else { return event }
                     if !event.isARepeat { self.handleSpacePress(source: "LOCAL") }
                     return nil
                 case 100: self.runScreenAnalysis(wholeScreen: false);  return nil   // F8 — this window
@@ -1117,7 +1118,7 @@ class MainViewModel {
         guard !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             // Honest feedback instead of silently doing nothing — the #1 "is it broken?"
             // moment is pressing Space twice and seeing zero reaction.
-            aiAnswerHint = "No speech was captured. Speak (or play the interviewer's audio), then press ⌥Space again."
+            aiAnswerHint = "No speech was captured. Speak (or play the interviewer's audio), then press Space again."
             updateMicUI(); return
         }
         guard session.isLoggedIn else { aiAnswer = "⚠ Please sign in to use AI answers."; return }
@@ -2278,7 +2279,7 @@ class MainViewModel {
                     showListeningNotice("TRANSCRIPTION IS BACK")
                     aiAnswerHint = idleHintForCurrentMode
                 } else {
-                    aiAnswerHint = "Transcription is back. Press ⌥ SPACE to listen."
+                    aiAnswerHint = "Transcription is back. Press SPACE to listen."
                 }
             }
             updateMicUI()
@@ -3611,8 +3612,8 @@ class MainViewModel {
             showListeningNotice("STANDBY. WAKES WHEN SOMEONE SPEAKS")
         } else {
             showListeningNotice(heardAnythingThisSession
-                ? "MIC OFF AFTER A QUIET STRETCH. ⌥ SPACE TO RESUME"
-                : "MIC OFF, NOTHING HEARD YET. ⌥ SPACE TO RESUME")
+                ? "MIC OFF AFTER A QUIET STRETCH. SPACE TO RESUME"
+                : "MIC OFF, NOTHING HEARD YET. SPACE TO RESUME")
         }
         updateMicUI()
     }
@@ -3785,7 +3786,7 @@ class MainViewModel {
         // Same reason as the launch hint: an automatic mode needs no keypress to begin.
         aiAnswerHint = autoModeEnabled
             ? "New session started. " + idleHintForCurrentMode
-            : "New session started. Press ⌥ SPACE to begin."
+            : "New session started. Press SPACE to begin."
         startNewSession()
     }
 

@@ -64,7 +64,7 @@ struct PermissionSetupView: View {
                         icon: "mic.fill",
                         iconColor: Color(hex: "#4ade80"),
                         title: "Microphone",
-                        reason: "So ⌥Space can pick up your voice during the interview.",
+                        reason: "So Space can pick up your voice during the interview.",
                         state: vm.permMicrophone ? .granted
                              : vm.micDenied      ? .denied
                              : .pending,
@@ -76,7 +76,7 @@ struct PermissionSetupView: View {
                         icon: "keyboard",
                         iconColor: Color(hex: "#a78bfa"),
                         title: "Accessibility",
-                        reason: "So ⌥Space works from any app, not just this window.",
+                        reason: "So Space works from any app, not just this window.",
                         state: vm.permAccessibility ? .granted : .pending,
                         primaryLabel: "Allow accessibility",
                         action: { vm.requestAccessibilityPrompt() }

@@ -221,7 +221,7 @@ struct MainView: View {
                     .padding(.horizontal, 11).padding(.vertical, 6)
                     .background(Capsule().fill(Color(hex: "#2A1F0D")))
                     .overlay(Capsule().stroke(Color(hex: "#7c5e1e"), lineWidth: 1))
-                    .help("Press ⌥Space to start listening again")
+                    .help("Press Space to start listening again")
                 }
                 Spacer(minLength: 0)
             }
@@ -310,7 +310,7 @@ struct MainView: View {
             )
         }
         .buttonStyle(.plain)
-        .help(vm.micNeedsRetry ? "Tap to retry audio capture" : "Press ⌥ SPACE to toggle mic")
+        .help(vm.micNeedsRetry ? "Tap to retry audio capture" : "Press SPACE to toggle mic")
     }
 
     var micHintText: String {
@@ -320,7 +320,7 @@ struct MainView: View {
         if vm.micStatus == "CONNECTING" { return "Connecting — nothing is being heard yet" }
         switch vm.listeningMode {
         case .manual:
-            return vm.isListening ? "Press ⌥ SPACE again to get answer" : "Press ⌥ SPACE to listen"
+            return vm.isListening ? "Press SPACE again to get answer" : "Press SPACE to listen"
         case .auto:
             return vm.isListening ? "Listening, answers on its own" : "Auto, answers when the question ends"
         }
@@ -472,7 +472,7 @@ struct MainView: View {
                         help: "Auto. Answers as soon as the question ends.")
             Rectangle().fill(Color.white.opacity(0.10)).frame(width: 1, height: 18)
             modeSegment(.manual, label: "MANUAL",
-                        help: "Manual. Press ⌥Space to listen, and again to answer. Most accurate, because you decide when the question ends. In Auto the end is inferred from a pause, so an interviewer who stops mid-sentence to think can be answered half-way.")
+                        help: "Manual. Press Space to listen, and again to answer. Most accurate, because you decide when the question ends. In Auto the end is inferred from a pause, so an interviewer who stops mid-sentence to think can be answered half-way.")
 
             Rectangle().fill(Color.white.opacity(0.18))
                 .frame(width: 1, height: 18).padding(.horizontal, 6)
@@ -1446,7 +1446,7 @@ struct MainView: View {
                         if vm.listeningMode.isAutomatic {
                             hotKeyBadge("AUTO  answers on its own", color: "#34E08A", bg: "#0D2E0D")
                         } else {
-                            hotKeyBadge("⌥ SPACE  listen / answer", color: "#38BDF8", bg: "#0D1B2E")
+                            hotKeyBadge("SPACE  listen / answer", color: "#38BDF8", bg: "#0D1B2E")
                         }
                     }
                 }
@@ -2326,7 +2326,7 @@ extension MainView {
                 onboardingStep("briefcase", "Add the company & role", "Tailors answers to this role.")
                 onboardingStep("lock.shield", "Check capture protection before the call",
                                "Hides the app from screen sharing. Support varies, so check it in your meeting app first.")
-                onboardingStep("keyboard", "Use SPACE here, ⌥ SPACE in other apps", "Press once to listen, again to answer. Works from any app.")
+                onboardingStep("keyboard", "Press SPACE to listen and to answer", "Press once to listen, again to answer. Works from any app.")
                 HStack {
                     Text("Reopen anytime from the ? button").font(.system(size: 10.5)).foregroundColor(Color(hex: "#718298"))
                     Spacer()

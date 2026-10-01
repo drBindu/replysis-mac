@@ -69,10 +69,50 @@ class GlobalHotkey {
         }
     }
 
-    /// Option-Space is deliberate; plain Space and Cmd-Space must reach the foreground app.
-    static func isListeningShortcut(keyCode: Int64, flags: CGEventFlags) -> Bool {
-        let modifiers: CGEventFlags = [.maskAlternate, .maskCommand, .maskControl, .maskShift]
-        return keyCode == 49 && flags.intersection(modifiers) == .maskAlternate
+    /// How recently another text key must have been typed for a Space to count as typing
+    /// rather than a deliberate press. Windows uses the same second (GlobalHotkey.cs
+    /// TypingWindowMs): the key is taken from every app, so without this, typing a chat message
+    /// in the meeting window would start and stop listening between words. Most people type the
+    /// next character well inside 300 ms; a deliberate press only needs a one second pause.
+    static let typingWindow: TimeInterval = 1.0
+
+    /// Plain Space is the listening key, as it is on Windows and was in every shipped version.
+    /// A build on 2026-09-30 made it Option-Space only, so Space did nothing in Manual and the
+    /// owner could not start listening. Plain Space now yields to typing and to the system
+    /// shortcuts (Cmd-Space is Spotlight, Ctrl-Space switches input source, Shift-Space types).
+    /// Option-Space still works at any time, as a deliberate chord that is never typing.
+    static func isListeningShortcut(keyCode: Int64, flags: CGEventFlags,
+                                    secondsSinceTyping: TimeInterval = .infinity) -> Bool {
+        guard keyCode == 49 else { return false }
+        let held = flags.intersection(chordModifiers)
+        if held == .maskAlternate { return true }
+        if held.isEmpty { return secondsSinceTyping >= typingWindow }
+        return false
+    }
+
+    /// Keys that produce text, plus Delete: correcting a word is still typing. Decided from
+    /// what the key types, not its code, so every keyboard layout works. Arrows, function keys,
+    /// Return, Tab and Escape type nothing printable and do not count.
+    static func isTypingKey(keyCode: Int64, typed: String) -> Bool {
+        if keyCode == 51 { return true }
+        guard let first = typed.unicodeScalars.first, first != " " else { return false }
+        let printable = CharacterSet.alphanumerics.union(.punctuationCharacters).union(.symbols)
+        return printable.contains(first)
+    }
+
+    /// When a text key was last typed anywhere. Read by the in-app Space handler too.
+    private var lastTypingKeyTime: Date = .distantPast
+    var secondsSinceTyping: TimeInterval { Date().timeIntervalSince(lastTypingKeyTime) }
+    private var lastTypingLogTime: Date = .distantPast
+
+    private func noteTyping(_ event: CGEvent, keyCode: Int64, flags: CGEventFlags) {
+        // A shortcut (Cmd-C, Ctrl-A) is not typing.
+        guard flags.intersection([.maskCommand, .maskControl]).isEmpty else { return }
+        var length = 0
+        var buffer = [UniChar](repeating: 0, count: 4)
+        event.keyboardGetUnicodeString(maxStringLength: 4, actualStringLength: &length, unicodeString: &buffer)
+        let typed = String(utf16CodeUnits: buffer, count: min(length, 4))
+        if Self.isTypingKey(keyCode: keyCode, typed: typed) { lastTypingKeyTime = Date() }
     }
 
     private var lastSpaceTime: Date = .distantPast
@@ -185,9 +225,19 @@ class GlobalHotkey {
             return true
         }
 
+        if keyCode != kVK_Space { noteTyping(event, keyCode: keyCode, flags: flags) }
+
         switch keyCode {
         case kVK_Space:
-            guard Self.isListeningShortcut(keyCode: keyCode, flags: flags) else { return false }
+            guard Self.isListeningShortcut(keyCode: keyCode, flags: flags, secondsSinceTyping: secondsSinceTyping) else {
+                // Said now and then, so a log shows why a Space press did nothing.
+                if flags.intersection(Self.chordModifiers).isEmpty, Date().timeIntervalSince(lastTypingLogTime) >= 5 {
+                    lastTypingLogTime = Date()
+                    let ms = Int(min(secondsSinceTyping, 99) * 1000)
+                    Task { @MainActor in dlog("GLOBAL Space passed through: typing, \(ms)ms after a text key", tag: "HOTKEY") }
+                }
+                return false
+            }
             if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { return true }
             // Signed out, or typing in our Ask box / a sign-in field → let Space behave
             // normally (type a space, scroll the front app). Don't toggle, don't consume.
@@ -195,7 +245,7 @@ class GlobalHotkey {
                 // Diagnostic: this is why a background Space press can appear to "do
                 // nothing" — the global tap DID see it but passed it through. If this logs
                 // while the user expects a toggle, the gate mirror is the culprit.
-                Task { @MainActor in dlog("GLOBAL ⌥Space passed through (gateLoggedIn=\(self.gateLoggedIn) gateEditing=\(self.gateEditing))", tag: "HOTKEY") }
+                Task { @MainActor in dlog("GLOBAL Space passed through (gateLoggedIn=\(self.gateLoggedIn) gateEditing=\(self.gateEditing))", tag: "HOTKEY") }
                 return false
             }
             let now = Date()

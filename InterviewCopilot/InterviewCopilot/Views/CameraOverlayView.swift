@@ -171,10 +171,10 @@ struct AnswerOverlayView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Listen, pause, or answer (⌥Space)")
+            .help("Listen, pause, or answer (Space)")
             .accessibilityLabel("Listening control: " + statusText)
             if isIdle {
-                Text(vm.listeningMode.isAutomatic ? "Auto · ⌥Space to pause / resume" : "⌥Space to listen / answer")
+                Text(vm.listeningMode.isAutomatic ? "Auto, press Space to pause or resume" : "Press Space to listen or answer")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(.white.opacity(0.4))
             }
