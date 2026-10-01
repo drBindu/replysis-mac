@@ -21,6 +21,10 @@ class SpeechmaticsEngine {
     /// Fired when the recogniser reports, from the AUDIO, that the speaker has stopped.
     /// This is the real end-of-turn signal; everything text-based is a guess at it.
     var onUtteranceEnd: (() -> Void)?
+    /// The recogniser's own call that the speaker stopped (the engine prints SPEECH FINAL, about a
+    /// second before UTTERANCE END). Only a newer engine prints it; with an older one this never
+    /// fires and everything works from UTTERANCE END as before.
+    var onSpeechFinal: (() -> Void)?
     /// When the recogniser last said a sentence was over, in any mode. Manual reads it to know the
     /// tail of a question has arrived.
     private(set) var lastUtteranceEndAt = Date.distantPast
@@ -579,6 +583,9 @@ class SpeechmaticsEngine {
             // only one leaves the app believing transcription still works. This is the
             // drop; watchForExit() below is the crash.
             // CONTRACT:RUNTIME — see ENGINE_CONTRACT.md and verify_engine_contract.py
+            if line.contains(">>> SPEECH FINAL") {
+                Task { @MainActor [weak self] in self?.onSpeechFinal?() }
+            }
             if line.contains("UTTERANCE END") {
                 Task { @MainActor [weak self] in
                     self?.lastUtteranceEndAt = Date()

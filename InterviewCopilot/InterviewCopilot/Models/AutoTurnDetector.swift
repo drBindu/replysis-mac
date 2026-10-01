@@ -388,6 +388,27 @@ struct AutoTurnDetector {
         return opening.contains(first)
     }
 
+    /// One or two words that only open a question ("What?", "Is a", "Tell me") and ask nothing yet:
+    /// the rest is on its way. Not "Why?" or "How so?": from an interviewer, straight after an
+    /// answer, those ARE the question, and are answered from the conversation so far.
+    static func isBareOpening(_ text: String) -> Bool {
+        let words = text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted.subtracting(CharacterSet(charactersIn: "'")))
+            .filter { !$0.isEmpty }
+        guard (1...2).contains(words.count), isQuestionOpening(text) else { return false }
+        let followUps: Set<String> = ["why", "how", "how so", "how come", "why not", "why is that", "who", "where", "when"]
+        return !followUps.contains(words.joined(separator: " "))
+    }
+
+    /// A question mark, or a request ("Tell me about yourself."), and nothing hanging off the end.
+    /// Only text like this is answered on the early end-of-speech signal; a statement may be
+    /// context with the question still to come, and keeps waiting.
+    static func isPlainlyFinished(_ text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, classifyTurnEnding(t) == .finished else { return false }
+        return t.hasSuffix("?") || opensLikeQuestion(t)
+    }
+
     /// The remembered pieces stop where no sentence can stop ("How would you", "What is a"), so
     /// the speaker is plainly mid-sentence and whatever comes next finishes it.
     static func carriedPrefixLeavesSentenceOpen(_ fragments: [String]) -> Bool {

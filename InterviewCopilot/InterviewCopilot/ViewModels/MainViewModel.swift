@@ -414,7 +414,8 @@ class MainViewModel {
         engine.micCaptureAllowed = true
         // THE turn signal. The recogniser has the waveform and tells us when the speaker
         // actually stopped; we no longer infer it from how the text is punctuated.
-        engine.onUtteranceEnd = { [weak self] in self?.handleUtteranceEnd() }
+        engine.onUtteranceEnd = { [weak self] in self?.speechFinalTask?.cancel(); self?.handleUtteranceEnd() }
+        engine.onSpeechFinal = { [weak self] in self?.handleSpeechFinal() }
         // Sweep any transcript left behind by a crash or a Force Quit. Deleting on quit
         // covers the graceful path; a process that is killed never runs that handler, and
         // the file it leaves is the last thing an interviewer said. It has no value across
@@ -2743,8 +2744,37 @@ class MainViewModel {
         longestMidTurnGap = 0
     }
 
+    /// Auto on the early signal: answer a plainly finished question 650 ms after the recogniser says
+    /// the speaker stopped, instead of waiting for the end-of-utterance line that follows about a
+    /// second later (Windows measured this as most of the wait between the last word and the first
+    /// word of the answer). Only if nothing more was said in those 650 ms; a tail that does arrive
+    /// goes through the continuation logic as always. Statements and unclear endings are left
+    /// alone and wait for the later signal exactly as before.
+    private static let speechFinalDelay: UInt64 = 650_000_000
+    @ObservationIgnored private var speechFinalTask: Task<Void, Never>?
+    private var lastEarlyAnswerAt = Date.distantPast
+
+    private func handleSpeechFinal() {
+        guard autoModeEnabled, isListening, !isScreenAnalyzing, !autoTurnSubmitting, engine.isReady else { return }
+        let heardAtSignal = engine.readLatestTxt()
+        let text = remainingSpeech(heardAtSignal)
+        guard AutoTurnDetector.isPlainlyFinished(text) else { return }
+        speechFinalTask?.cancel()
+        speechFinalTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.speechFinalDelay)
+            guard let self, !Task.isCancelled else { return }
+            guard self.engine.readLatestTxt() == heardAtSignal else { return }   // more was said: wait
+            dlog("AUTO: speaker stopped (early signal) — answering after 650ms: '\(text.suffix(40))'", tag: "AUTO")
+            self.lastEarlyAnswerAt = Date()
+            self.handleUtteranceEnd()
+        }
+    }
+
     private func handleUtteranceEnd() {
         guard autoModeEnabled, isListening, !isScreenAnalyzing, !autoTurnSubmitting, engine.isReady else { return }
+        // The late signal for a question already answered on the early one finds nothing left. That
+        // is not a desync, so it must not count toward the resynchronise rule below.
+        if Date().timeIntervalSince(lastEarlyAnswerAt) < 4, remainingSpeech(engine.readLatestTxt()).isEmpty { return }
         // Stamped here, before any of the deciding, because this is the moment the user
         // stopped talking and started waiting.
         lastUtteranceEndAt = Date()
@@ -2798,6 +2828,17 @@ class MainViewModel {
            Date().timeIntervalSince(lastAnsweredAt) < AutoTurnDetector.duplicateWindow,
            AutoTurnDetector.repeatsQuestion(text, lastAnsweredQuestion) {
             dlog("AUTO: the question heard a second time — stepping past: '\(text.prefix(40))'", tag: "AUTO")
+            carryFragment(text)
+            consumedPrefix = rawNow
+            pendingSpeechStartedAt = nil
+            return
+        }
+
+        // "What?" with nothing after it asks nothing yet: a slow speaker's first word, said a long
+        // time after the last answer so none of the guards above caught it, was answered on its own
+        // and the rest of the question was then lost. Keep it for the words that follow.
+        if AutoTurnDetector.isBareOpening(text) {
+            dlog("AUTO: '\(text.prefix(20))' opens a question and asks nothing yet — keeping it for the rest", tag: "AUTO")
             carryFragment(text)
             consumedPrefix = rawNow
             pendingSpeechStartedAt = nil
