@@ -95,14 +95,14 @@ struct LoginView: View {
             .padding(.bottom, 16)
 
             Text("Be ready for the\nquestion that matters.")
-                .font(.system(size: 27, weight: .semibold)).foregroundColor(Palette.ink)
-                .lineSpacing(5)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("Replysis listens, understands the role and grounds every response in your real experience.")
-                .font(.system(size: 12.5)).foregroundColor(Palette.body)
+                .font(.system(size: 24, weight: .semibold)).foregroundColor(Palette.ink)
                 .lineSpacing(4)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 12).padding(.trailing, 8)
+            Text("Replysis listens, understands the role and grounds every response in your real experience.")
+                .font(.system(size: 12)).foregroundColor(Palette.body)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 10)
 
             // What the product does, shown rather than described: a question, and the answer.
             ZStack(alignment: .topLeading) {
@@ -115,13 +115,13 @@ struct LoginView: View {
                             Text("Tell me about a project you led.").font(.system(size: 11.5)).foregroundColor(Palette.ink)
                         }
                     }
-                    .padding(.horizontal, 13).padding(.vertical, 10)
-                    .frame(width: 285, height: 62, alignment: .leading)
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    .frame(width: 232, height: 60, alignment: .leading)
                     .background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "#E3E8E0"), lineWidth: 1))
                     .shadow(color: Palette.ink.opacity(0.10), radius: 12, x: 0, y: 6)
                     .rotationEffect(.degrees(-1.5))
-                    .padding(.leading, 7).padding(.top, 7)
+                    .padding(.leading, 4).padding(.top, 4)
                 }
                 VStack(alignment: .leading, spacing: 7) {
                     HStack {
@@ -141,15 +141,15 @@ struct LoginView: View {
                         .lineSpacing(3).fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 11)
-                .frame(width: 302, height: 82, alignment: .topLeading)
+                .frame(width: 256, height: 92, alignment: .topLeading)
                 .background(RoundedRectangle(cornerRadius: 11).fill(Palette.greenTint))
                 .overlay(RoundedRectangle(cornerRadius: 11).stroke(Palette.greenLine, lineWidth: 1))
                 .shadow(color: Palette.green.opacity(0.12), radius: 14, x: 0, y: 8)
                 .rotationEffect(.degrees(1.2))
-                .offset(x: 28, y: 92)
+                .offset(x: 12, y: 72)
             }
-            .frame(width: 330, height: 178, alignment: .topLeading)
-            .padding(.top, 18)
+            .frame(width: 272, height: 168, alignment: .topLeading)
+            .padding(.top, 16)
 
             Spacer(minLength: 16)
 
@@ -159,6 +159,7 @@ struct LoginView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("FREE ANSWERS TO TRY IT").font(.system(size: 9, weight: .bold)).foregroundColor(Palette.ink)
                     Text("Included with every new account").font(.system(size: 9.5)).foregroundColor(Palette.muted)
+                        .lineLimit(1).minimumScaleFactor(0.8)
                 }
                 Spacer(minLength: 8)
                 Text("NO CARD").font(.system(size: 7.5, weight: .bold)).foregroundColor(Palette.body)
@@ -170,8 +171,8 @@ struct LoginView: View {
             .background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.line, lineWidth: 1))
         }
-        .padding(.leading, 48).padding(.trailing, 44).padding(.top, 42).padding(.bottom, 40)
-        .frame(width: 420, alignment: .leading)
+        .padding(.leading, 36).padding(.trailing, 32).padding(.top, 32).padding(.bottom, 28)
+        .frame(width: 360, alignment: .leading)
         .frame(maxHeight: .infinity)
         .background(
             LinearGradient(colors: [Color(hex: "#F6F8F3"), Color(hex: "#F1F5EE"), Color(hex: "#EAF3EC")],
@@ -353,10 +354,10 @@ struct LoginView: View {
                         Spacer()
                     }
                 }
-                .frame(width: 390)
-                .padding(.vertical, 40)
+                .frame(width: 350)
+                .padding(.vertical, 32)
                 .frame(maxWidth: .infinity)
-                .frame(minHeight: 600)
+                .frame(minHeight: 580)
             }
         }
     }
@@ -366,7 +367,7 @@ struct LoginView: View {
             productPanel
             formPanel
         }
-        .frame(width: 960, height: 600)
+        .frame(width: 880, height: 580)
         .background(Palette.page)
         // Light in every system appearance: the page is a light page, and a dark system would
         // turn its fields and text into something unreadable.

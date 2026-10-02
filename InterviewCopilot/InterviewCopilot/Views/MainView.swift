@@ -168,14 +168,66 @@ struct MainView: View {
                     headerRow(.noStrapline)
                     headerRow(.iconBrand)
                     headerRow(.minimal)
+                    // Last rung: the controls move to a second row instead of the window having
+                    // to be a wide strip. Owner, 2026-10-02: "all windows are too rectangular
+                    // big, not a good fit". One row needs about 1,100pt of width however it is
+                    // trimmed, which is what forced a 1200 by 472 window.
+                    headerTwoRows
                 }
             }
         }
         .padding(.horizontal, 18)
-        .frame(height: 64)
+        .frame(minHeight: 64)
     }
 
     enum HeaderTier { case full, noStrapline, iconBrand, minimal }
+
+    /// The header on two rows: who and how it is going on top, how it listens and what it reads below.
+    var headerTwoRows: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                brandView(.noStrapline)
+                    .layoutPriority(2)
+                Spacer(minLength: 12)
+                micControl(.full)
+                    .layoutPriority(1)
+                Spacer(minLength: 12)
+                statusCluster
+                    .layoutPriority(3)
+                headerSeparator.padding(.horizontal, 6)
+                accountAndCloseControls
+                    .layoutPriority(3)
+            }
+            .frame(height: 56)
+            HStack(spacing: 13) {
+                listeningModeSwitch
+                watchAndCompactGroup
+                toolSegmentGroup
+                Spacer(minLength: 0)
+            }
+            .frame(height: 40)
+            .padding(.bottom, 4)
+        }
+    }
+
+    /// Session time and the answers badge, read as one unit: how the session is going.
+    var statusCluster: some View {
+        HStack(spacing: 8) {
+            if vm.sessionTimerVisible {
+                HStack(spacing: 5) {
+                    Image(systemName: "record.circle").font(.system(size: 10)).foregroundColor(Color(hex: "#ef4444"))
+                    Text(vm.sessionTimerText)
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(hex: "#cbd5e1"))
+                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                }
+                .padding(.horizontal, 11).padding(.vertical, 8)
+                .background(Capsule().fill(Color.white.opacity(0.04)))
+                .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
+            }
+            creditsBadgeView
+        }
+    }
 
     func headerRow(_ tier: HeaderTier) -> some View {
         HStack(spacing: 0) {
@@ -362,30 +414,7 @@ struct MainView: View {
 
             // Status cluster: session time and credits read as one unit, because they are
             // both "how the session is going" rather than controls.
-            HStack(spacing: 8) {
-            // Session timer (live)
-            if vm.sessionTimerVisible {
-                HStack(spacing: 5) {
-                    Image(systemName: "record.circle").font(.system(size: 10)).foregroundColor(Color(hex: "#ef4444"))
-                    Text(vm.sessionTimerText)
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(hex: "#cbd5e1"))
-                        .lineLimit(1).fixedSize(horizontal: true, vertical: false)
-                }
-                .padding(.horizontal, 11).padding(.vertical, 8)
-                .background(Capsule().fill(Color.white.opacity(0.04)))
-                .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
-            }
-
-            // Visible credits indicator — previously the ONLY place to see your credit
-            // balance was inside the profile avatar's dropdown, which most users (guests
-            // especially) never think to click. BUG FIX: this used to open the FULL
-            // profile dropdown (Settings/Sessions/Sign Out) on click, which felt wrong —
-            // clicking specifically the credits number shouldn't dump you into the whole
-            // account menu. Now opens its own small popover with just the credits card.
-            creditsBadgeView
-
-            }
+            statusCluster
 
             headerSeparator
 
@@ -1328,62 +1357,9 @@ struct MainView: View {
                     }
 
                     // Action buttons
-                    HStack(spacing: 6) {
-                        // Answer length, as on the Setup page: Short or Detailed. Shows what is
-                        // ON NOW; the old button showed the state it would switch TO, which read
-                        // as "Detailed" while answers were at their default length.
-                        Button(action: { vm.setAnswerDetailed(!vm.answerDetailed) }) {
-                            Text(vm.answerDetailed ? "Detailed" : "Short")
-                                .font(.system(size: 11, weight: .semibold))
-                                .lineLimit(1).fixedSize()
-                        }
-                        .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
-                                                      minHeight: 28, horizontalPadding: 11, verticalPadding: 3))
-                        .help(vm.answerDetailed
-                              ? "Detailed answers: fuller, with an example, about a minute to say. Tap for short."
-                              : "Short answers: fit the question, easy to say fast. Tap for detailed.")
-
-                        // Step back through this session's answers. Instant, local, and it
-                        // never calls the model: the answer a stray voice replaced is one
-                        // press away instead of gone.
-                        answerHistoryControls
-
-                        ghostBtn("📋 Copy") { copyAnswer() }
-                        ghostBtn("✕ Clear") { vm.clearAnswer() }
-                        // Back to the Setup page without ending the session, and Finish: save,
-                        // and review this interview in Past sessions.
-                        Button(action: { vm.backToSetup() }) {
-                            Text("Setup").font(.system(size: 11, weight: .semibold)).lineLimit(1).fixedSize()
-                        }
-                        .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
-                                                      minHeight: 28, horizontalPadding: 11, verticalPadding: 3))
-                        .accessibilityLabel("Setup")
-                        .help("Return to interview setup")
-
-                        Button(action: { Task { _ = await vm.finishInterview() } }) {
-                            Text(vm.finishing ? "Saving..." : "Finish")
-                                .font(.system(size: 11, weight: .semibold)).lineLimit(1).fixedSize()
-                                .foregroundColor(Color(hex: "#0B0F17"))
-                                .padding(.horizontal, 13).frame(minHeight: 28)
-                                .background(RoundedRectangle(cornerRadius: 6).fill(Color(hex: "#EBF2FF")))
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(vm.finishing)
-                        .accessibilityLabel("Finish")
-                        .help("Finish, save, and review this interview in Past Sessions.")
-
-                        Button(action: { vm.newSession() }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 10, weight: .semibold))
-                                Text("New session")
-                                    .font(.system(size: 11.5, weight: .semibold))
-                                    .lineLimit(1).fixedSize()
-                            }
-                        }
-                        .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
-                                                      minHeight: 30, minWidth: 112,
-                                                      horizontalPadding: 14, verticalPadding: 4))
+                    ViewThatFits(in: .horizontal) {
+                        answerActionButtons(compact: false)
+                        answerActionButtons(compact: true)
                     }
                 }
                 .padding(.bottom, 10)
@@ -1621,10 +1597,77 @@ struct MainView: View {
         .buttonStyle(MenuRowButtonStyle())
     }
 
+    /// The buttons on the answer bar. `compact` drops the words from Copy, Clear and New session
+    /// when the pane is too narrow for them: a button label that wraps ("Co / py") is worse than a
+    /// button that is just an icon.
+    @ViewBuilder
+    func answerActionButtons(compact: Bool) -> some View {
+        HStack(spacing: 6) {
+                        // Answer length, as on the Setup page: Short or Detailed. Shows what is
+                        // ON NOW; the old button showed the state it would switch TO, which read
+                        // as "Detailed" while answers were at their default length.
+                        Button(action: { vm.setAnswerDetailed(!vm.answerDetailed) }) {
+                            Text(vm.answerDetailed ? "Detailed" : "Short")
+                                .font(.system(size: 11, weight: .semibold))
+                                .lineLimit(1).fixedSize()
+                        }
+                        .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
+                                                      minHeight: 28, horizontalPadding: 11, verticalPadding: 3))
+                        .help(vm.answerDetailed
+                              ? "Detailed answers: fuller, with an example, about a minute to say. Tap for short."
+                              : "Short answers: fit the question, easy to say fast. Tap for detailed.")
+
+                        // Step back through this session's answers. Instant, local, and it
+                        // never calls the model: the answer a stray voice replaced is one
+                        // press away instead of gone.
+                        answerHistoryControls
+
+                        ghostBtn(compact ? "📋" : "📋 Copy") { copyAnswer() }
+                        ghostBtn(compact ? "✕" : "✕ Clear") { vm.clearAnswer() }
+                        // Back to the Setup page without ending the session, and Finish: save,
+                        // and review this interview in Past sessions.
+                        Button(action: { vm.backToSetup() }) {
+                            Text("Setup").font(.system(size: 11, weight: .semibold)).lineLimit(1).fixedSize()
+                        }
+                        .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
+                                                      minHeight: 28, horizontalPadding: 11, verticalPadding: 3))
+                        .accessibilityLabel("Setup")
+                        .help("Return to interview setup")
+
+                        Button(action: { Task { _ = await vm.finishInterview() } }) {
+                            Text(vm.finishing ? "Saving..." : "Finish")
+                                .font(.system(size: 11, weight: .semibold)).lineLimit(1).fixedSize()
+                                .foregroundColor(Color(hex: "#0B0F17"))
+                                .padding(.horizontal, 13).frame(minHeight: 28)
+                                .background(RoundedRectangle(cornerRadius: 6).fill(Color(hex: "#EBF2FF")))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(vm.finishing)
+                        .accessibilityLabel("Finish")
+                        .help("Finish, save, and review this interview in Past Sessions.")
+
+                        Button(action: { vm.newSession() }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 10, weight: .semibold))
+                                if !compact {
+                                    Text("New session")
+                                        .font(.system(size: 11.5, weight: .semibold))
+                                        .lineLimit(1).fixedSize()
+                                }
+                            }
+                        }
+                        .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
+                                                      minHeight: 30, minWidth: compact ? 34 : 112,
+                                                      horizontalPadding: compact ? 10 : 14, verticalPadding: 4))
+        }
+    }
+
     func ghostBtn(_ label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
                 .font(.system(size: 12))
+                .lineLimit(1).fixedSize()
                 .foregroundColor(Color(hex: "#94A3B8"))
                 .padding(.horizontal, 10).padding(.vertical, 5)
                 .background(Color(hex: "#1A1F2E"))

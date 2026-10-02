@@ -88,7 +88,7 @@ struct SessionsView: View {
         ZStack {
             SP.background.ignoresSafeArea()
             HStack(spacing: 0) {
-                listPanel.frame(width: 300)
+                listPanel.frame(width: 270)
                 Rectangle().fill(SP.line).frame(width: 1)
                 detailPanel
             }
@@ -107,7 +107,7 @@ struct SessionsView: View {
                 .transition(.opacity)
             }
         }
-        .frame(width: 940, height: 600)
+        .frame(width: 880, height: 580)
         .preferredColorScheme(.dark)
         .onAppear { if !preview { loadSessions() } }
     }
@@ -235,26 +235,26 @@ struct SessionsView: View {
     @ViewBuilder private var detailPanel: some View {
         if let s = selected {
             VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .center) {
                         Text("\(s.formattedDate), \(s.formattedTime)")
                             .font(.system(size: 18, weight: .semibold)).foregroundColor(SP.text)
-                        // One run of chips that flows onto a second row when the window is narrow,
-                        // instead of squeezing each chip until its words break in half.
-                        FlowLayout(spacing: 7) {
-                            if let lasted = s.lasted { chip(lasted) }
-                            chip("\(s.questionCount) \(s.questionCount == 1 ? "question" : "questions")")
-                            if s.summary.longestAnswerWords > 0 { chip("Longest answer \(s.summary.longestAnswerWords) words") }
-                            ForEach(s.summary.kinds, id: \.0) { kind, n in
-                                chip("\(kind.rawValue) \(n)", color: SP.color(for: kind), filled: true)
-                            }
+                        Spacer(minLength: 12)
+                        HStack(spacing: 7) {
+                            action(copied ? "Copied" : "Copy", icon: copied ? "checkmark" : "doc.on.doc") { copy(s) }
+                            action("Export", icon: "square.and.arrow.up") { exportSession(s) }
+                            if !s.isCloud { action("Delete", icon: "trash", danger: true) { showDeleteConfirm = true } }
                         }
                     }
-                    Spacer(minLength: 12)
-                    HStack(spacing: 7) {
-                        action(copied ? "Copied" : "Copy", icon: copied ? "checkmark" : "doc.on.doc") { copy(s) }
-                        action("Export", icon: "square.and.arrow.up") { exportSession(s) }
-                        if !s.isCloud { action("Delete", icon: "trash", danger: true) { showDeleteConfirm = true } }
+                    // One run of chips that flows onto a second row when the window is narrow,
+                    // instead of squeezing each chip until its words break in half.
+                    FlowLayout(spacing: 7) {
+                        if let lasted = s.lasted { chip(lasted) }
+                        chip("\(s.questionCount) \(s.questionCount == 1 ? "question" : "questions")")
+                        if s.summary.longestAnswerWords > 0 { chip("Longest answer \(s.summary.longestAnswerWords) words") }
+                        ForEach(s.summary.kinds, id: \.0) { kind, n in
+                            chip("\(kind.rawValue) \(n)", color: SP.color(for: kind), filled: true)
+                        }
                     }
                 }
                 .padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 16)

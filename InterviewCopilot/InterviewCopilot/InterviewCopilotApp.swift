@@ -159,6 +159,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.terminate(nil)
     }
 
+    /// Where the size the person chose is kept: its own small file in the app's folder.
+    private static var sizeFile: URL { SpeechmaticsEngine.shared.appDataFolder.appendingPathComponent("window.json") }
+
+    /// The size the person last dragged the window to, kept inside this screen and above the minimum.
+    private static func savedPanelSize(fitting screen: NSRect) -> CGSize? {
+        guard let data = try? Data(contentsOf: sizeFile),
+              let d = try? JSONSerialization.jsonObject(with: data) as? [String: Double],
+              let w = d["w"], let h = d["h"] else { return nil }
+        let width = min(max(CGFloat(w), 860), screen.width)
+        let height = min(max(CGFloat(h), 540), screen.height)
+        dlog("PANEL: using the size the person chose: \(Int(width))x\(Int(height))", tag: "BOOT")
+        return CGSize(width: width, height: height)
+    }
+
     private func buildPanel() {
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         // Sized as a FRACTION of the display, then capped — not a fixed 1120x740 clamped
@@ -172,8 +186,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Interview|Practice 167, Read screen 123, Compact 89, plus the pin, the separator,
         // the status pill, the timer and the account — about 1,100pt in all. A window that
         // fits only on a big display is the same bug, so the window opens to fit the row.
-        let w = min(1200, round(screen.width  * 0.88))
-        let h = min(520, round(screen.height * 0.58))
+        // A well proportioned window rather than a wide strip: about 920 by 600 on a 13" display
+        // (1.5 to 1), where it was 1200 by 472 (2.5 to 1). The header's second row is what made
+        // the narrower width possible. Owner, 2026-10-02: "too rectangular big, not a good fit".
+        // 920 by 600 was then called "too small", so the default sits between the two: about
+        // 1040 by 660 on a 13" display (1.6 to 1). And a size the person drags the window to is
+        // remembered (below), so the right size is theirs to choose once.
+        var w = min(1040, round(screen.width  * 0.72))
+        var h = min(660, round(screen.height * 0.82))
+        if let saved = Self.savedPanelSize(fitting: screen) { w = saved.width; h = saved.height }
         let origin = NSPoint(x: screen.midX - w / 2, y: screen.midY - h / 2)
 
         // Borderless → no native traffic-light buttons (custom ✕ lives in the header).
@@ -200,6 +221,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Report the frame actually adopted. The default was changed once already without
         // any way to tell from outside whether it took effect, an autosaved frame overrode
         // it, or a content minimum was holding it open.
+        // Remember a size the person chose by dragging an edge. Only the end of a drag counts: a
+        // size the content or the app set must never be saved back as if it were a choice (that
+        // is how the window grew at every launch when the frame was autosaved).
+        NotificationCenter.default.addObserver(forName: NSWindow.didEndLiveResizeNotification, object: panel, queue: .main) { note in
+            guard let win = note.object as? NSWindow else { return }
+            if let data = try? JSONSerialization.data(withJSONObject: ["w": Double(win.frame.width), "h": Double(win.frame.height)]) {
+                try? data.write(to: AppDelegate.sizeFile)
+            }
+            dlog("PANEL: size chosen by the person: \(Int(win.frame.width))x\(Int(win.frame.height))", tag: "BOOT")
+        }
         dlog("PANEL: opened \(Int(panel.frame.width))x\(Int(panel.frame.height)) on a "
              + "\(Int(screen.width))x\(Int(screen.height)) screen", tag: "BOOT")
 
@@ -224,7 +255,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 820x560 was a floor no user could get under, so "make the window smaller" had a
         // hard limit well above what was being asked for. Lowered so the default can shrink
         // and so someone on a small display can shrink it further still.
-        panel.contentMinSize = CGSize(width: 1120, height: 460)
+        panel.contentMinSize = CGSize(width: 860, height: 540)
         panel.contentMaxSize = CGSize(width: screen.width, height: screen.height)
 
         // Plain NSHostingView — DO NOT override hitTest, it breaks SwiftUI event routing.

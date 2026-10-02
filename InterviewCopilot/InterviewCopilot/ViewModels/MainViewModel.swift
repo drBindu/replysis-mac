@@ -1479,6 +1479,8 @@ class MainViewModel {
         case "snap-sessions":     snapshot(AnyView(SessionsView(preview: Self.demoSessions)), name: "sessions")
         case "snap-sessions-short": snapshot(AnyView(SessionsView(preview: Array(Self.demoSessions.reversed()))), name: "sessions-short")
         case "snap-sessions-empty": snapshot(AnyView(SessionsView(preview: [])), name: "sessions-empty")
+        case "snap-main":         snapshot(AnyView(MainView().frame(width: 920, height: 600)), name: "main")
+        case "snap-main-narrow":  snapshot(AnyView(MainView().frame(width: 840, height: 1100, alignment: .top)), name: "main-narrow")
         case "snap-login":        snapshot(AnyView(LoginView(flat: true)), name: "login")
         case "snap-login-create": snapshot(AnyView(LoginView(creating: true, flat: true)), name: "login-create")
         case "sessions": sessionsOpen = true
