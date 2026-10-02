@@ -1,503 +1,342 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// One interview, from a transcript file on this Mac or from the cloud copy.
 struct SessionEntry: Identifiable, Equatable {
     static func == (lhs: SessionEntry, rhs: SessionEntry) -> Bool { lhs.id == rhs.id }
     let id = UUID()
     let filename: String
-    let header: String
     let content: String
+    /// When the interview was started and when its transcript was last written.
     let date: Date
+    let endDate: Date?
     let sessionNumber: Int
     var isCloud: Bool = false
     var cloudDocId: String? = nil
-    var questionCount: Int { content.components(separatedBy: "\n").filter { $0.hasPrefix("Q:") }.count }
-    var model: String {
-        // Cloud sessions come from the website's real-interview page, which has no
-        // local "groq/openai" header line to parse — badge them distinctly instead.
-        if isCloud { return "Web" }
-        // No provider names. Sessions used to be badged Groq, GPT-4o or Gemini from the header
-        // line, and none of those is what answers now (MAC_CATCHUP, provider truth).
-        return "AI"
+
+    let pairs: [QAPair]
+    let summary: SessionInsights.Summary
+
+    init(filename: String, content: String, date: Date, endDate: Date? = nil, sessionNumber: Int,
+         isCloud: Bool = false, cloudDocId: String? = nil) {
+        self.filename = filename; self.content = content; self.date = date; self.endDate = endDate
+        self.sessionNumber = sessionNumber; self.isCloud = isCloud; self.cloudDocId = cloudDocId
+        let p = SessionInsights.pairs(in: content)
+        self.pairs = p
+        self.summary = SessionInsights.summary(of: p)
     }
+
+    var questionCount: Int { summary.questions }
+    var lasted: String? { isCloud ? nil : SessionInsights.lastedText(from: date, to: endDate) }
     var formattedDate: String { Self.dateFmt.string(from: date) }
     var formattedTime: String { Self.timeFmt.string(from: date) }
 
-    // Shared formatters — created once, not per row render
-    private static let dateFmt: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "MMM d, yyyy"; return f
-    }()
-    private static let timeFmt: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "h:mm a"; return f
-    }()
+    private static let dateFmt: DateFormatter = { let f = DateFormatter(); f.dateFormat = "MMM d, yyyy"; return f }()
+    private static let timeFmt: DateFormatter = { let f = DateFormatter(); f.dateFormat = "h:mm a"; return f }()
 }
 
-struct QABlock: Identifiable {
-    let id = UUID()
-    let question: String
-    let answer: String
+// The colours of Past Sessions: the app's own graphite and silver, with green kept for the one
+// thing that is Replysis speaking. No blue and indigo of the earlier brand, no glow.
+private enum SP {
+    static let background = Color(hex: "#06090F")
+    static let panel      = Color(hex: "#0A0F18")
+    static let card       = Color.white.opacity(0.045)
+    static let line       = Color.white.opacity(0.09)
+    static let text       = Color(hex: "#F4F7FC")
+    static let sub        = Color(hex: "#A4AFC0")
+    static let faint      = Color(hex: "#6E7A8C")
+    static let green      = Color(hex: "#4ADE80")
+    static let greenFill  = Color(hex: "#4ADE80").opacity(0.07)
+    static let greenLine  = Color(hex: "#4ADE80").opacity(0.22)
+
+    static func color(for kind: QuestionKind) -> Color {
+        switch kind {
+        case .fromScreen:   return Color(hex: "#2DD4BF")
+        case .behavioural:  return Color(hex: "#FBBF24")
+        case .systemDesign: return Color(hex: "#A78BFA")
+        case .coding:       return Color(hex: "#60A5FA")
+        case .general:      return Color(hex: "#94A3B8")
+        }
+    }
 }
 
 struct SessionsView: View {
     @Environment(\.dismiss) var dismiss
     @State private var sessions: [SessionEntry] = []
     @State private var selected: SessionEntry?
-    @State private var cachedQABlocks: [QABlock] = []
     @State private var searchText = ""
-    @State private var copiedToast = false
+    @State private var copied = false
     @State private var deletedToast = false
     @State private var showDeleteConfirm = false
+    @State private var loadingCloud = false
+    private let preview: Bool
 
-    var filtered: [SessionEntry] {
-        if searchText.isEmpty { return sessions }
-        let q = searchText.lowercased()
-        return sessions.filter {
-            "session #\($0.sessionNumber)".contains(q) ||
-            $0.content.lowercased().contains(q) ||
-            $0.formattedDate.lowercased().contains(q)
-        }
+    /// `preview` fills the list with the given interviews and loads nothing, for the debug snapshot.
+    init(preview: [SessionEntry]? = nil) {
+        self.preview = preview != nil
+        _sessions = State(initialValue: preview ?? [])
+        _selected = State(initialValue: preview?.first)
     }
 
-    private func computeQABlocks(for sel: SessionEntry?) -> [QABlock] {
-        guard let sel else { return [] }
-        let lines = sel.content.components(separatedBy: "\n")
-        var blocks: [QABlock] = []
-        var currentQ = ""
-        var currentA = ""
-        var inAnswer = false
-
-        for line in lines {
-            if line.hasPrefix("Q:") {
-                if !currentQ.isEmpty {
-                    blocks.append(QABlock(question: currentQ, answer: currentA.trimmingCharacters(in: .whitespacesAndNewlines)))
-                }
-                currentQ = String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-                currentA = ""
-                inAnswer = false
-            } else if line.hasPrefix("A:") {
-                currentA = String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-                inAnswer = true
-            } else if inAnswer && !line.trimmingCharacters(in: .whitespaces).isEmpty {
-                currentA += "\n" + line.trimmingCharacters(in: .whitespaces)
-            }
-        }
-        if !currentQ.isEmpty {
-            blocks.append(QABlock(question: currentQ, answer: currentA.trimmingCharacters(in: .whitespacesAndNewlines)))
-        }
-        return blocks
+    private var filtered: [SessionEntry] {
+        guard !searchText.isEmpty else { return sessions }
+        let q = searchText.lowercased()
+        return sessions.filter { $0.content.lowercased().contains(q) || $0.formattedDate.lowercased().contains(q) }
     }
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [Color(hex: "#060b14"), Color(hex: "#0a1020")],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            ).ignoresSafeArea()
-
+            SP.background.ignoresSafeArea()
             HStack(spacing: 0) {
-                sidebarPanel.frame(width: 260)
-                Rectangle().fill(Color(hex: "#111d2e")).frame(width: 1)
+                listPanel.frame(width: 300)
+                Rectangle().fill(SP.line).frame(width: 1)
                 detailPanel
             }
-
-            if copiedToast {
-                toastBanner(icon: "checkmark.circle.fill", text: "Copied to clipboard", color: Color(hex: "#22c55e"))
-            }
             if deletedToast {
-                toastBanner(icon: "trash.fill", text: "Session deleted", color: Color(hex: "#ef4444"))
+                VStack {
+                    Spacer()
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill").foregroundColor(SP.green)
+                        Text("Removed from this device").font(.system(size: 12, weight: .semibold)).foregroundColor(SP.text)
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color(hex: "#111826")))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(SP.line, lineWidth: 1))
+                    .padding(.bottom, 18)
+                }
+                .transition(.opacity)
             }
         }
-        .frame(width: 900, height: 580)
-        .onAppear { loadSessions() }
-        .onChange(of: selected) { _, newSel in cachedQABlocks = computeQABlocks(for: newSel) }
+        .frame(width: 940, height: 600)
+        .preferredColorScheme(.dark)
+        .onAppear { if !preview { loadSessions() } }
     }
 
-    // MARK: - Sidebar
+    // MARK: - List
 
-    var sidebarPanel: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Color(hex: "#38bdf8"))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Interview Sessions")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(.white)
-                    Text("\(sessions.count) sessions recorded")
-                        .font(.system(size: 10))
-                        .foregroundColor(Color(hex: "#4b5563"))
-                }
-                Spacer()
+    private var listPanel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
                 Button(action: { dismiss() }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(Color(hex: "#374151"))
+                    Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold)).foregroundColor(SP.sub)
+                        .frame(width: 30, height: 30)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(SP.card))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(SP.line, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+                .help("Return to the interview")
+                .accessibilityLabel("Return to the interview")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Past sessions").font(.system(size: 16, weight: .semibold)).foregroundColor(SP.text)
+                    Text("\(sessions.count) \(sessions.count == 1 ? "session" : "sessions") recorded")
+                        .font(.system(size: 11)).foregroundColor(SP.faint)
+                }
+                Spacer()
             }
-            .padding(.horizontal, 14).padding(.vertical, 12)
+            .padding(.horizontal, 16).padding(.top, 18).padding(.bottom, 14)
 
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11))
-                    .foregroundColor(Color(hex: "#4b5563"))
-                TextField("Search sessions...", text: $searchText)
-                    .font(.system(size: 12))
-                    .foregroundColor(.white)
-                    .textFieldStyle(.plain)
-                    .accentColor(Color(hex: "#38bdf8"))
+            HStack(spacing: 7) {
+                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundColor(SP.faint)
+                TextField("", text: $searchText, prompt: Text("Search interviews").foregroundColor(SP.faint))
+                    .textFieldStyle(.plain).font(.system(size: 12)).foregroundColor(SP.text)
                 if !searchText.isEmpty {
                     Button(action: { searchText = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 10))
-                            .foregroundColor(Color(hex: "#4b5563"))
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 11)).foregroundColor(SP.faint)
                     }.buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(Color(hex: "#0d1623"))
-            .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color(hex: "#1e2d40"), lineWidth: 1))
-            .cornerRadius(7)
-            .padding(.horizontal, 12).padding(.bottom, 8)
+            .padding(.horizontal, 11).padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 9).fill(SP.card))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(SP.line, lineWidth: 1))
+            .padding(.horizontal, 14).padding(.bottom, 14)
 
-            Rectangle().fill(Color(hex: "#111d2e")).frame(height: 1)
+            Text("INTERVIEWS").font(.system(size: 9, weight: .bold)).foregroundColor(SP.faint)
+                .padding(.horizontal, 18).padding(.bottom, 6)
 
-            ScrollView {
-                LazyVStack(spacing: 3) {
-                    ForEach(filtered) { session in
-                        sessionCard(session)
-                    }
-                }
-                .padding(.horizontal, 8).padding(.vertical, 6)
-            }
-
-            Rectangle().fill(Color(hex: "#111d2e")).frame(height: 1)
-
-            HStack(spacing: 0) {
-                statPill(icon: "questionmark.circle", value: "\(sessions.reduce(0) { $0 + $1.questionCount })", label: "Q&As")
-                Rectangle().fill(Color(hex: "#1e2d40")).frame(width: 1, height: 24)
-                statPill(icon: "calendar", value: "\(sessions.count)", label: "Sessions")
-            }
-            .padding(.vertical, 8)
-        }
-        .background(Color(hex: "#070e1a"))
-    }
-
-    func sessionCard(_ session: SessionEntry) -> some View {
-        let isSelected = selected?.id == session.id
-        return Button(action: { selected = session }) {
-            HStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(isSelected ? Color(hex: "#0369a1") : Color(hex: "#0d1a2b"))
-                        .frame(width: 36, height: 36)
-                    if session.isCloud {
-                        Image(systemName: "icloud.fill")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(isSelected ? .white : Color(hex: "#38bdf8"))
-                    } else {
-                        Text("#\(session.sessionNumber)")
-                            .font(.system(size: 10, weight: .bold, design: .monospaced))
-                            .foregroundColor(isSelected ? .white : Color(hex: "#38bdf8"))
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 4) {
-                        Text(session.formattedDate)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(isSelected ? .white : Color(hex: "#cbd5e1"))
-                        Spacer()
-                        Text(session.formattedTime)
-                            .font(.system(size: 9))
-                            .foregroundColor(Color(hex: "#4b5563"))
-                    }
-                    HStack(spacing: 5) {
-                        Label("\(session.questionCount) Q&As", systemImage: "text.bubble")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(isSelected ? Color(hex: "#7dd3fc") : Color(hex: "#374151"))
-                        Spacer()
-                        Text(session.model)
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(isSelected ? Color(hex: "#38bdf8") : Color(hex: "#1e3a50"))
-                            .padding(.horizontal, 5).padding(.vertical, 2)
-                            .background(isSelected ? Color(hex: "#0c2a40") : Color(hex: "#0a1520"))
-                            .cornerRadius(4)
-                    }
-                }
-            }
-            .padding(.horizontal, 8).padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? Color(hex: "#0c2240") : Color.clear)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(isSelected ? Color(hex: "#0e4c7c") : Color.clear, lineWidth: 1)
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    func statPill(icon: String, value: String, label: String) -> some View {
-        HStack(spacing: 4) {
-            Spacer()
-            Image(systemName: icon).font(.system(size: 10)).foregroundColor(Color(hex: "#374151"))
-            Text(value).font(.system(size: 11, weight: .bold)).foregroundColor(Color(hex: "#6b7280"))
-            Text(label).font(.system(size: 10)).foregroundColor(Color(hex: "#374151"))
-            Spacer()
-        }
-    }
-
-    // MARK: - Detail Panel
-
-    var detailPanel: some View {
-        ZStack {
-            if let sel = selected {
-                VStack(spacing: 0) {
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(sel.isCloud ? "Session (Web)" : "Session #\(sel.sessionNumber)")
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundColor(.white)
-                            HStack(spacing: 8) {
-                                Label(sel.formattedDate + ", " + sel.formattedTime, systemImage: "calendar")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(Color(hex: "#4b5563"))
-                                Label("\(sel.questionCount) questions", systemImage: "questionmark.circle")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(Color(hex: "#4b5563"))
-                                Text(sel.model)
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundColor(Color(hex: "#38bdf8"))
-                                    .padding(.horizontal, 6).padding(.vertical, 2)
-                                    .background(Color(hex: "#082032"))
-                                    .cornerRadius(5)
-                            }
-                        }
-                        Spacer()
-                        HStack(spacing: 6) {
-                            actionBtn(icon: "doc.on.doc", label: "Copy", color: Color(hex: "#38bdf8")) {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(sel.content, forType: .string)
-                                withAnimation { copiedToast = true }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                    withAnimation { copiedToast = false }
-                                }
-                            }
-                            actionBtn(icon: "arrow.down.circle", label: "Export", color: Color(hex: "#6366f1")) {
-                                exportSession(sel)
-                            }
-                            // No delete API for cloud sessions yet — only the local .txt
-                            // file has a matching delete path.
-                            if !sel.isCloud {
-                                actionBtn(icon: "trash", label: "Delete", color: Color(hex: "#ef4444")) {
-                                    showDeleteConfirm = true
-                                }
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 20).padding(.vertical, 14)
-                    .background(Color(hex: "#070e1a"))
-
-                    Rectangle().fill(Color(hex: "#111d2e")).frame(height: 1)
-
-                    if cachedQABlocks.isEmpty {
-                        Spacer()
-                        VStack(spacing: 10) {
-                            Image(systemName: "doc.text")
-                                .font(.system(size: 28))
-                                .foregroundColor(Color(hex: "#1e2a3a"))
-                            Text("No Q&A content in this session")
-                                .font(.system(size: 13))
-                                .foregroundColor(Color(hex: "#374151"))
-                        }
-                        Spacer()
-                    } else {
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 14) {
-                                ForEach(Array(cachedQABlocks.enumerated()), id: \.element.id) { idx, block in
-                                    qaBlockView(index: idx + 1, block: block)
-                                }
-                            }
-                            .padding(20)
-                        }
-                    }
-                }
-                .confirmationDialog("Delete this session?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
-                    Button("Delete", role: .destructive) { deleteSession(sel) }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("Session #\(sel.sessionNumber) will be permanently removed.")
-                }
+            if sessions.isEmpty {
+                Spacer()   // the empty message is said once, on the right
             } else {
-                VStack(spacing: 16) {
-                    ZStack {
-                        Circle().fill(Color(hex: "#0a1620")).frame(width: 80, height: 80)
-                        Image(systemName: "clock.arrow.circlepath")
-                            .font(.system(size: 32))
-                            .foregroundColor(Color(hex: "#0e4c7c"))
+                MaybeScroll(flat: preview) {
+                    LazyVStack(spacing: 4) {
+                        ForEach(filtered) { row($0) }
                     }
-                    Text("Select a session")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color(hex: "#374151"))
-                    Text("Choose a past interview from the list on the left\nto review your questions and AI responses.")
-                        .font(.system(size: 12))
-                        .foregroundColor(Color(hex: "#1f2937"))
-                        .multilineTextAlignment(.center)
+                    .padding(.horizontal, 10).padding(.bottom, 10)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+
+            if loadingCloud {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading your interviews...").font(.system(size: 11)).foregroundColor(SP.faint)
+                }
+                .padding(.horizontal, 18).padding(.vertical, 12)
             }
         }
-        .background(Color(hex: "#080f1c"))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(SP.panel)
     }
 
-    func qaBlockView(index: Int, block: QABlock) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 5).fill(Color(hex: "#0e3a5a")).frame(width: 24, height: 24)
-                    Text("Q").font(.system(size: 11, weight: .black)).foregroundColor(Color(hex: "#38bdf8"))
-                }
-                .padding(.top, 1)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("QUESTION \(index)")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(Color(hex: "#0369a1"))
-                        .tracking(0.8)
-                    Text(block.question)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(Color(hex: "#e2e8f0"))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color(hex: "#050e1a"))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "#0e2a40"), lineWidth: 1))
-            )
-
-            if !block.answer.isEmpty {
-                HStack(alignment: .top, spacing: 10) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 5).fill(Color(hex: "#1a1040")).frame(width: 24, height: 24)
-                        Text("A").font(.system(size: 11, weight: .black)).foregroundColor(Color(hex: "#818cf8"))
+    private func row(_ s: SessionEntry) -> some View {
+        let on = selected?.id == s.id
+        return Button(action: { selected = s }) {
+            HStack(spacing: 0) {
+                Rectangle().fill(on ? SP.green : Color.clear).frame(width: 2).padding(.vertical, 8)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(s.formattedDate).font(.system(size: 12.5, weight: .semibold)).foregroundColor(on ? SP.text : SP.sub)
+                        if s.isCloud {
+                            Image(systemName: "icloud").font(.system(size: 10)).foregroundColor(SP.faint).help("Cloud copy")
+                        }
+                        Spacer()
+                        Text(s.formattedTime).font(.system(size: 10.5)).foregroundColor(SP.faint)
                     }
-                    .padding(.top, 1)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("AI RESPONSE")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(Color(hex: "#4338ca"))
-                            .tracking(0.8)
-                        Text(block.answer)
-                            .font(.system(size: 12))
-                            .foregroundColor(Color(hex: "#cbd5e1"))
-                            .lineSpacing(3)
-                            .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        Text("\(s.questionCount) \(s.questionCount == 1 ? "question" : "questions")")
+                            .font(.system(size: 10.5)).foregroundColor(SP.faint)
+                        if let lasted = s.lasted {
+                            Text(lasted.replacingOccurrences(of: "Lasted ", with: ""))
+                                .font(.system(size: 10.5)).foregroundColor(SP.faint)
+                        }
                     }
                 }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color(hex: "#070512"))
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "#1e1660"), lineWidth: 1))
-                )
+                .padding(.horizontal, 12).padding(.vertical, 10)
             }
-        }
-    }
-
-    func actionBtn(icon: String, label: String, color: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: icon).font(.system(size: 11, weight: .semibold))
-                Text(label).font(.system(size: 11, weight: .semibold))
-            }
-            .foregroundColor(color)
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(color.opacity(0.1))
-            .overlay(RoundedRectangle(cornerRadius: 7).stroke(color.opacity(0.3), lineWidth: 1))
-            .cornerRadius(7)
+            .background(RoundedRectangle(cornerRadius: 9).fill(on ? Color.white.opacity(0.07) : Color.clear))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(on ? Color.white.opacity(0.12) : Color.clear, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 9))
         }
         .buttonStyle(.plain)
     }
 
-    func toastBanner(icon: String, text: String, color: Color) -> some View {
-        VStack {
-            Spacer()
-            HStack(spacing: 8) {
-                Image(systemName: icon).foregroundColor(color)
-                Text(text).font(.system(size: 12, weight: .semibold)).foregroundColor(.white)
-            }
-            .padding(.horizontal, 16).padding(.vertical, 10)
-            .background(Color(hex: "#111827"))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(color.opacity(0.4), lineWidth: 1))
-            .cornerRadius(10)
-            .shadow(color: .black.opacity(0.4), radius: 12)
-            .padding(.bottom, 16)
-        }
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+    // MARK: - Detail
+
+    private func chip(_ text: String, color: Color = SP.sub, filled: Bool = false) -> some View {
+        Text(text).font(.system(size: 10.5, weight: filled ? .bold : .medium)).foregroundColor(color)
+            .lineLimit(1).fixedSize()
+            .padding(.horizontal, 9).padding(.vertical, 4)
+            .background(Capsule().fill(filled ? color.opacity(0.12) : Color.white.opacity(0.05)))
+            .overlay(Capsule().stroke(filled ? color.opacity(0.28) : SP.line, lineWidth: 1))
     }
 
-    // MARK: - Data
-
-    func loadSessions() {
-        let dir = SpeechmaticsEngine.shared.appDataFolder
-        Task.detached(priority: .userInitiated) {
-            guard let files = try? FileManager.default.contentsOfDirectory(at: dir,
-                includingPropertiesForKeys: [.creationDateKey]) else { return }
-            let localEntries = files
-                .filter { $0.lastPathComponent.hasPrefix("interview_") && $0.pathExtension == "txt" }
-                .compactMap { url -> SessionEntry? in
-                    guard let content = try? String(contentsOf: url, encoding: .utf8),
-                          content.contains("Q:") else { return nil }
-                    let lines = content.components(separatedBy: "\n")
-                    let header = lines.first ?? url.lastPathComponent
-                    let date = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? Date()
-                    let name = url.deletingPathExtension().lastPathComponent
-                    let num = Int(name.replacingOccurrences(of: "interview_", with: "")) ?? 0
-                    return SessionEntry(filename: name, header: header, content: content, date: date, sessionNumber: num)
-                }
-
-            await MainActor.run {
-                self.sessions = localEntries.sorted { $0.date > $1.date }
-                let first = self.sessions.first
-                self.selected = first
-                self.cachedQABlocks = self.computeQABlocks(for: first)
+    private func action(_ label: String, icon: String, danger: Bool = false, _ run: @escaping () -> Void) -> some View {
+        Button(action: run) {
+            HStack(spacing: 5) {
+                Image(systemName: icon).font(.system(size: 10.5, weight: .semibold))
+                Text(label).font(.system(size: 11.5, weight: .semibold))
             }
+            .foregroundColor(danger ? Color(hex: "#F87171") : SP.text)
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(RoundedRectangle(cornerRadius: 8).fill(danger ? Color(hex: "#F87171").opacity(0.08) : SP.card))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(danger ? Color(hex: "#F87171").opacity(0.25) : SP.line, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
 
-            // Cloud-backed-up sessions — same Firestore collection the website's
-            // real-interview dashboard reads from. Skipped for guests (no account).
-            guard await UserSession.shared.isLoggedIn, await !UserSession.shared.isGuestSession else { return }
-            if await UserSession.shared.tokenNeedsRefresh { _ = await UserSession.shared.tryRefreshAsync() }
-            guard let cloudSessions = await NetworkClient.shared.fetchCloudSessions() else { return }
-
-            let dateFmt = DateFormatter()
-            dateFmt.dateFormat = "MMM-d"
-            let cloudEntries = cloudSessions.map { cs -> SessionEntry in
-                var e = SessionEntry(filename: "web-\(dateFmt.string(from: cs.date))", header: "",
-                                      content: cs.content, date: cs.date, sessionNumber: 0)
-                e.isCloud = true
-                e.cloudDocId = cs.id
-                return e
-            }
-            await MainActor.run {
-                let merged = (self.sessions + cloudEntries).sorted { $0.date > $1.date }
-                self.sessions = merged
-                if self.selected == nil {
-                    self.selected = merged.first
-                    self.cachedQABlocks = self.computeQABlocks(for: merged.first)
+    @ViewBuilder private var detailPanel: some View {
+        if let s = selected {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("\(s.formattedDate), \(s.formattedTime)")
+                            .font(.system(size: 18, weight: .semibold)).foregroundColor(SP.text)
+                        // One run of chips that flows onto a second row when the window is narrow,
+                        // instead of squeezing each chip until its words break in half.
+                        FlowLayout(spacing: 7) {
+                            if let lasted = s.lasted { chip(lasted) }
+                            chip("\(s.questionCount) \(s.questionCount == 1 ? "question" : "questions")")
+                            if s.summary.longestAnswerWords > 0 { chip("Longest answer \(s.summary.longestAnswerWords) words") }
+                            ForEach(s.summary.kinds, id: \.0) { kind, n in
+                                chip("\(kind.rawValue) \(n)", color: SP.color(for: kind), filled: true)
+                            }
+                        }
+                    }
+                    Spacer(minLength: 12)
+                    HStack(spacing: 7) {
+                        action(copied ? "Copied" : "Copy", icon: copied ? "checkmark" : "doc.on.doc") { copy(s) }
+                        action("Export", icon: "square.and.arrow.up") { exportSession(s) }
+                        if !s.isCloud { action("Delete", icon: "trash", danger: true) { showDeleteConfirm = true } }
+                    }
                 }
+                .padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 16)
+
+                Rectangle().fill(SP.line).frame(height: 1)
+
+                if s.pairs.isEmpty {
+                    VStack { Spacer(); Text("Nothing was asked in this interview").font(.system(size: 13)).foregroundColor(SP.faint); Spacer() }
+                        .frame(maxWidth: .infinity)
+                } else {
+                    MaybeScroll(flat: preview) {
+                        VStack(alignment: .leading, spacing: 16) {
+                            ForEach(s.pairs) { pairBlock($0) }
+                        }
+                        .padding(24)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .confirmationDialog("Remove this interview from this device?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+                Button("Remove from this device", role: .destructive) { deleteSession(s) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(SessionInsights.deleteExplanation)
+            }
+        } else {
+            VStack(spacing: 6) {
+                Spacer()
+                Text(sessions.isEmpty ? "No sessions yet" : "Choose an interview")
+                    .font(.system(size: 15, weight: .semibold)).foregroundColor(SP.sub)
+                Text(sessions.isEmpty ? "Finished interviews appear here" : "Pick one from the list to read its questions and answers")
+                    .font(.system(size: 12)).foregroundColor(SP.faint)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func pairBlock(_ p: QAPair) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text("INTERVIEWER").font(.system(size: 9, weight: .bold)).foregroundColor(SP.faint)
+                    Text(p.kind.rawValue).font(.system(size: 8.5, weight: .bold)).foregroundColor(SP.color(for: p.kind))
+                }
+                Text(p.question).font(.system(size: 13, weight: .medium)).foregroundColor(SP.text)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 11).fill(SP.card))
+            .overlay(RoundedRectangle(cornerRadius: 11).stroke(SP.line, lineWidth: 1))
+
+            if !p.answer.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("AI ANSWER").font(.system(size: 9, weight: .bold)).foregroundColor(SP.green)
+                    Text(p.spokenAnswer).font(.system(size: 12.5)).foregroundColor(Color(hex: "#DCE4F0"))
+                        .lineSpacing(4).fixedSize(horizontal: false, vertical: true)
+                    if !p.moreToSay.isEmpty {
+                        Text("MORE TO SAY").font(.system(size: 8.5, weight: .bold)).foregroundColor(SP.faint).padding(.top, 4)
+                        Text(p.moreToSay).font(.system(size: 11.5)).foregroundColor(SP.sub)
+                            .lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 11).fill(SP.greenFill))
+                .overlay(RoundedRectangle(cornerRadius: 11).stroke(SP.greenLine, lineWidth: 1))
             }
         }
     }
 
-    func exportSession(_ session: SessionEntry) {
+    // MARK: - Actions
+
+    private func copy(_ s: SessionEntry) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(s.content, forType: .string)
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { copied = false }
+    }
+
+    private func exportSession(_ session: SessionEntry) {
         let panel = NSSavePanel()
-        panel.title = "Export Session"
+        panel.title = "Export interview"
         panel.nameFieldStringValue = "\(session.filename).txt"
         panel.allowedContentTypes = [.plainText]
         if panel.runModal() == .OK, let url = panel.url {
@@ -505,15 +344,88 @@ struct SessionsView: View {
         }
     }
 
-    func deleteSession(_ session: SessionEntry) {
-        let dir = SpeechmaticsEngine.shared.appDataFolder
-        let url = dir.appendingPathComponent("\(session.filename).txt")
+    /// Only this device's copy. The cloud backup is not touched, so it can appear in the list again.
+    private func deleteSession(_ session: SessionEntry) {
+        let url = SpeechmaticsEngine.shared.appDataFolder.appendingPathComponent("\(session.filename).txt")
         try? FileManager.default.removeItem(at: url)
         sessions.removeAll { $0.id == session.id }
         selected = sessions.first
         withAnimation { deletedToast = true }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            withAnimation { deletedToast = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { withAnimation { deletedToast = false } }
+    }
+
+    // MARK: - Data
+
+    private func loadSessions() {
+        let dir = SpeechmaticsEngine.shared.appDataFolder
+        let signedIn = UserSession.shared.isLoggedIn && !UserSession.shared.isGuestSession
+        loadingCloud = signedIn
+        Task.detached(priority: .userInitiated) {
+            let keys: [URLResourceKey] = [.creationDateKey, .contentModificationDateKey]
+            let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys)) ?? []
+            let local = files
+                .filter { $0.lastPathComponent.hasPrefix("interview_") && $0.pathExtension == "txt" }
+                .compactMap { url -> SessionEntry? in
+                    guard let content = try? String(contentsOf: url, encoding: .utf8), content.contains("Q:") else { return nil }
+                    let values = try? url.resourceValues(forKeys: Set(keys))
+                    let name = url.deletingPathExtension().lastPathComponent
+                    return SessionEntry(filename: name, content: content,
+                                        date: values?.creationDate ?? Date(), endDate: values?.contentModificationDate,
+                                        sessionNumber: Int(name.replacingOccurrences(of: "interview_", with: "")) ?? 0)
+                }
+                .sorted { $0.date > $1.date }
+            await MainActor.run {
+                self.sessions = local
+                self.selected = local.first
+            }
+
+            // The cloud copy, matched against this Mac's files so one interview never shows twice.
+            guard signedIn else { return }
+            if await UserSession.shared.tokenNeedsRefresh { _ = await UserSession.shared.tryRefreshAsync() }
+            let cloud = await NetworkClient.shared.fetchCloudSessions()
+            let stamp = DateFormatter(); stamp.dateFormat = "MMM-d"
+            let extra: [SessionEntry] = (cloud ?? []).compactMap { cs in
+                let entry = SessionEntry(filename: "web-\(stamp.string(from: cs.date))", content: cs.content,
+                                         date: cs.date, sessionNumber: 0, isCloud: true, cloudDocId: cs.id)
+                let first = entry.pairs.first?.question ?? ""
+                let duplicate = local.contains {
+                    SessionInsights.isSameInterview(localDate: $0.date, localFirstQuestion: $0.pairs.first?.question ?? "",
+                                                    cloudDate: entry.date, cloudFirstQuestion: first)
+                }
+                return duplicate ? nil : entry
+            }
+            await MainActor.run {
+                self.loadingCloud = false
+                guard !extra.isEmpty else { return }
+                let merged = (self.sessions + extra).sorted { $0.date > $1.date }
+                self.sessions = merged
+                if self.selected == nil { self.selected = merged.first }
+            }
+        }
+    }
+}
+
+
+/// Items laid out left to right, starting a new row when the next one does not fit.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, widest: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > maxWidth { y += rowHeight + spacing; x = 0; rowHeight = 0 }
+            x += size.width + spacing; rowHeight = max(rowHeight, size.height); widest = max(widest, x - spacing)
+        }
+        return CGSize(width: widest, height: y + rowHeight)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX { y += rowHeight + spacing; x = bounds.minX; rowHeight = 0 }
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing; rowHeight = max(rowHeight, size.height)
         }
     }
 }

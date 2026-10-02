@@ -20,319 +20,357 @@ struct LoginView: View {
     // of a dead-end button and a red error banner.
     @State private var googleSignInAvailable = false
 
+    /// `flat` draws the form without a scroll view, for the debug snapshot (an image renderer
+    /// cannot draw a scroll view's content). The real window always scrolls if it has to.
+    private let flat: Bool
+    init(creating: Bool = false, flat: Bool = false) {
+        _isCreatingAccount = State(initialValue: creating); self.flat = flat
+    }
+
     // Saved account for "Continue As" card
     private var savedEmail: String { UserSession.shared.email }
     // BUG-14 FIX: check refreshToken (not idToken) — idToken can be populated even when
     // expired, so the "Continue As" card would show for an unusable token.
     private var hasSavedAccount: Bool { !savedEmail.isEmpty && !UserSession.shared.refreshToken.isEmpty }
 
-    private var formHeight: CGFloat {
-        var h: CGFloat = 680   // base + the Sign In/Create Account toggle row
-        if hasSavedAccount && !isCreatingAccount { h += 80 }
-        if isCreatingAccount { h += 70 }   // extra Full Name field
-        return h
+    // The sign-in window, redesigned to match Windows (bf6222d, 3665daa) and the website: a light
+    // split layout, a product panel on the left and the form on the right. No glows, no
+    // letter-spacing and no animation loops: the page is meant to look finished, not busy.
+    private enum Palette {
+        static let page      = Color(hex: "#FEFEFC")
+        static let ink       = Color(hex: "#16150F")
+        static let body      = Color(hex: "#5A5F55")
+        static let muted     = Color(hex: "#7A8177")
+        static let faint     = Color(hex: "#8A9086")
+        static let line      = Color(hex: "#DCE4D8")
+        static let hairline  = Color(hex: "#E4E8E0")
+        static let chip      = Color(hex: "#F0F2EE")
+        static let green     = Color(hex: "#1C7A3E")
+        static let greenLit  = Color(hex: "#21924A")
+        static let greenTint = Color(hex: "#EEF7EF")
+        static let greenLine = Color(hex: "#BFDFC7")
+        static let errorBg   = Color(hex: "#FDF1F1")
+        static let errorLine = Color(hex: "#F3C6C6")
+        static let errorInk  = Color(hex: "#9A2E24")
     }
 
-    private func modeTab(_ title: String, active: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(active ? .white : Color(hex: "#6b7280"))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .background(active ? Color(hex: "#1d4ed8") : Color(hex: "#161b22"))
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(
-                    active ? Color(hex: "#1d4ed8") : Color.white.opacity(0.12), lineWidth: 1))
-                .cornerRadius(7)
+    private enum Field { case name, email, password }
+    @FocusState private var focus: Field?
+    @State private var showPassword = false
+
+    private func submit() { isCreatingAccount ? createAccount() : signIn() }
+
+    private func switchMode() {
+        withAnimation(.easeOut(duration: 0.18)) {
+            isCreatingAccount.toggle(); errorMsg = ""; successMsg = ""
         }
-        .buttonStyle(.plain)
     }
 
-    var body: some View {
-        ZStack {
-            // Background
-            Color(red: 13/255, green: 17/255, blue: 23/255).ignoresSafeArea()
+    // ── Left: the product ────────────────────────────────────────────
+    private var productPanel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                Image("ReplysisMark")
+                    .resizable().interpolation(.high).aspectRatio(contentMode: .fit)
+                    .frame(width: 40, height: 40)
+                    .frame(width: 42, height: 42)
+                    .background(RoundedRectangle(cornerRadius: 11).fill(Color.white))
+                    .overlay(RoundedRectangle(cornerRadius: 11).stroke(Color(hex: "#D8E3D6"), lineWidth: 1))
+                    .accessibilityLabel("Replysis")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("REPLYSIS").font(.system(size: 15, weight: .bold)).foregroundColor(Palette.ink)
+                    Text("AI INTERVIEW COPILOT").font(.system(size: 8.5, weight: .semibold)).foregroundColor(Palette.muted)
+                }
+            }
 
-            ScrollView {
-                VStack(spacing: 0) {
+            Spacer(minLength: 12)
 
-                    // ── Logo + Brand ──────────────────────────────────
-                    VStack(spacing: 10) {
-                        // The real Replysis mark (the same file as the website and the Windows
-                        // app). It used to be a blue head-and-brain symbol from an earlier brand.
-                        Image("ReplysisMark")
-                            .resizable().interpolation(.high)
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 64, height: 64)
-                            .accessibilityLabel("Replysis")
-                        Text("Replysis")
-                            .font(.system(size: 24, weight: .bold))
-                            .foregroundColor(.white)
-                        // The tagline that stood here ("Your AI-powered interview assistant") is
-                        // gone: the owner reads taglines as AI-generated. What belongs here is
-                        // the one thing a new person is deciding on: what they get for free.
-                        HStack(spacing: 10) {
-                            Text("\(PlanFacts.answers(PlanFacts.freeCredits))")
-                                .font(.system(size: 22, weight: .bold))
-                                .foregroundColor(.white)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text("FREE ANSWERS TO TRY IT")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundColor(Color(hex: "#e5e7eb"))
-                                Text("Included with every new account")
-                                    .font(.system(size: 10))
-                                    .foregroundColor(Color(hex: "#9ca3af"))
-                            }
-                            Text("NO CARD")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundColor(Color(hex: "#9ca3af"))
-                                .padding(.horizontal, 6).padding(.vertical, 3)
-                                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(0.18), lineWidth: 1))
-                        }
-                        .padding(.horizontal, 14).padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.05)))
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.10), lineWidth: 1))
-                        .padding(.top, 4)
-                    }
-                    .padding(.top, 36)
-                    .padding(.bottom, 20)
+            HStack(spacing: 7) {
+                Circle().fill(Palette.greenLit).frame(width: 5, height: 5)
+                Text("YOUR INTERVIEW, IN FOCUS").font(.system(size: 9, weight: .bold)).foregroundColor(Palette.green)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(Capsule().fill(Palette.greenLit.opacity(0.08)))
+            .overlay(Capsule().stroke(Palette.greenLit.opacity(0.2), lineWidth: 1))
+            .padding(.bottom, 16)
 
-                    // ── Sign In / Create Account toggle ───────────────
-                    HStack(spacing: 6) {
-                        modeTab("Sign In", active: !isCreatingAccount) {
-                            isCreatingAccount = false; errorMsg = ""; successMsg = ""
-                        }
-                        modeTab("Create Account", active: isCreatingAccount) {
-                            isCreatingAccount = true; errorMsg = ""; successMsg = ""
+            Text("Be ready for the\nquestion that matters.")
+                .font(.system(size: 27, weight: .semibold)).foregroundColor(Palette.ink)
+                .lineSpacing(5)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Replysis listens, understands the role and grounds every response in your real experience.")
+                .font(.system(size: 12.5)).foregroundColor(Palette.body)
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 12).padding(.trailing, 8)
+
+            // What the product does, shown rather than described: a question, and the answer.
+            ZStack(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("IN").font(.system(size: 8, weight: .bold)).foregroundColor(Palette.body)
+                            .frame(width: 24, height: 24).background(Circle().fill(Palette.chip))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("INTERVIEWER").font(.system(size: 8, weight: .bold)).foregroundColor(Palette.faint)
+                            Text("Tell me about a project you led.").font(.system(size: 11.5)).foregroundColor(Palette.ink)
                         }
                     }
-                    .padding(.horizontal, 28)
-                    .padding(.bottom, 20)
-
-                    // ── Error / Success Banner ────────────────────────
-                    if !errorMsg.isEmpty {
-                        HStack(spacing: 8) {
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .foregroundColor(Color(hex: "#ef4444"))
-                            Text(errorMsg)
-                                .font(.system(size: 13))
-                                .foregroundColor(Color(hex: "#fca5a5"))
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 13).padding(.vertical, 10)
+                    .frame(width: 285, height: 62, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "#E3E8E0"), lineWidth: 1))
+                    .shadow(color: Palette.ink.opacity(0.10), radius: 12, x: 0, y: 6)
+                    .rotationEffect(.degrees(-1.5))
+                    .padding(.leading, 7).padding(.top, 7)
+                }
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack {
+                        HStack(spacing: 7) {
+                            Image(systemName: "bolt.fill").font(.system(size: 8, weight: .bold)).foregroundColor(Palette.green)
+                                .frame(width: 18, height: 18).background(RoundedRectangle(cornerRadius: 5).fill(Palette.greenLit.opacity(0.13)))
+                            Text("REPLYSIS ANSWER").font(.system(size: 8.5, weight: .bold)).foregroundColor(Palette.green)
                         }
-                        .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(Color(hex: "#ef4444").opacity(0.12))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "#ef4444").opacity(0.3), lineWidth: 1))
-                        .cornerRadius(8)
-                        .padding(.horizontal, 28)
-                        .padding(.bottom, 16)
-                        .transition(.opacity)
-                    }
-
-                    if !successMsg.isEmpty {
-                        HStack(spacing: 8) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(Color(hex: "#4ade80"))
-                            Text(successMsg)
-                                .font(.system(size: 13))
-                                .foregroundColor(Color(hex: "#86efac"))
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                        Spacer(minLength: 4)
+                        HStack(spacing: 5) {
+                            Circle().fill(Palette.greenLit).frame(width: 5, height: 5)
+                            Text("RESUME GROUNDED").font(.system(size: 7.5, weight: .bold)).foregroundColor(Color(hex: "#4F8A62"))
                         }
-                        .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(Color(hex: "#4ade80").opacity(0.12))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "#4ade80").opacity(0.3), lineWidth: 1))
-                        .cornerRadius(8)
-                        .padding(.horizontal, 28)
-                        .padding(.bottom, 16)
-                        .transition(.opacity)
                     }
+                    Text("I led the migration by splitting delivery into safe phases, reducing deployment risk while keeping the service available.")
+                        .font(.system(size: 10.5)).foregroundColor(Color(hex: "#2B3A2E"))
+                        .lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 11)
+                .frame(width: 302, height: 82, alignment: .topLeading)
+                .background(RoundedRectangle(cornerRadius: 11).fill(Palette.greenTint))
+                .overlay(RoundedRectangle(cornerRadius: 11).stroke(Palette.greenLine, lineWidth: 1))
+                .shadow(color: Palette.green.opacity(0.12), radius: 14, x: 0, y: 8)
+                .rotationEffect(.degrees(1.2))
+                .offset(x: 28, y: 92)
+            }
+            .frame(width: 330, height: 178, alignment: .topLeading)
+            .padding(.top, 18)
 
-                    // ── "Continue As" card ────────────────────────────
+            Spacer(minLength: 16)
+
+            HStack(spacing: 11) {
+                Text("\(PlanFacts.answers(PlanFacts.freeCredits))")
+                    .font(.system(size: 22, weight: .semibold)).foregroundColor(Palette.green)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("FREE ANSWERS TO TRY IT").font(.system(size: 9, weight: .bold)).foregroundColor(Palette.ink)
+                    Text("Included with every new account").font(.system(size: 9.5)).foregroundColor(Palette.muted)
+                }
+                Spacer(minLength: 8)
+                Text("NO CARD").font(.system(size: 7.5, weight: .bold)).foregroundColor(Palette.body)
+                    .padding(.horizontal, 7).padding(.vertical, 4)
+                    .background(Capsule().fill(Palette.chip))
+                    .overlay(Capsule().stroke(Palette.line, lineWidth: 1))
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.line, lineWidth: 1))
+        }
+        .padding(.leading, 48).padding(.trailing, 44).padding(.top, 42).padding(.bottom, 40)
+        .frame(width: 420, alignment: .leading)
+        .frame(maxHeight: .infinity)
+        .background(
+            LinearGradient(colors: [Color(hex: "#F6F8F3"), Color(hex: "#F1F5EE"), Color(hex: "#EAF3EC")],
+                           startPoint: .topLeading, endPoint: .bottomTrailing))
+        .overlay(alignment: .trailing) { Rectangle().fill(Color(hex: "#DCE4D8")).frame(width: 1) }
+    }
+
+    // ── Right: the form ──────────────────────────────────────────────
+    private func fieldShell<Content: View>(_ icon: String, focused: Bool, @ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 0) {
+            Image(systemName: icon).font(.system(size: 13, weight: .regular)).foregroundColor(Palette.faint)
+                .frame(width: 42)
+            content()
+        }
+        .frame(height: 48)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(focused ? Palette.greenLit : Palette.line, lineWidth: focused ? 1.6 : 1.3))
+        .animation(.easeOut(duration: 0.12), value: focused)
+    }
+
+    private func fieldLabel(_ text: String) -> some View {
+        Text(text).font(.system(size: 11, weight: .semibold)).foregroundColor(Palette.body)
+    }
+
+    private func banner(_ text: String, error: Bool) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: error ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                .font(.system(size: 12)).foregroundColor(error ? Color(hex: "#C0392B") : Palette.greenLit)
+                .padding(.top, 1)
+            Text(text).font(.system(size: 11.5)).foregroundColor(error ? Palette.errorInk : Palette.green)
+                .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 11).padding(.vertical, 9)
+        .background(RoundedRectangle(cornerRadius: 8).fill(error ? Palette.errorBg : Palette.greenTint))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(error ? Palette.errorLine : Palette.greenLine, lineWidth: 1))
+        .transition(.opacity)
+    }
+
+    private var formPanel: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.white
+            LoginCloseButton { dismiss() }
+                .padding(.top, 14).padding(.trailing, 16)
+
+            MaybeScroll(flat: flat) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(isCreatingAccount ? "Create your account" : "Welcome back")
+                        .font(.system(size: 25, weight: .semibold)).foregroundColor(Palette.ink)
+                    Text(isCreatingAccount ? "Your free answers are ready as soon as you sign up"
+                                           : "Sign in to continue to your workspace")
+                        .font(.system(size: 12.5)).foregroundColor(Palette.muted)
+                        .padding(.top, 5).padding(.bottom, 22)
+
+                    if !errorMsg.isEmpty { banner(errorMsg, error: true).padding(.bottom, 12) }
+                    if !successMsg.isEmpty { banner(successMsg, error: false).padding(.bottom, 12) }
+
                     if hasSavedAccount && !isCreatingAccount {
                         Button(action: continueAsSaved) {
                             HStack(spacing: 12) {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color(hex: "#1e3a5f"))
-                                        .frame(width: 38, height: 38)
-                                    Text(UserSession.shared.initials.isEmpty ? "?" : UserSession.shared.initials)
-                                        .font(.system(size: 14, weight: .bold))
-                                        .foregroundColor(Color(hex: "#38bdf8"))
-                                }
+                                Text(UserSession.shared.initials.isEmpty ? "?" : UserSession.shared.initials)
+                                    .font(.system(size: 13, weight: .bold)).foregroundColor(Palette.green)
+                                    .frame(width: 36, height: 36).background(Circle().fill(Palette.greenTint))
+                                    .overlay(Circle().stroke(Palette.greenLine, lineWidth: 1))
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("Continue as \(UserSession.shared.firstName)")
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundColor(.white)
-                                    Text(savedEmail)
-                                        .font(.system(size: 12))
-                                        .foregroundColor(Color(hex: "#6b7280"))
+                                        .font(.system(size: 13.5, weight: .semibold)).foregroundColor(Palette.ink)
+                                    Text(savedEmail).font(.system(size: 11.5)).foregroundColor(Palette.muted)
                                 }
                                 Spacer()
-                                if isLoading {
-                                    ProgressView().scaleEffect(0.7)
-                                } else {
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundColor(Color(hex: "#38bdf8"))
-                                }
+                                if isLoading { ProgressView().controlSize(.small) }
+                                else { Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundColor(Palette.green) }
                             }
-                            .padding(.horizontal, 16).padding(.vertical, 12)
-                            .background(Color(hex: "#0d2540"))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "#1e40af").opacity(0.6), lineWidth: 1))
-                            .cornerRadius(10)
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 28)
-                        .padding(.bottom, 20)
-                    }
-
-                    // ── Card background ───────────────────────────────
-                    VStack(spacing: 16) {
-
-                        // Full name field — Create Account mode only
-                        if isCreatingAccount {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("Full Name")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(Color(hex: "#9ca3af"))
-                                TextField("Jane Doe", text: $fullName)
-                                    .textFieldStyle(.plain)
-                                    .autocorrectionDisabled()
-                                    .padding(.horizontal, 12).padding(.vertical, 9)
-                                    .background(Color(hex: "#161b22"))
-                                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.12), lineWidth: 1))
-                                    .cornerRadius(7)
-                                    .foregroundColor(.white)
-                                    .font(.system(size: 14))
-                            }
-                        }
-
-                        // Email field
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Email")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(Color(hex: "#9ca3af"))
-                            TextField("you@example.com", text: $email)
-                                .textFieldStyle(.plain)
-                                .autocorrectionDisabled()
-                                .padding(.horizontal, 12).padding(.vertical, 9)
-                                .background(Color(hex: "#161b22"))
-                                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.12), lineWidth: 1))
-                                .cornerRadius(7)
-                                .foregroundColor(.white)
-                                .font(.system(size: 14))
-                        }
-
-                        // Password field
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text("Password")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(Color(hex: "#9ca3af"))
-                                Spacer()
-                                if !isCreatingAccount {
-                                    Button("Forgot password?") { forgotPassword() }
-                                        .font(.system(size: 12))
-                                        .foregroundColor(Color(hex: "#38bdf8"))
-                                        .buttonStyle(.plain)
-                                }
-                            }
-                            SecureField("••••••••", text: $password)
-                                .textFieldStyle(.plain)
-                                .padding(.horizontal, 12).padding(.vertical, 9)
-                                .background(Color(hex: "#161b22"))
-                                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.12), lineWidth: 1))
-                                .cornerRadius(7)
-                                .foregroundColor(.white)
-                                .font(.system(size: 14))
-                            if isCreatingAccount {
-                                Text("At least 6 characters")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(Color(hex: "#4b5563"))
-                            }
-                        }
-
-                        // Sign In / Create Account button
-                        Button(action: { isCreatingAccount ? createAccount() : signIn() }) {
-                            HStack(spacing: 8) {
-                                if isLoading { ProgressView().scaleEffect(0.75).tint(.white) }
-                                Text(isCreatingAccount ? "Create Account" : "Sign In")
-                                    .font(.system(size: 14, weight: .semibold))
-                            }
-                            .frame(maxWidth: .infinity)
-                            .foregroundColor(.white)
-                            .padding(.vertical, 11)
-                            .background(
-                                LinearGradient(colors: [Color(hex: "#1d4ed8"), Color(hex: "#1e40af")],
-                                               startPoint: .leading, endPoint: .trailing)
-                            )
-                            .cornerRadius(8)
+                            .padding(.horizontal, 14).padding(.vertical, 11)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(Palette.greenTint))
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.greenLine, lineWidth: 1))
                         }
                         .buttonStyle(.plain)
                         .disabled(isLoading)
+                        .padding(.bottom, 18)
+                    }
 
-                        // ── OR divider + Continue with Google ──
-                        // Only shown once a real client secret is confirmed present — see
-                        // googleSignInAvailable's declaration for why.
-                        if googleSignInAvailable {
-                            HStack(spacing: 12) {
-                                Rectangle().fill(Color.white.opacity(0.12)).frame(height: 1)
-                                Text("OR").font(.system(size: 11)).foregroundColor(Color(hex: "#4b5563"))
-                                Rectangle().fill(Color.white.opacity(0.12)).frame(height: 1)
-                            }
+                    if isCreatingAccount {
+                        fieldLabel("Full name").padding(.bottom, 7)
+                        fieldShell("person", focused: focus == .name) {
+                            TextField("", text: $fullName, prompt: Text("Jane Doe").foregroundColor(Palette.faint))
+                                .textFieldStyle(.plain).focused($focus, equals: .name)
+                                .font(.system(size: 13.5)).foregroundColor(Palette.ink)
+                                .autocorrectionDisabled().onSubmit { focus = .email }
+                        }
+                        .padding(.bottom, 16)
+                    }
 
-                            Button(action: signInWithGoogle) {
-                                HStack(spacing: 10) {
-                                    GoogleLogoShape().frame(width: 18, height: 18)
-                                    // Same OAuth flow either way — Firebase auto-creates the
-                                    // account on a Google sign-in it's never seen before, so
-                                    // this single button already covers "sign up with Google".
-                                    Text(isCreatingAccount ? "Sign up with Google" : "Continue with Google")
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundColor(.white)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 11)
-                                .background(Color(hex: "#1f2937"))
-                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.18), lineWidth: 1))
-                                .cornerRadius(8)
+                    fieldLabel("Email address").padding(.bottom, 7)
+                    fieldShell("envelope", focused: focus == .email) {
+                        TextField("", text: $email, prompt: Text("you@example.com").foregroundColor(Palette.faint))
+                            .textFieldStyle(.plain).focused($focus, equals: .email)
+                            .font(.system(size: 13.5)).foregroundColor(Palette.ink)
+                            .autocorrectionDisabled().onSubmit { focus = .password }
+                    }
+                    .padding(.bottom, 16)
+
+                    fieldLabel("Password").padding(.bottom, 7)
+                    fieldShell("lock", focused: focus == .password) {
+                        Group {
+                            if showPassword {
+                                TextField("", text: $password, prompt: Text("Your password").foregroundColor(Palette.faint))
+                            } else {
+                                SecureField("", text: $password, prompt: Text("Your password").foregroundColor(Palette.faint))
                             }
-                            .buttonStyle(.plain)
-                            .disabled(isLoading)
+                        }
+                        .textFieldStyle(.plain).focused($focus, equals: .password)
+                        .font(.system(size: 13.5)).foregroundColor(Palette.ink)
+                        .onSubmit { submit() }
+                        Button(action: { showPassword.toggle() }) {
+                            Image(systemName: showPassword ? "eye.slash" : "eye")
+                                .font(.system(size: 13)).foregroundColor(Palette.faint)
+                                .frame(width: 38, height: 34)
+                        }
+                        .buttonStyle(.plain)
+                        .help(showPassword ? "Hide password" : "Show password")
+                        .padding(.trailing, 5)
+                    }
+
+                    HStack {
+                        if isCreatingAccount {
+                            Text("At least 6 characters").font(.system(size: 11)).foregroundColor(Palette.muted)
+                        }
+                        Spacer()
+                        if !isCreatingAccount {
+                            Button("Forgot password?") { forgotPassword() }
+                                .buttonStyle(LoginLinkStyle(size: 11))
                         }
                     }
-                    .padding(24)
-                    .background(Color(hex: "#0d1117").opacity(0.5))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.08), lineWidth: 1))
-                    .cornerRadius(12)
-                    .padding(.horizontal, 28)
+                    .padding(.top, 8).padding(.bottom, 18)
 
-                    // ── Footer: mode switch + Cancel ──────────────────
-                    VStack(spacing: 12) {
-                        HStack(spacing: 4) {
-                            Text(isCreatingAccount ? "Already have an account?" : "Don't have an account?")
-                                .font(.system(size: 12))
-                                .foregroundColor(Color(hex: "#6b7280"))
-                            Button(isCreatingAccount ? "Sign in" : "Create one") {
-                                isCreatingAccount.toggle(); errorMsg = ""; successMsg = ""
-                            }
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(Color(hex: "#38bdf8"))
-                            .buttonStyle(.plain)
+                    Button(action: submit) {
+                        HStack(spacing: 8) {
+                            if isLoading { ProgressView().controlSize(.small).tint(.white) }
+                            Text(isLoading ? (isCreatingAccount ? "Creating account..." : "Signing in...")
+                                           : (isCreatingAccount ? "Create account" : "Sign In"))
+                                .font(.system(size: 13, weight: .semibold))
                         }
-
-                        Button("Cancel") { dismiss() }
-                            .font(.system(size: 12))
-                            .foregroundColor(Color(hex: "#6b7280"))
-                            .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity).frame(height: 43)
                     }
-                    .padding(.top, 20)
-                    .padding(.bottom, 32)
+                    .buttonStyle(LoginPrimaryButtonStyle())
+                    .disabled(isLoading)
+                    .keyboardShortcut(.defaultAction)
+                    .padding(.bottom, 14)
+
+                    if googleSignInAvailable {
+                        HStack(spacing: 12) {
+                            Rectangle().fill(Palette.hairline).frame(height: 1)
+                            Text("OR").font(.system(size: 9, weight: .bold)).foregroundColor(Palette.faint)
+                            Rectangle().fill(Palette.hairline).frame(height: 1)
+                        }
+                        .padding(.bottom, 14)
+
+                        Button(action: signInWithGoogle) {
+                            HStack(spacing: 10) {
+                                GoogleLogoShape().frame(width: 16, height: 16)
+                                Text(isCreatingAccount ? "Sign up with Google" : "Continue with Google")
+                                    .font(.system(size: 12.5, weight: .semibold))
+                            }
+                            .frame(maxWidth: .infinity).frame(height: 43)
+                        }
+                        .buttonStyle(LoginSecondaryButtonStyle())
+                        .disabled(isLoading)
+                        .padding(.bottom, 16)
+                    } else {
+                        Spacer().frame(height: 4)
+                    }
+
+                    HStack(spacing: 4) {
+                        Spacer()
+                        Text(isCreatingAccount ? "Already have an account?" : "New to Replysis?")
+                            .font(.system(size: 11.5)).foregroundColor(Palette.muted)
+                        Button(isCreatingAccount ? "Sign in" : "Create an account") { switchMode() }
+                            .buttonStyle(LoginLinkStyle(size: 11.5))
+                        Spacer()
+                    }
                 }
+                .frame(width: 390)
+                .padding(.vertical, 40)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 600)
             }
         }
-        // Tall enough that the Cancel button is always visible without scrolling (the
-        // Sign In/Create Account toggle and the Full Name field both add real height).
-        .frame(width: 400, height: formHeight)
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            productPanel
+            formPanel
+        }
+        .frame(width: 960, height: 600)
+        .background(Palette.page)
+        // Light in every system appearance: the page is a light page, and a dark system would
+        // turn its fields and text into something unreadable.
+        .preferredColorScheme(.light)
         .task {
             // Check whether Google sign-in can actually succeed BEFORE showing its button.
             // Baked-in secret (set via the GOOGLE_CLIENT_SECRET GitHub secret at build time)
@@ -340,6 +378,7 @@ struct LoginView: View {
             // fallback. Either way, the button only appears once this resolves true.
             if AppConfig.googleClientSecret.isEmpty { await AppConfig.fetchRemoteConfig() }
             googleSignInAvailable = !AppConfig.googleClientSecret.isEmpty
+            focus = hasSavedAccount ? nil : .email
         }
     }
 
@@ -653,5 +692,101 @@ struct GoogleLogoShape: View {
             ctx.fill(Path(CGRect(x: center.x, y: center.y - barH/2, width: barW, height: barH)),
                      with: .color(.white))
         }
+    }
+}
+
+
+// ── Buttons and links for the light sign-in page ───────────────────────────────
+// A shared dark-window icon button turned invisible on white on Windows, so the close button, the
+// links and the two main buttons are their own, drawn for a light page.
+struct LoginCloseButton: View {
+    var action: () -> Void
+    @State private var hovering = false
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)).foregroundColor(Color(hex: "#5A5F55"))
+                .frame(width: 32, height: 32)
+                .background(RoundedRectangle(cornerRadius: 6).fill(hovering ? Color(hex: "#FDF1F1") : Color(hex: "#F0F2EE")))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(hovering ? Color(hex: "#F3C6C6") : Color(hex: "#DCE4D8"), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Close")
+        .accessibilityLabel("Close")
+    }
+}
+
+struct LoginLinkStyle: ButtonStyle {
+    var size: CGFloat
+    func makeBody(configuration: Configuration) -> some View {
+        LinkBody(configuration: configuration, size: size)
+    }
+    private struct LinkBody: View {
+        let configuration: ButtonStyleConfiguration
+        let size: CGFloat
+        @State private var hovering = false
+        var body: some View {
+            configuration.label
+                .font(.system(size: size, weight: .medium))
+                .foregroundColor(hovering ? Color(hex: "#21924A") : Color(hex: "#1C7A3E"))
+                .underline(hovering)
+                .opacity(configuration.isPressed ? 0.7 : 1)
+                .onHover { hovering = $0 }
+        }
+    }
+}
+
+struct LoginPrimaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        PrimaryBody(configuration: configuration)
+    }
+    private struct PrimaryBody: View {
+        let configuration: ButtonStyleConfiguration
+        @Environment(\.isEnabled) private var enabled
+        @State private var hovering = false
+        var body: some View {
+            configuration.label
+                .foregroundColor(.white)
+                .background(
+                    RoundedRectangle(cornerRadius: 7).fill(
+                        LinearGradient(colors: [Color(hex: "#1C7A3E"), Color(hex: hovering ? "#26A053" : "#21924A")],
+                                       startPoint: .leading, endPoint: .trailing)))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color(hex: "#1C7A3E"), lineWidth: 1))
+                .scaleEffect(configuration.isPressed ? 0.985 : 1)
+                .opacity(enabled ? 1 : 0.55)
+                .animation(.easeOut(duration: 0.12), value: hovering)
+                .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
+                .onHover { hovering = $0 }
+        }
+    }
+}
+
+struct LoginSecondaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        SecondaryBody(configuration: configuration)
+    }
+    private struct SecondaryBody: View {
+        let configuration: ButtonStyleConfiguration
+        @Environment(\.isEnabled) private var enabled
+        @State private var hovering = false
+        var body: some View {
+            configuration.label
+                .foregroundColor(Color(hex: "#16150F"))
+                .background(RoundedRectangle(cornerRadius: 7).fill(
+                    configuration.isPressed ? Color(hex: "#EEF2EC") : (hovering ? Color(hex: "#F6F8F3") : Color.white)))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(hovering ? Color(hex: "#C7D4C4") : Color(hex: "#DCE4D8"), lineWidth: 1))
+                .opacity(enabled ? 1 : 0.55)
+                .animation(.easeOut(duration: 0.12), value: hovering)
+                .onHover { hovering = $0 }
+        }
+    }
+}
+
+/// A scroll view that can be left out. See LoginView.flat.
+struct MaybeScroll<Content: View>: View {
+    let flat: Bool
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        if flat { content() } else { ScrollView { content() }.scrollIndicators(.hidden) }
     }
 }

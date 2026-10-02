@@ -1421,6 +1421,52 @@ class MainViewModel {
         }
     }
 
+    /// Two made-up interviews for the Past Sessions snapshot.
+    private static var demoSessions: [SessionEntry] {
+        let now = Date()
+        let a = """
+        SESSION 12 | ai | 2026-10-01 03:31 | RESUME: Candidate
+
+        Q: Tell me about a time you handled a production outage.
+        A: I led the response, split the work between two of us and restored the service in about an hour. Afterwards I wrote up what failed and added the alert that would have caught it earlier.
+
+        MORE TO SAY
+        \u{2022} We added a runbook so the next person does not start from nothing.
+        \u{2022} The fix was reviewed by someone who had not been on call.
+
+        Q: How would you design a rate limiter for a public API?
+        A: I would keep a token bucket per client in a fast shared store. Each request takes a token, tokens refill at the allowed rate, and a request with no token is refused with a retry time.
+
+        Q: [Screen Analysis]
+        A: The editor shows a failing test on line 42 because the loop stops one item early.
+
+        Q: What is a mutex?
+        A: A lock that lets one thread into a critical section at a time.
+        """
+        let b = """
+        SESSION 11 | ai | 2026-09-30 10:02 | RESUME: Candidate
+
+        Q: Tell me about yourself.
+        A: I build reliable backend services and I like owning a problem from the first design to the pager.
+        """
+        return [SessionEntry(filename: "interview_12", content: a, date: now.addingTimeInterval(-3_600), endDate: now.addingTimeInterval(-3_600 + 38 * 60), sessionNumber: 12),
+                SessionEntry(filename: "interview_11", content: b, date: now.addingTimeInterval(-90_000), endDate: now.addingTimeInterval(-90_000 + 7 * 60), sessionNumber: 11)]
+    }
+
+    /// Draws a view to a PNG in the app's data folder, so what a screen looks like can be checked
+    /// without anyone watching the screen. Debug builds with a fake server only.
+    private func snapshot(_ view: AnyView, name: String) {
+        let renderer = ImageRenderer(content: view.environment(self))
+        renderer.scale = 2
+        guard let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) else {
+            dlog("SNAPSHOT: could not draw \(name)", tag: "FLOW"); return
+        }
+        let url = engine.appDataFolder.appendingPathComponent("snapshot-\(name).png")
+        try? png.write(to: url)
+        dlog("SNAPSHOT: wrote \(url.path) (\(Int(image.size.width))x\(Int(image.size.height)))", tag: "FLOW")
+    }
+
     private func performFlowAction(_ action: String) {
         dlog("FLOWSCRIPT: \(action)", tag: "FLOW")
         switch action {
@@ -1429,6 +1475,13 @@ class MainViewModel {
         case "finish": Task { _ = await finishInterview() }
         case "closesessions": sessionsOpen = false
         case "signout": signOut()
+        case "login":    NotificationCenter.default.post(name: .showLogin, object: nil)
+        case "snap-sessions":     snapshot(AnyView(SessionsView(preview: Self.demoSessions)), name: "sessions")
+        case "snap-sessions-short": snapshot(AnyView(SessionsView(preview: Array(Self.demoSessions.reversed()))), name: "sessions-short")
+        case "snap-sessions-empty": snapshot(AnyView(SessionsView(preview: [])), name: "sessions-empty")
+        case "snap-login":        snapshot(AnyView(LoginView(flat: true)), name: "login")
+        case "snap-login-create": snapshot(AnyView(LoginView(creating: true, flat: true)), name: "login-create")
+        case "sessions": sessionsOpen = true
         case "busy":   engine.debugSimulateConcurrencyRefusal()
         case "weak":   engine.debugSimulateConnectionTrouble()
         // The buttons on the answer bar and the history controls, pressed by name.

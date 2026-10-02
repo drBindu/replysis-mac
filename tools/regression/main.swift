@@ -524,6 +524,47 @@ check(AccountScope.isPersonal("resume.txt") && AccountScope.isPersonal("job.json
       && AccountScope.isPersonal("resumes") && AccountScope.isPersonal("hints.txt") && AccountScope.isPersonal("vocab.txt"), "resume, job details, hints, vocabulary and interviews are personal")
 check(!AccountScope.isPersonal("settings.json") && !AccountScope.isPersonal("onboarding_seen") && !AccountScope.isPersonal("pause.flag")
       && !AccountScope.isPersonal("sysaudio.pcm") && !AccountScope.isPersonal("account.id"), "settings and engine files belong to the machine")
+// ── Past Sessions: what an interview's transcript says about it ──
+let transcriptSample = """
+SESSION 7 | ai | 2026-10-01 03:31 | RESUME: Candidate
+
+Q: Tell me about a time you handled a production outage.
+A: I led the response, split the work and restored service in an hour.
+
+MORE TO SAY
+\u{2022} We wrote it up afterwards.
+
+Q: How would you design a rate limiter for a public API?
+A: A token bucket per client, refilled at the allowed rate.
+Each request takes one token.
+
+Q: Write a function that reverses a linked list.
+A: Walk the list and flip each pointer as you go.
+
+Q: [Screen Analysis]
+A: The editor shows a failing test.
+
+Q: What is a mutex?
+A: A lock that lets one thread in at a time.
+"""
+let sessionPairs = SessionInsights.pairs(in: transcriptSample)
+check(sessionPairs.count == 5, "five questions found in the transcript (\(sessionPairs.count))")
+check(sessionPairs[1].answer.contains("Each request takes one token"), "an answer that runs over several lines is kept whole")
+check(sessionPairs[0].spokenAnswer == "I led the response, split the work and restored service in an hour.", "the spoken answer stops at MORE TO SAY")
+check(sessionPairs[0].moreToSay.contains("wrote it up"), "...and the extra points are kept apart")
+check(sessionPairs.map(\.kind) == [.behavioural, .systemDesign, .coding, .fromScreen, .general], "question kinds: \(sessionPairs.map { $0.kind.rawValue })")
+let sessionSummary = SessionInsights.summary(of: sessionPairs)
+check(sessionSummary.questions == 5 && sessionSummary.longestAnswerWords == 15, "five questions, longest answer 15 words (\(sessionSummary.longestAnswerWords))")
+check(sessionSummary.kinds.map { $0.0 } == [.fromScreen, .behavioural, .systemDesign, .coding, .general], "kinds are listed in a fixed order")
+let t0 = Date(timeIntervalSince1970: 1_000_000)
+check(SessionInsights.lastedText(from: t0, to: t0.addingTimeInterval(38 * 60)) == "Lasted 38 min", "Lasted 38 min")
+check(SessionInsights.lastedText(from: t0, to: t0.addingTimeInterval(20)) == "Lasted under 1 min", "a short one says so")
+check(SessionInsights.lastedText(from: t0, to: t0.addingTimeInterval(135 * 60)) == "Lasted 2 h 15 min", "over two hours reads in hours")
+check(SessionInsights.lastedText(from: t0, to: nil) == nil && SessionInsights.lastedText(from: t0, to: t0) == nil, "no span, nothing said")
+check(SessionInsights.isSameInterview(localDate: t0, localFirstQuestion: "What is a mutex?", cloudDate: t0.addingTimeInterval(240), cloudFirstQuestion: "what is a mutex"), "the cloud copy of the same interview is matched")
+check(!SessionInsights.isSameInterview(localDate: t0, localFirstQuestion: "What is a mutex?", cloudDate: t0.addingTimeInterval(7200), cloudFirstQuestion: "What is a mutex?"), "the same question two hours later is another interview")
+check(!SessionInsights.isSameInterview(localDate: t0, localFirstQuestion: "What is a mutex?", cloudDate: t0, cloudFirstQuestion: "What is a thread?"), "a different first question is another interview")
+check(SessionInsights.deleteExplanation.contains("this device's") && SessionInsights.deleteExplanation.contains("cannot be undone"), "delete says it is only this device's copy")
 // ── Several questions in one turn: the last, unless it leans on the one before ──
 let both = AutoTurnDetector.latestQuestionIfMultiple("What is the difference between a stack and a queue? And where would you use a queue in a real system?")
 check(both == "What is the difference between a stack and a queue? And where would you use a queue in a real system?", "a second question about the same thing keeps the first: \(both ?? "nil")")
