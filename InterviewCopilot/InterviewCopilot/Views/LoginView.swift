@@ -345,8 +345,14 @@ struct LoginView: View {
 
     // MARK: — Actions
 
+    /// What was typed, without the space or line break a paste brings with it. An email with a
+    /// trailing space was refused as "Incorrect email or password", which sends someone to reset a
+    /// password that was never wrong.
+    private var cleanEmail: String { email.trimmingCharacters(in: .whitespacesAndNewlines) }
+
     func signIn() {
-        guard !email.isEmpty && !password.isEmpty else {
+        guard !isLoading else { return }   // a double click sent two requests, and "too many attempts" is real
+        guard !cleanEmail.isEmpty && !password.isEmpty else {
             errorMsg = "Please enter your email and password."
             return
         }
@@ -369,7 +375,8 @@ struct LoginView: View {
             errorMsg = "Please enter your name."
             return
         }
-        guard !email.isEmpty && !password.isEmpty else {
+        guard !isLoading else { return }
+        guard !cleanEmail.isEmpty && !password.isEmpty else {
             errorMsg = "Please enter your email and password."
             return
         }
@@ -438,7 +445,7 @@ struct LoginView: View {
     }
 
     func forgotPassword() {
-        guard !email.isEmpty else {
+        guard !cleanEmail.isEmpty else {
             errorMsg = "Enter your email above, then tap Forgot password."
             return
         }
@@ -446,13 +453,13 @@ struct LoginView: View {
         guard !isLoading else { return }
         isLoading = true
         Task {
-            let sent = await sendPasswordReset(email: email)
+            let sent = await sendPasswordReset(email: cleanEmail)
             isLoading = false
             if sent {
-                successMsg = "Password reset email sent to \(email)"
+                successMsg = "Password reset email sent to \(cleanEmail)"
                 errorMsg   = ""
             } else {
-                errorMsg = "Could not send reset email. Check the address."
+                errorMsg = "Could not send the reset email. Check the address and your connection."
             }
         }
     }
@@ -468,12 +475,12 @@ struct LoginView: View {
         req.timeoutInterval = 15   // BUG-8 FIX: default 60s left spinner up for an entire minute on bad networks
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: [
-            "email": email, "password": password, "returnSecureToken": true
+            "email": cleanEmail, "password": password, "returnSecureToken": true
         ])
         do {
             let (data, _) = try await URLSession.shared.data(for: req)
             guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return (false, "Invalid response")
+                return (false, "Sign in failed. Please try again.")
             }
             if let idToken      = obj["idToken"]      as? String,
                let refreshToken = obj["refreshToken"] as? String,
@@ -481,9 +488,9 @@ struct LoginView: View {
                 UserSession.shared.idToken       = idToken
                 UserSession.shared.refreshToken  = refreshToken
                 UserSession.shared.userId        = localId
-                UserSession.shared.email         = email
+                UserSession.shared.email         = cleanEmail
                 UserSession.shared.name          = (obj["displayName"] as? String)
-                    ?? email.components(separatedBy: "@").first ?? "User"
+                    ?? cleanEmail.components(separatedBy: "@").first ?? "User"
                 UserSession.shared.isLoggedIn    = true
                 UserSession.shared.saveToDisk()   // BUG-2 FIX: was saveToDisK() typo
                 return (true, nil)
@@ -492,19 +499,24 @@ struct LoginView: View {
             // expose account enumeration (EMAIL_NOT_FOUND vs INVALID_PASSWORD tells attacker
             // which emails are registered — collapse both to the same message).
             let errCode = (obj["error"] as? [String: Any])?["message"] as? String ?? ""
+            // Matched by the start: the service adds text after the code ("TOO_MANY_ATTEMPTS_TRY_LATER :
+            // Access to this account has been temporarily disabled..."), and an exact match let that
+            // fall through to a title-cased dump of the raw message.
+            func code(_ c: String) -> Bool { errCode == c || errCode.hasPrefix(c + " ") }
             let errMsg: String
-            switch errCode {
-            case "EMAIL_NOT_FOUND", "INVALID_PASSWORD", "INVALID_LOGIN_CREDENTIALS":
+            if code("EMAIL_NOT_FOUND") || code("INVALID_PASSWORD") || code("INVALID_LOGIN_CREDENTIALS") {
                 errMsg = "Incorrect email or password."
-            case "USER_DISABLED":
+            } else if code("INVALID_EMAIL") {
+                errMsg = "Please enter a valid email address."
+            } else if code("USER_DISABLED") {
                 errMsg = "This account has been disabled. Contact support."
-            case "TOO_MANY_ATTEMPTS_TRY_LATER":
+            } else if code("TOO_MANY_ATTEMPTS_TRY_LATER") {
                 errMsg = "Too many failed attempts. Please try again later."
-            case "WEAK_PASSWORD":
-                errMsg = "Password must be at least 6 characters."
-            default:
-                errMsg = errCode.isEmpty ? "Sign in failed. Please try again." :
-                    errCode.replacingOccurrences(of: "_", with: " ").capitalized
+            } else if code("MISSING_PASSWORD") || code("MISSING_EMAIL") {
+                errMsg = "Please enter your email and password."
+            } else {
+                if !errCode.isEmpty { dlog("AUTH: sign in refused with code \(errCode.prefix(40))", tag: "AUTH") }
+                errMsg = "Sign in failed. Please try again."
             }
             return (false, errMsg)
         } catch let urlErr as URLError where urlErr.code == .timedOut {
@@ -525,12 +537,12 @@ struct LoginView: View {
         req.timeoutInterval = 15
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: [
-            "email": email, "password": password, "returnSecureToken": true
+            "email": cleanEmail, "password": password, "returnSecureToken": true
         ])
         do {
             let (data, _) = try await URLSession.shared.data(for: req)
             guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return (false, "Invalid response")
+                return (false, "Could not create account. Please try again.")
             }
             if let idToken      = obj["idToken"]      as? String,
                let refreshToken = obj["refreshToken"] as? String,
@@ -543,29 +555,31 @@ struct LoginView: View {
                 UserSession.shared.idToken       = idToken
                 UserSession.shared.refreshToken  = refreshToken
                 UserSession.shared.userId        = localId
-                UserSession.shared.email         = email
+                UserSession.shared.email         = cleanEmail
                 UserSession.shared.name          = name.isEmpty
-                    ? (email.components(separatedBy: "@").first ?? "User") : name
+                    ? (cleanEmail.components(separatedBy: "@").first ?? "User") : name
                 UserSession.shared.isLoggedIn    = true
                 UserSession.shared.saveToDisk()
                 return (true, nil)
             }
             let errCode = (obj["error"] as? [String: Any])?["message"] as? String ?? ""
+            func code(_ c: String) -> Bool { errCode == c || errCode.hasPrefix(c + " ") }
             let errMsg: String
-            switch errCode {
-            case "EMAIL_EXISTS":
+            if code("EMAIL_EXISTS") {
                 errMsg = "An account with this email already exists. Try signing in instead."
-            case "INVALID_EMAIL":
+            } else if code("INVALID_EMAIL") {
                 errMsg = "Please enter a valid email address."
-            case "WEAK_PASSWORD : Password should be at least 6 characters":
+            } else if code("WEAK_PASSWORD") {
                 errMsg = "Password must be at least 6 characters."
-            case "OPERATION_NOT_ALLOWED":
+            } else if code("OPERATION_NOT_ALLOWED") {
                 errMsg = "Account creation is temporarily unavailable. Please try again later."
-            case "TOO_MANY_ATTEMPTS_TRY_LATER":
+            } else if code("TOO_MANY_ATTEMPTS_TRY_LATER") {
                 errMsg = "Too many attempts. Please try again later."
-            default:
-                errMsg = errCode.isEmpty ? "Could not create account. Please try again." :
-                    errCode.replacingOccurrences(of: "_", with: " ").capitalized
+            } else if code("MISSING_PASSWORD") || code("MISSING_EMAIL") {
+                errMsg = "Please enter your email and password."
+            } else {
+                if !errCode.isEmpty { dlog("AUTH: sign up refused with code \(errCode.prefix(40))", tag: "AUTH") }
+                errMsg = "Could not create account. Please try again."
             }
             return (false, errMsg)
         } catch let urlErr as URLError where urlErr.code == .timedOut {
@@ -593,6 +607,7 @@ struct LoginView: View {
         guard let url = URL(string: "https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=\(AppConfig.firebaseApiKey)") else { return false }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
+        req.timeoutInterval = 15
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["requestType": "PASSWORD_RESET", "email": email])
         guard let (_, resp) = try? await URLSession.shared.data(for: req) else { return false }

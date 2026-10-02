@@ -134,7 +134,7 @@ class SpeechmaticsEngine {
 
     let appDataFolder: URL = {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = support.appendingPathComponent("InterviewCopilot")
+        let dir = DeveloperOverrides.dataFolder.map { URL(fileURLWithPath: $0) } ?? support.appendingPathComponent("InterviewCopilot")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()

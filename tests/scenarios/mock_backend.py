@@ -16,6 +16,7 @@ delay = float(sys.argv[3]) if len(sys.argv) > 3 else 0.0
 FRESH = "Bearer fresh-token"
 key_requests = 0
 credit_requests = 0
+live_credits = None
 
 def woke(h):   # a stale token is refused; a fresh one gets a real answer (fair use)
     return (402, {"error": "fair use", "reason": "audio-limit"}, {}) if h.headers.get("Authorization") == FRESH \
@@ -34,6 +35,9 @@ S = {
         key=lambda h: (402, {"error": "fair use", "reason": "audio-limit"}, {}) if key_requests == 1
         else (429, {"error": "Too many"}, {"Retry-After": "15"})),
     "healthy-credits": dict(credits=55, minutes=30, key=lambda h: (200, {"key": "", "expiresIn": 3600}, {})),
+    # A brand-new Free account: 25 credits, which is 5 answers, once. Answers are charged and
+    # refused at zero, as the real server does.
+    "new-free-user": dict(credits=25, minutes=30, key=lambda h: (200, {"key": "", "expiresIn": 3600}, {})),
     # The balance request fails twice (a poor connection at launch), then works. The app must say
     # "checking", not "no answers left", and must ask again by itself.
     "credits-flaky": dict(credits=55, minutes=30, key=lambda h: (200, {"key": "", "expiresIn": 3600}, {})),
@@ -45,7 +49,8 @@ s = S[scenario]
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def _do(self):
-        global key_requests, credit_requests
+        global key_requests, credit_requests, live_credits
+        if live_credits is None: live_credits = s["credits"]
         url = self.path.split("?")[0]
         status, body, headers = 200, {}, {}
         if url == "/token":
@@ -57,7 +62,23 @@ class H(BaseHTTPRequestHandler):
             if scenario == "credits-flaky" and credit_requests <= 2:
                 status, body = 503, {"error": "temporarily unavailable"}
             else:
-                body = {"credits": s["credits"], "plan": "free", "isUnlimited": False}
+                body = {"credits": live_credits, "plan": "free", "isUnlimited": False}
+        elif url == "/api/v1/interview/ask" and self.command == "POST":
+            n = int(self.headers.get("Content-Length") or 0)
+            if n: self.rfile.read(n)             # the question; compressed or not, it is not needed here
+            if live_credits < 5:
+                status, body = 402, {"error": "No credits remaining"}
+            else:
+                live_credits -= 5
+                print(f"REQ POST {url} -> 200 (charged 5, {live_credits} left)", flush=True)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                for word in ["That", " is", " a", " test", " answer", " from", " the", " fake", " server."]:
+                    self.wfile.write(('data: {"choices":[{"delta":{"content":"%s"}}]}\n\n' % word).encode()); self.wfile.flush()
+                self.wfile.write(b"data: [DONE]\n\n"); self.wfile.flush()
+                return
         elif url == "/api/v1/usage/listening":
             body = {"remainingMinutes": s["minutes"], "usedMinutes": 15 - s["minutes"]}
         elif url == "/health":

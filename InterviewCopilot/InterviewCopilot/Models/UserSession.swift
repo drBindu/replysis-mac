@@ -181,7 +181,8 @@ class UserSession {
             // DEBUG + loopback only. A fake signed-in person, in memory, so the real app can be
             // run against a fake server. "stale" believes its token is fine and the server
             // does not; "expired" knows it is old and must refresh first.
-            email = "scenario@example.test"; name = "Scenario"; userId = "scenario-user"
+            let who = DeveloperOverrides.testUser ?? "scenario"
+            email = "\(who)@example.test"; name = who.capitalized; userId = "\(who)-user"
             idToken = "stale-token"; refreshToken = "refresh-1"
             tokenSavedAt = mode == "expired" ? Date(timeIntervalSinceNow: -3 * 3600) : Date()
             isLoggedIn = true
@@ -625,12 +626,15 @@ enum AppConfig {
         guard let url = URL(string: "\(backendUrl)/api/config/keys") else { return }
         var configReq = URLRequest(url: url)
         configReq.timeoutInterval = 8
-        guard let (data, _) = try? await URLSession.shared.data(for: configReq) else {
+        guard let (data, response) = try? await URLSession.shared.data(for: configReq) else {
             dlog("AppConfig: remote config fetch failed (network)", tag: "CONFIG")
             return
         }
+        // The server has no such page (it answers 404 with its 18 KB "not found" web page), and every
+        // launch downloaded that and logged it as "bad JSON". Nothing to read means nothing to say.
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return }
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            dlog("AppConfig: remote config bad JSON", tag: "CONFIG")
+            dlog("AppConfig: remote config was not JSON", tag: "CONFIG")
             return
         }
         if let secret = obj["GoogleClientSecret"] as? String, !secret.isEmpty {

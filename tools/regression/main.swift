@@ -514,6 +514,16 @@ check(!AutoTurnDetector.isBareOpening("Why?"), "\"Why?\" from an interviewer is 
 check(!AutoTurnDetector.isBareOpening("How so?"), "\"How so?\" is the question")
 check(!AutoTurnDetector.isBareOpening("What is a deadlock?"), "a whole question is not a bare opening")
 check(!AutoTurnDetector.isBareOpening("Kafka?"), "a topic word is not an opening")
+// ── One person's data must not be there for the next person to sign in ──
+check(AccountScope.isDifferentPerson(previous: "alice", current: "bob"), "a different account id means the data is someone else's")
+check(!AccountScope.isDifferentPerson(previous: "alice", current: "alice"), "the same person signing in again keeps everything")
+check(!AccountScope.isDifferentPerson(previous: nil, current: "alice"), "no recorded account: keep what is here, it can only be theirs")
+check(!AccountScope.isDifferentPerson(previous: "", current: "alice"), "an empty record is no record")
+check(!AccountScope.isDifferentPerson(previous: "alice", current: ""), "no current id means nothing is decided")
+check(AccountScope.isPersonal("resume.txt") && AccountScope.isPersonal("job.json") && AccountScope.isPersonal("interview_144.txt")
+      && AccountScope.isPersonal("resumes") && AccountScope.isPersonal("hints.txt") && AccountScope.isPersonal("vocab.txt"), "resume, job details, hints, vocabulary and interviews are personal")
+check(!AccountScope.isPersonal("settings.json") && !AccountScope.isPersonal("onboarding_seen") && !AccountScope.isPersonal("pause.flag")
+      && !AccountScope.isPersonal("sysaudio.pcm") && !AccountScope.isPersonal("account.id"), "settings and engine files belong to the machine")
 // ── Several questions in one turn: the last, unless it leans on the one before ──
 let both = AutoTurnDetector.latestQuestionIfMultiple("What is the difference between a stack and a queue? And where would you use a queue in a real system?")
 check(both == "What is the difference between a stack and a queue? And where would you use a queue in a real system?", "a second question about the same thing keeps the first: \(both ?? "nil")")

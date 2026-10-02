@@ -34,11 +34,20 @@ enum DeveloperOverrides {
     /// REPLYSIS_TEST_SESSION=stale  -> a fake signed-in user whose token is "stale-token".
     static let testSession: String? =
         backendURL == nil ? nil : ProcessInfo.processInfo.environment["REPLYSIS_TEST_SESSION"]
+    /// REPLYSIS_TEST_USER=alice  -> the fake signed-in person has this id, so account switching can be tested.
+    static let testUser: String? =
+        backendURL == nil ? nil : ProcessInfo.processInfo.environment["REPLYSIS_TEST_USER"]
+    /// REPLYSIS_DATA_DIR=/tmp/x  -> the app's data folder, so a test never touches the real one.
+    /// Only while a fake server is in use.
+    static let dataFolder: String? =
+        backendURL == nil ? nil : ProcessInfo.processInfo.environment["REPLYSIS_DATA_DIR"]
     #else
     static let flowScript: String? = nil
     static let backendURL: String? = nil
     static let tokenURL: String? = nil
     static let testSession: String? = nil
+    static let testUser: String? = nil
+    static let dataFolder: String? = nil
     #endif
 
     /// True while a test is running against a fake server. The Keychain stays untouched.

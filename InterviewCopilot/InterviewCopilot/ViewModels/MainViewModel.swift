@@ -485,6 +485,7 @@ class MainViewModel {
                 return
             }
             showProfile = true   // claim the mutex before any await below
+            adoptAccount()
             // ROOT-CAUSE FIX for "Space does nothing until I click something": isLoggedIn
             // is already true here, but the two awaits below (credits, Speechmatics key)
             // can take real network time. The old code only unlocked the global Space tap
@@ -1437,8 +1438,10 @@ class MainViewModel {
         case "prev":     showPreviousAnswer()
         case "next":     showNextAnswer()
         case "live":     returnToLive()
-        case "dump":     dlog("FLOWSTATE: step=\(appStep) sessions=\(sessionsOpen) answer='\(aiAnswer.prefix(60))' transcript='\(transcript.prefix(40))' shownQuestion='\(transcriptForDisplay.prefix(40))' history=\(answerHistory.count) detailed=\(answerDetailed)", tag: "FLOW")
-        default: break
+        case "dump":     dlog("FLOWSTATE: step=\(appStep) sessions=\(sessionsOpen) answer='\(aiAnswer.prefix(60))' transcript='\(transcript.prefix(40))' shownQuestion='\(transcriptForDisplay.prefix(40))' history=\(answerHistory.count) detailed=\(answerDetailed) badge='\(creditsText)' plan='\(creditsPlanText)' alert='\(alertTitle)' hint='\(aiAnswerHint.prefix(50))'", tag: "FLOW")
+        default:
+            // "ask What is a queue?" types the question into the Ask bar and sends it.
+            if action.hasPrefix("ask ") { askManually(String(action.dropFirst(4))) }
         }
     }
 
@@ -4304,6 +4307,7 @@ class MainViewModel {
             session.isGuestSession = false
             showProfile = false
         }
+        adoptAccount()
         // BUG-4 FIX: guard with showProfile mutex before the Task — closes the TOCTOU
         // window where restoreSession() and continueAsSaved() both reach startNewSession().
         guard !showProfile else {
@@ -4438,7 +4442,47 @@ class MainViewModel {
         }
     }
 
+    /// Remember whose data is on this Mac, and clear it if a DIFFERENT person has signed in. See
+    /// AccountScope. The same person signing in again keeps everything.
+    private func adoptAccount() {
+        let current = session.userId
+        guard !current.isEmpty, !session.isGuestSession else { return }
+        let file = engine.appDataFolder.appendingPathComponent("account.id")
+        let previous = try? String(contentsOf: file, encoding: .utf8)
+        if AccountScope.isDifferentPerson(previous: previous, current: current) {
+            dlog("ACCOUNT: a different person signed in — clearing the previous person's resume, job details and interviews from this Mac", tag: "AUTH")
+            wipePersonalData()
+        }
+        Self.writeSecurely(current, to: file)
+    }
+
+    /// The previous person's resume, job details, hints and interviews, on disk and on screen.
+    private func wipePersonalData() {
+        let dir = engine.appDataFolder
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [] where AccountScope.isPersonal(name) {
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+        }
+        resumeText = ""; companyName = ""; jobDescription = ""; liveHints = ""
+        workType = Self.notSpecified; workAuth = Self.notSpecified
+        canStart = Self.notSpecified; workLocation = Self.notSpecified; payRate = ""
+        savedResumes = []
+        clearTransientDisplay()
+        endSession()
+    }
+
+    /// What is on screen from the last interview: the answer, the question, the history.
+    private func clearTransientDisplay() {
+        transcript = ""; aiAnswer = ""; lastQuestionShown = ""; typedTranscript = ""
+        resetAnswerHistory()
+        answerEpoch += 1
+        PromptBuilder.shared.clearHistory()
+    }
+
     private func setLoggedOutUI() {
+        // Signing out must not leave the last answer and question on screen for whoever uses the
+        // window next. The files stay: the same person coming back keeps them, a different one
+        // clears them on sign in (adoptAccount).
+        clearTransientDisplay()
         transcriptTimer?.invalidate(); transcriptTimer = nil
         thinkingTimer?.invalidate();   thinkingTimer = nil
         creditsTimer?.invalidate();    creditsTimer = nil
