@@ -138,7 +138,7 @@ final class RegionSelectionView: NSView {
         bounds.fill()
 
         guard let sel = selection else {
-            let hint = "Drag a box around the part to read   ·   Esc to cancel"
+            let hint = "Drag a box around the part to read. Press Esc to cancel."
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 13, weight: .medium),
                 .foregroundColor: NSColor.white.withAlphaComponent(0.85),

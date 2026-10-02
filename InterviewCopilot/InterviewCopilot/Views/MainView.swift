@@ -318,7 +318,7 @@ struct MainView: View {
         if vm.micNeedsRetry { return "Tap to retry" }
         // Armed but not yet hearing anything. Saying "listening" here is the difference
         // between the user waiting calmly and the user believing it heard them.
-        if vm.micStatus == "CONNECTING" { return "Connecting — nothing is being heard yet" }
+        if vm.micStatus == "CONNECTING" { return "Connecting. Nothing is being heard yet." }
         switch vm.listeningMode {
         case .manual:
             return vm.isListening ? "Press SPACE again to get answer" : "Press SPACE to listen"
@@ -590,8 +590,8 @@ struct MainView: View {
                                           minHeight: 28, horizontalPadding: 9, verticalPadding: 3))
             .disabled(vm.isScreenAnalyzing)
             .help(vm.isWatchMode
-                  ? "Read the screen now (F8). Screen answers are ARMED — questions about the screen are answered from it automatically. Change that in Settings."
-                  : "Read the screen now (F8). Automatic screen answers are off — turn them on in Settings.")
+                  ? "Read the screen now (F8). Screen answers are on, so questions about the screen are answered from it automatically. Change that in Settings."
+                  : "Read the screen now (F8). Automatic screen answers are off. Turn them on in Settings.")
 
             Button(action: { vm.toggleCamera() }) {
                 HStack(spacing: 6) {
@@ -604,7 +604,7 @@ struct MainView: View {
             }
             .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
                                           minHeight: 28, horizontalPadding: 9, verticalPadding: 3))
-            .help("Compact overlay — a small bar instead of the full window")
+            .help("Compact overlay: a small bar instead of the full window")
         }
     }
 
@@ -708,7 +708,7 @@ struct MainView: View {
                     // A guest's session.email is intentionally empty (no account exists
                     // yet) — showing that blank looked like a rendering bug. Say plainly
                     // what state they're in instead.
-                    Text(vm.session.isGuestSession ? "Free trial — not signed in" : vm.session.email)
+                    Text(vm.session.isGuestSession ? "Free trial, not signed in" : vm.session.email)
                         .font(.system(size: 11))
                         .foregroundColor(Color(hex: "#64748b"))
                         .lineLimit(1).truncationMode(.middle)
@@ -1302,7 +1302,7 @@ struct MainView: View {
                         .background(Color(hex: "#241a06"))
                         .overlay(Capsule().stroke(Color(hex: "#fbbf24").opacity(0.5), lineWidth: 1))
                         .clipShape(Capsule())
-                        .help("Behavioral question — answer follows STAR structure (Situation, Task, Action, Result)")
+                        .help("Behavioral question: the answer follows STAR structure (Situation, Task, Action, Result)")
                         .transition(.scale.combined(with: .opacity))
                     }
 
@@ -1555,7 +1555,7 @@ struct MainView: View {
         segmentButton(icon: vm.isPinnedOnTop ? "pin.fill" : "pin",
                       active: vm.isPinnedOnTop,
                       activeColor: Color(hex: "#38bdf8"),
-                      help: "Pin on top — keep the window above other apps") {
+                      help: "Pin on top: keep the window above other apps") {
             vm.togglePin()
         }
         .background(Capsule().fill(Color.white.opacity(0.035)))

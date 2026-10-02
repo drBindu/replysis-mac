@@ -439,7 +439,7 @@ struct LoginView: View {
                 vm.onLoginSuccess()
                 dismiss()
             } else {
-                errorMsg = "Session expired — please sign in again."
+                errorMsg = "Your session expired. Please sign in again."
             }
         }
     }

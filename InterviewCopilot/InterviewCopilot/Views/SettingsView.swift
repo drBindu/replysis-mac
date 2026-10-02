@@ -45,7 +45,7 @@ struct SettingsView: View {
                                         .foregroundColor(Color(hex: vm.micCaptureEnabled ? "#fbbf24" : "#34d399"))
                                     Text(vm.micCaptureEnabled
                                          ? "Real interview: switch the toolbar to Interview, so only the interviewer is heard."
-                                         : "Ready for a real interview. Interview mode — only the interviewer's audio is heard.")
+                                         : "Ready for a real interview. Interview mode hears only the interviewer's audio.")
                                         .font(.system(size: 11, weight: .semibold))
                                         .foregroundColor(Color(hex: vm.micCaptureEnabled ? "#fbbf24" : "#34d399"))
                                         .fixedSize(horizontal: false, vertical: true)
@@ -104,7 +104,7 @@ struct SettingsView: View {
                                             .textFieldStyle(.roundedBorder)
                                             .frame(maxWidth: 260)
                                         Text(vm.sarvamApiKey.isEmpty
-                                             ? "Speechmatics cannot transcribe this language, so Replysis uses Sarvam AI. Without a key, nothing is heard."
+                                             ? "This language is heard through Sarvam AI. Without its key, nothing is heard."
                                              : "Stored on this Mac only, and sent to the engine by environment, never on a command line.")
                                             .font(.system(size: 11))
                                             .foregroundColor(Color(hex: vm.sarvamApiKey.isEmpty ? "#fbbf24" : "#8b9bb0"))
@@ -154,7 +154,7 @@ struct SettingsView: View {
                                 .toggleStyle(.switch)
                                 audioModeRow(
                                     title: "Answer from the screen (Recommended)",
-                                    detail: "When a question is about what's on screen — a coding problem, an error, a diagram — read the screen and answer from it. Questions about you are still answered from your resume.",
+                                    detail: "When a question is about what's on screen, such as a coding problem, an error or a diagram, read the screen and answer from it. Questions about you are still answered from your resume.",
                                     selected: vm.isWatchMode
                                 ) { vm.setScreenAnswers(true) }
                                 audioModeRow(

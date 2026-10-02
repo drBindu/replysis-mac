@@ -292,9 +292,9 @@ class MainViewModel {
     var permissionStaleEntryHint: String {
         if screenRecordingLooksStuck {
             // The overwhelmingly common case, and the one the app used to handle worst.
-            return "Already switched it on? macOS only applies Screen Recording when the app restarts — this window cannot see the change until then. Quit and reopen below.\n\nIf it is still missing afterwards, remove Replysis from the list with − and add it again: macOS identifies an app by its signature, so an updated build is a new app to it."
+            return "Already switched it on? macOS only applies Screen Recording when the app restarts, so this window cannot see the change until then. Quit and reopen below.\n\nIf it is still missing afterwards, remove Replysis from the list with − and add it again: macOS identifies an app by its signature, so an updated build is a new app to it."
         }
-        return "If Replysis is already listed and switched on, remove it with the − button and add it again. macOS identifies an app by its signature, so an updated build is a new app to it — the old entry stays behind and does nothing."
+        return "If Replysis is already listed and switched on, remove it with the − button and add it again. macOS identifies an app by its signature, so an updated build is a new app to it, and the old entry stays behind and does nothing."
     }
 
     /// Eagerly request Screen Recording from the permissions setup screen, instead of
@@ -510,7 +510,7 @@ class MainViewModel {
             } else {
                 micStatus = "NO MIC"
                 micColor = Color(white: 0.42)
-                aiAnswer = "Ready — speech service temporarily unavailable. Retrying automatically.\n\nClick NO MIC badge to retry, or use F9 to analyze screen."
+                aiAnswer = "Ready. The speech service is temporarily unavailable and Replysis is retrying by itself.\n\nClick the NO MIC badge to retry, or use F9 to read your screen."
                 engine.startRetryTimer()
             }
         }
@@ -965,7 +965,7 @@ class MainViewModel {
                     dlog("⌥ SPACE: key not yet fetched (restore in flight), ignoring", tag: "SPACE")
                     return
                 }
-                aiAnswer = "⚠ Speech service temporarily unavailable.\n\nRetrying automatically — or click the NO MIC badge.\n\nUse F9 / Analyze Screen instead."
+                aiAnswer = "⚠ The speech service is temporarily unavailable.\n\nReplysis is retrying by itself, or click the NO MIC badge.\n\nYou can read your screen with F9 in the meantime."
                 micStatus = "NO MIC"
                 micColor = Color(white: 0.42)
                 engine.startRetryTimer()
@@ -1319,7 +1319,7 @@ class MainViewModel {
                 // save into.
                 if err != "SESSION_EXPIRED" {
                     let reason = err == "NO_CREDITS" ? "no answers left" : "connection issue"
-                    self.appendToSessionLog(q: q, a: "[No answer — \(reason). Question preserved.]")
+                    self.appendToSessionLog(q: q, a: "[No answer: \(reason). Question preserved.]")
                 }
                 self.stopThinkingUI()
             }
@@ -1428,6 +1428,7 @@ class MainViewModel {
         case "back":   backToSetup()
         case "finish": Task { _ = await finishInterview() }
         case "closesessions": sessionsOpen = false
+        case "signout": signOut()
         case "busy":   engine.debugSimulateConcurrencyRefusal()
         case "weak":   engine.debugSimulateConnectionTrouble()
         // The buttons on the answer bar and the history controls, pressed by name.
@@ -1438,7 +1439,7 @@ class MainViewModel {
         case "prev":     showPreviousAnswer()
         case "next":     showNextAnswer()
         case "live":     returnToLive()
-        case "dump":     dlog("FLOWSTATE: step=\(appStep) sessions=\(sessionsOpen) answer='\(aiAnswer.prefix(60))' transcript='\(transcript.prefix(40))' shownQuestion='\(transcriptForDisplay.prefix(40))' history=\(answerHistory.count) detailed=\(answerDetailed) badge='\(creditsText)' plan='\(creditsPlanText)' alert='\(alertTitle)' hint='\(aiAnswerHint.prefix(50))'", tag: "FLOW")
+        case "dump":     dlog("FLOWSTATE: step=\(appStep) sessions=\(sessionsOpen) answer='\(aiAnswer.prefix(60).replacingOccurrences(of: "\n", with: " "))' transcript='\(transcript.prefix(40))' shownQuestion='\(transcriptForDisplay.prefix(40))' history=\(answerHistory.count) detailed=\(answerDetailed) badge='\(creditsText)' plan='\(creditsPlanText)' alert='\(alertTitle)' hint='\(aiAnswerHint.prefix(50))'", tag: "FLOW")
         default:
             // "ask What is a queue?" types the question into the Ask bar and sends it.
             if action.hasPrefix("ask ") { askManually(String(action.dropFirst(4))) }
@@ -1703,7 +1704,7 @@ class MainViewModel {
         } else {
             isWatchMode = true
             dlog("Watch mode ON — screen prepared every 2s while listening; read only when a question is asked", tag: "SCREEN")
-            aiAnswer = "👁 WATCH MODE ON — for when the interviewer is sharing their screen.\n\nEvery question is now answered from what is on screen, with nothing to press.\n\nPress Watch again to go back to answering from what was said."
+            aiAnswer = "👁 WATCH MODE ON, for when the interviewer is sharing their screen.\n\nEvery question is now answered from what is on screen, with nothing to press.\n\nPress Watch again to go back to answering from what was said."
             // The model reads the screen only when a question is asked, so there is still
             // one vision call per question, never one per frame. What runs every 2 seconds
             // is the capture and, when the screen changed, the upload ahead of the question
@@ -2136,7 +2137,7 @@ class MainViewModel {
         let question = scrollWatchQuestion
         disarmScrollWatch()   // once only
         dlog("SCREEN: they scrolled — answering the same question again", tag: "SCREEN")
-        thinkingText = "You scrolled — reading the rest…"
+        thinkingText = "You scrolled. Reading the rest…"
         answerEpoch += 1
         capturingWholeScreen = true
         isScreenAnalyzing = true; isProcessing = true; startBusyWatchdog(); updateMicUI()
@@ -2211,7 +2212,7 @@ class MainViewModel {
                 cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
                 let owner = win.owningApplication?.applicationName ?? "window"
                 let title = win.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                lastCaptureSource = title.isEmpty ? owner : "\(owner) — \(title)"
+                lastCaptureSource = title.isEmpty ? owner : "\(owner): \(title)"
             } else {
                 guard let display = content.displays.first else { return nil }
                 config.width  = display.width
@@ -2365,7 +2366,7 @@ class MainViewModel {
             if autoModeEnabled && isListening {
                 aiAnswerHint = engine.isReady
                     ? idleHintForCurrentMode
-                    : "⚠ Reconnecting to the speech service — nothing is being heard right now."
+                    : "⚠ Reconnecting to the speech service. Nothing is being heard right now."
             }
             // THE NOTICE MUST NOT OUTLIVE THE FAILURE. Measured 2026-09-16: the speech key was
             // rejected at 14:31, the app re-fetched a good key and was ONLINE again at 14:41 —
@@ -2639,7 +2640,7 @@ class MainViewModel {
         guard Date().timeIntervalSince(busyStartedAt) > busyLimit else { return }
         dlog("WATCHDOG: \(Int(busyLimit))s with no answer — releasing so listening resumes", tag: "AUTO")
         if Self.answerBody(aiAnswer).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            aiAnswer = "⚠ No answer came back — the connection stalled. Ask again."
+            aiAnswer = "⚠ No answer came back because the connection stalled. Ask again."
         }
         stopThinkingUI()
     }
@@ -2952,7 +2953,7 @@ class MainViewModel {
             dlog("AUTO: continuation\(saidBeforeAnswer ? ", said before the answer was up" : "") — re-answering the full question: '\(merged.prefix(90))'", tag: "AUTO")
             // Say WHY the answer just changed. Without this the replacement looks like the
             // app glitched and lost the answer, right when the user is reading it.
-            thinkingText = "You added more — re-answering the full question…"
+            thinkingText = "You added more. Re-answering the full question…"
             text = merged
             // Replace rather than stack: the partial answer is now wrong.
             answerEpoch += 1
@@ -3728,7 +3729,7 @@ class MainViewModel {
         if engine.looksDeaf, now.timeIntervalSince(lastDeafWarningAt) > 60 {
             lastDeafWarningAt = now
             dlog("METER: audio arriving but no words for 12s — transcription looks deaf", tag: "METER")
-            showListeningNotice("HEARING AUDIO BUT NO WORDS — CHECK TRANSCRIPTION")
+            showListeningNotice("HEARING AUDIO BUT NO WORDS. CHECK TRANSCRIPTION")
         }
 
         // A pause and a stray keypress are not the same situation, and only one of them
@@ -4971,7 +4972,7 @@ class MainViewModel {
             let key = session.speechmaticsKey
             guard !key.isEmpty else {
                 micStatus = "NO MIC"; micColor = Color(white: 0.42)
-                aiAnswer = "⚠ Automatic listening needs the speech service, which isn't available right now.\n\nRetrying automatically — or click the NO MIC badge."
+                aiAnswer = "⚠ Automatic listening needs the speech service, which isn't available right now.\n\nReplysis is retrying by itself, or click the NO MIC badge."
                 engine.startRetryTimer()
                 return
             }
