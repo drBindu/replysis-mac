@@ -296,7 +296,10 @@ struct AnswerOverlayView: View {
                         // 13pt and dimmer.
                         let parts = answerParts
                         VStack(alignment: .leading, spacing: 10) {
-                            if vm.isProcessing {
+                            if vm.isProcessing && (parts.spoken.contains("```") || parts.spoken.hasPrefix("From your screen")) {
+                                // An answer with code, or a screen answer, streams in the layout it will end in.
+                                AnswerContentView(raw: parts.spoken, fontSize: 16, codeFontSize: 12, streaming: true)
+                            } else if vm.isProcessing {
                                 // Streaming: plain text for smooth rendering (no parse cost)
                                 Text(parts.spoken)
                                     .font(.system(size: 16, weight: .semibold))
