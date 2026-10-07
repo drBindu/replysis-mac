@@ -1578,6 +1578,12 @@ class MainViewModel {
         case "next":     showNextAnswer()
         case "live":     returnToLive()
         #if DEBUG
+        case "quitapp":   NSApp.terminate(nil)
+        // What the app does on its way out: stop the engine and wait until it has ended its speech session.
+        case "stopengine":
+            let started = Date()
+            engine.stopAndWait()
+            dlog(String(format: "ENGINE: stopped and waited, %.0f ms", Date().timeIntervalSince(started) * 1000), tag: "FLOW")
         case "stallstart": StallMonitor.start(); StallMonitor.reset()
         case "stallreport": dlog("STALL: \(StallMonitor.summary)\nSTALL timeline: \(StallMonitor.timeline)", tag: "FLOW")
         #endif

@@ -48,6 +48,9 @@ S = {
     # reachable yet (a hotspot still joining) or refuses the saved sign-in. Run with REPLYSIS_TEST_SESSION=aged.
     "token-down":    dict(credits=55, minutes=30, key=lambda h: (200, {"key": "", "expiresIn": 3600}, {})),
     "token-refused": dict(credits=55, minutes=30, key=lambda h: (200, {"key": "", "expiresIn": 3600}, {})),
+    # The speech key request answers with a (fake) key, so the real app starts the real speech engine, which
+    # then cannot sign in anywhere. Used to watch the engine's life: one at a time, restarted on wake, gone on quit.
+    "engine-lab": dict(credits=500, minutes=30, key=lambda h: (200, {"key": "fake-key-for-lifecycle-test", "expiresIn": 3600}, {})),
     "screen-lab": dict(credits=500, minutes=30, key=lambda h: (200, {"key": "", "expiresIn": 3600}, {})),
 }
 if scenario not in S:
