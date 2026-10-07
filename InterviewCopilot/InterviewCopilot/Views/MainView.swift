@@ -15,6 +15,7 @@ struct MainView: View {
     @State private var resumeCollapsed = false
     @State private var showSettings    = false
     @State private var showLogin       = false
+    @State private var alertExpanded   = false   // the notice under the header, one line until clicked
     @State private var showSignOutConfirm = false
     @State private var showDebugLog    = false
     @State private var showProfileMenu = false
@@ -198,15 +199,15 @@ struct MainView: View {
                 accountAndCloseControls
                     .layoutPriority(3)
             }
-            .frame(height: 56)
+            .frame(height: 50)
             HStack(spacing: 13) {
                 listeningModeSwitch
                 watchAndCompactGroup
                 toolSegmentGroup
                 Spacer(minLength: 0)
             }
-            .frame(height: 40)
-            .padding(.bottom, 4)
+            .frame(height: 36)
+            .padding(.bottom, 2)
         }
     }
 
@@ -279,7 +280,7 @@ struct MainView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 18)
-            .padding(.vertical, 6)
+            .padding(.vertical, 4)
             .transition(.opacity)
         }
     }
@@ -540,25 +541,31 @@ struct MainView: View {
     /// An in-app alert that can carry one action, for the Interview / Practice tips.
     /// One click does the thing it suggests, so nobody has to find a setting mid-call.
     var audioSourceAlert: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: alertExpanded ? .top : .center, spacing: 10) {
             Image(systemName: "info.circle.fill")
                 .font(.system(size: 12))
                 .foregroundColor(Color(hex: "#fbbf24"))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(vm.alertTitle)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white)
-                Text(vm.alertBody)
-                    .font(.system(size: 10.5))
-                    .foregroundColor(Color(hex: "#c3ccd8"))
-                    .fixedSize(horizontal: false, vertical: true)
+            // One slim line by default: the title, then as much of the message as fits. The whole
+            // message is one click away (and in the tooltip). Two lines across the full width cost
+            // about 70pt of a 660pt window for a notice that is usually a passing "reconnecting"
+            // (owner, 2026-10-02: "that popup message is taking space").
+            Group {
+                if alertExpanded {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(vm.alertTitle).font(.system(size: 11.5, weight: .semibold)).foregroundColor(.white)
+                        Text(vm.alertBody).font(.system(size: 11)).foregroundColor(Color(hex: "#c3ccd8"))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    (Text(vm.alertTitle).font(.system(size: 11.5, weight: .semibold)).foregroundColor(.white)
+                     + Text("   " + vm.alertBody).font(.system(size: 11)).foregroundColor(Color(hex: "#aab5c4")))
+                        .lineLimit(1).truncationMode(.tail)
+                }
             }
-            // The whole width of the window, not a 320 point column. A message of three sentences
-            // in that column was six lines tall, and because this row sits in the layout rather
-            // than over it, the answer and transcript boxes below were pushed down and squeezed
-            // (owner, 2026-10-01: "why the box goes like that"). Across the window it is one or
-            // two lines.
             .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { alertExpanded.toggle() } }
+            .help(vm.alertBody)
             if !vm.alertActionLabel.isEmpty {
                 Button(action: { vm.runAlertAction() }) {
                     Text(vm.alertActionLabel)
@@ -566,7 +573,7 @@ struct MainView: View {
                         .lineLimit(1).fixedSize()
                 }
                 .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
-                                              minHeight: 26, horizontalPadding: 10, verticalPadding: 3))
+                                              minHeight: 24, horizontalPadding: 10, verticalPadding: 2))
             }
             Button(action: { vm.dismissAlert() }) {
                 Image(systemName: "xmark")
@@ -576,11 +583,12 @@ struct MainView: View {
             .buttonStyle(.plain)
             .help("Dismiss")
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
+        .padding(.horizontal, 12).padding(.vertical, alertExpanded ? 8 : 5)
         .frame(maxWidth: 1000, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color(hex: "#161b22").opacity(0.96)))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.12), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 9).fill(Color(hex: "#161b22").opacity(0.96)))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.12), lineWidth: 1))
         .transition(.opacity)
+        .onChange(of: vm.alertTitle) { alertExpanded = false }
     }
 
     func audioSegment(practice: Bool, label: String, icon: String, help: String) -> some View {
