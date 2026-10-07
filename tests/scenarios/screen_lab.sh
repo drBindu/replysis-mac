@@ -25,7 +25,7 @@ case "$MODE" in
   *) echo "unknown mode $MODE"; exit 2 ;;
 esac
 pkill -f "Debug/InterviewCopilot.app/Contents/MacOS" 2>/dev/null; sleep 1
-MOCK_UPLINK_KBPS=$KBPS MOCK_SCREEN_NEED=$MOCK_SCREEN_NEED python3 "$HERE/mock_backend.py" screen-lab $PORT >/tmp/glass/lab/mock-$MODE.out 2>&1 & MOCK=$!; sleep 1
+MOCK_UPLINK_KBPS=$KBPS MOCK_SCREEN_NEED=$MOCK_SCREEN_NEED MOCK_FIRST_DELAY=$MOCK_FIRST_DELAY MOCK_ASK_WORDS=$MOCK_ASK_WORDS python3 "$HERE/mock_backend.py" screen-lab $PORT >/tmp/glass/lab/mock-$MODE.out 2>&1 & MOCK=$!; sleep 1
 L=$(wc -l < "$LOG")
 env REPLYSIS_BACKEND_URL=http://127.0.0.1:$PORT REPLYSIS_TOKEN_URL=http://127.0.0.1:$PORT/token REPLYSIS_TEST_SESSION=stale \
   REPLYSIS_DATA_DIR="$DATA" REPLYSIS_HEADLESS=1 REPLYSIS_FLOW_SCRIPT=watch REPLYSIS_SCREEN_IMAGE="$IMG" ${LINE:+REPLYSIS_LINE=$LINE} \
@@ -38,15 +38,19 @@ cmd micseen
 [ "$MODE" != "weak" ] && sleep 6                       # a few 2 second ticks send the screen ahead
 cmd linestate; sleep 1
 [ "$MODE" = "weak" ] && sleep 8
+[ -n "$LAB_STALL" ] && cmd stallstart
 cmd "ask ${LAB_ASK:-Can you solve this problem on my screen?}"
-[ -n "$LAB_SAMPLE" ] && { sleep 0.3; sample $PID 1 1 -file /tmp/glass/lab/sample.txt >/dev/null 2>&1; }
+[ -n "$LAB_SAMPLE" ] && { sleep ${LAB_SAMPLE_AFTER:-0.3}; sample $PID ${LAB_SAMPLE_SECONDS:-1} 1 -file /tmp/glass/lab/sample.txt >/dev/null 2>&1; }
 sleep 22
-[ -n "$LAB_SNAP" ] && { cmd snap-answer; sleep 4; cp "$DATA/snapshot-answer.png" /tmp/glass/lab/answer-$MODE.png 2>/dev/null; }
+[ "$LAB_SNAP" = "main" ] && { cmd snap-main; sleep 4; cp "$DATA/snapshot-main.png" /tmp/glass/lab/main-$MODE.png 2>/dev/null; }
+[ -n "$LAB_SNAP" ] && [ "$LAB_SNAP" != "main" ] && { cmd snap-answer; sleep 4; cp "$DATA/snapshot-answer.png" /tmp/glass/lab/answer-$MODE.png 2>/dev/null; }
 [ -n "$LAB_WAKE" ] && { cmd wakenote; sleep 6; }
+[ -n "$LAB_STALL" ] && { cmd stallreport; sleep 1; }
+cmd counts; sleep 1
 cmd dump; sleep 1
 kill -0 $PID 2>/dev/null && echo "app still running: yes" || echo "app still running: NO (it died)"
 echo "=== $MODE (uplink ${KBPS} KB/s)"
 echo "-- server saw:"; grep -E 'REQ POST .*(screen-cache|analyze-screen)' /tmp/glass/lab/mock-$MODE.out | cut -c1-230 | sed 's/^/   /'
 echo "-- the app said:"
-sed -n "$((L+1)),\$p" "$LOG" | grep -E "SCREEN|LATENCY: screen|FLOWSTATE|NET: (first token|request task)|WAKE" | grep -v 'preparing screenshots' | sed 's/^\[[0-9:.]*\] //' | cut -c1-260 | sed 's/^/   /' | head -40
+sed -n "$((L+1)),\$p" "$LOG" | grep -E "SCREEN|LATENCY: screen|FLOWSTATE|NET: (first token|request task)|WAKE|RENDER|STALL" | grep -v 'preparing screenshots' | sed 's/^\[[0-9:.]*\] //' | cut -c1-260 | sed 's/^/   /' | head -40
 pkill -f "Debug/InterviewCopilot.app/Contents/MacOS" 2>/dev/null; kill $MOCK 2>/dev/null

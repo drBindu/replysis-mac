@@ -166,3 +166,32 @@ func dlog(_ msg: String, tag: String = "INFO") {
         Task { @MainActor in DebugLog.shared.log(msg, tag: tag) }
     }
 }
+
+
+#if DEBUG
+/// Developer builds only: says when the main thread stayed busy for more than 30 ms in one turn of
+/// its run loop, and how many such turns there were, so "the window stalls" becomes a number.
+enum StallMonitor {
+    nonisolated(unsafe) private static var turnStart = CFAbsoluteTimeGetCurrent()
+    nonisolated(unsafe) static var turns = 0
+    nonisolated(unsafe) static var busyMs = 0.0
+    nonisolated(unsafe) static var worstMs = 0.0
+    nonisolated(unsafe) static var events: [(at: Double, ms: Double)] = []
+    nonisolated(unsafe) static var epoch = CFAbsoluteTimeGetCurrent()
+    nonisolated(unsafe) private static var observer: CFRunLoopObserver?
+
+    static func start() {
+        guard observer == nil else { return }
+        observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue, true, 0) { _, activity in
+            let now = CFAbsoluteTimeGetCurrent()
+            if activity == .afterWaiting { turnStart = now; return }
+            let ms = (now - turnStart) * 1000
+            if ms >= 30 { turns += 1; busyMs += ms; worstMs = max(worstMs, ms); events.append((now - epoch, ms)) }
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+    }
+    static func reset() { turns = 0; busyMs = 0; worstMs = 0; events = []; epoch = CFAbsoluteTimeGetCurrent() }
+    static var timeline: String { events.map { String(format: "%.1fs:%.0fms", $0.at, $0.ms) }.joined(separator: " ") }
+    static var summary: String { "main thread stalls over 30 ms: \(turns) turns, \(Int(busyMs)) ms busy in them, worst \(Int(worstMs)) ms" }
+}
+#endif

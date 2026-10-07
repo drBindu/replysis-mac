@@ -236,7 +236,7 @@ class MainViewModel {
     private var isRestoringSession = false         // BUG-5: true while async restore is in flight
 
     // Input Monitoring is what actually authorizes a keyboard CGEventTap on modern macOS.
-    static func inputMonitoringGranted() -> Bool {
+    nonisolated static func inputMonitoringGranted() -> Bool {
         IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
     }
 
@@ -674,77 +674,93 @@ class MainViewModel {
         if permPollingStarted == nil { permPollingStarted = Date() }
         permTimer?.invalidate()
         permTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self = self else { return }
-                self.permInputMonitoring = MainViewModel.inputMonitoringGranted()
-                let prevAX = self.permAccessibility
-                self.permAccessibility   = AXIsProcessTrusted()
-                let micStatus            = AVCaptureDevice.authorizationStatus(for: .audio)
-                self.permMicrophone      = micStatus == .authorized
-                self.micDenied           = micStatus == .denied
-                // CGPreflightScreenCaptureAccess() is a cheap status READ, safe to poll —
-                // it's actually calling into ScreenCaptureKit content (SCShareableContent
-                // etc.) repeatedly that triggers the "Currently Sharing" system indicator,
-                // and we don't do that here.
-                //
-                // BUG FIX: this used to unconditionally overwrite permScreenRecording every
-                // second with whatever CGPreflightScreenCaptureAccess() reports. Confirmed
-                // live: that API can disagree with the ScreenCaptureKit call the setup
-                // screen's button now uses (requestScreenRecordingPermission) — the button
-                // would correctly set permScreenRecording=true, then THIS poll tick, firing
-                // a second later, would read the stale/disagreeing CG API and flip it right
-                // back to false, so the card never visibly showed Granted even though the
-                // permission genuinely was. Fixed: only let this poll RAISE the flag
-                // (false→true, to catch a grant made directly in System Settings and trigger
-                // the relaunch below); never let it lower a flag that a more authoritative
-                // check already confirmed true.
-                let prevScreenRec = self.permScreenRecording
-                if !self.permScreenRecording {
-                    self.permScreenRecording = CGPreflightScreenCaptureAccess()
-                }
-
-                // ROOT CAUSE of "Space only works after I click inside the app, every
-                // time": a CGEventTap created with .defaultTap only actually receives
-                // events reliably when Accessibility was ALREADY granted before this
-                // process launched (see GlobalHotkey.swift's own long-standing comment on
-                // this). Calling setupHotkeys() again in-place, mid-session, right after
-                // the user grants Accessibility in System Settings, creates a tap object
-                // that LOOKS fine (hotkeyActive=true, no error) but silently never fires —
-                // so the user is left thinking the global hotkey works when only the
-                // LOCAL monitor (window must be key) actually does, forever, for that
-                // whole run. The only reliable fix is a full relaunch: the NEW process
-                // starts already trusted, so its tap attaches correctly from birth.
-                // Screen Recording has the exact same "needs a fresh process" requirement.
-                // Both are checked into ONE combined relaunch call — triggering it twice in
-                // the same tick (if both flip true together) would race two new instances
-                // against each other, so `newlyGranted` collapses them into a single call.
-                // NOTE: for Screen Recording this transition CANNOT be observed.
-                // CGPreflightScreenCaptureAccess() answers for the life of the process, so a
-                // grant made while the app is running is invisible to it and this auto-relaunch
-                // never fires — a recovery conditioned on a signal that cannot arrive. That is
-                // why the setup screen offers an explicit Quit & Reopen once a request has been
-                // made and not landed: the user knows they granted it, and the app cannot.
-                // Accessibility does flip live, so this still does its job for that one.
-                let newlyGranted = (!prevAX && self.permAccessibility) || (!prevScreenRec && self.permScreenRecording)
-                if newlyGranted {
-                    dlog("Accessibility=\(self.permAccessibility) ScreenRecording=\(self.permScreenRecording) newly granted — relaunching so both take effect", tag: "PERM")
-                    MainViewModel.relaunchApp()
-                }
-                // Safety net for the global-Space gate: re-sync it every second for the
-                // first 5 minutes after launch, in ADDITION to the explicit refreshes at
-                // login/logout. This guarantees Space can never get stuck thinking the user
-                // is signed out, no matter which async path updates isLoggedIn first — the
-                // exact bug that made Space (and the mic) do nothing until something else
-                // (like opening the debug log) happened to trigger a refresh.
-                self.refreshHotkeyGate()
-                // Stop after 5 min from the first activation, even across multiple reopens.
-                if let start = self.permPollingStarted, Date().timeIntervalSince(start) > 300 {
-                    let t = self.permTimer
-                    self.permTimer = nil
-                    self.permPollingStarted = nil
-                    t?.invalidate()
+            // The four checks are system calls, and some of them wait on the privacy daemon: measured, they held
+            // the main thread for about 68 ms of every second. They are read on a background thread and only the
+            // result is applied on the main one.
+            Task.detached(priority: .utility) {
+                let input = MainViewModel.inputMonitoringGranted()
+                let accessibility = AXIsProcessTrusted()
+                let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+                // CGPreflightScreenCaptureAccess() is a cheap status READ, safe to poll — it's actually calling into
+                // ScreenCaptureKit content (SCShareableContent etc.) repeatedly that triggers the "Currently
+                // Sharing" system indicator, and we don't do that here.
+                let screenRecording = CGPreflightScreenCaptureAccess()
+                await MainActor.run { [weak self] in
+                    self?.applyPermissionStatus(inputMonitoring: input, accessibility: accessibility,
+                                                micStatus: micStatus, screenRecording: screenRecording)
                 }
             }
+        }
+    }
+
+    private func applyPermissionStatus(inputMonitoring: Bool, accessibility: Bool,
+                                       micStatus: AVAuthorizationStatus, screenRecording: Bool) {
+        self.permInputMonitoring = inputMonitoring
+        let prevAX = self.permAccessibility
+        self.permAccessibility   = accessibility
+        self.permMicrophone      = micStatus == .authorized
+        self.micDenied           = micStatus == .denied
+        // CGPreflightScreenCaptureAccess() is a cheap status READ, safe to poll —
+        // it's actually calling into ScreenCaptureKit content (SCShareableContent
+        // etc.) repeatedly that triggers the "Currently Sharing" system indicator,
+        // and we don't do that here.
+        //
+        // BUG FIX: this used to unconditionally overwrite permScreenRecording every
+        // second with whatever CGPreflightScreenCaptureAccess() reports. Confirmed
+        // live: that API can disagree with the ScreenCaptureKit call the setup
+        // screen's button now uses (requestScreenRecordingPermission) — the button
+        // would correctly set permScreenRecording=true, then THIS poll tick, firing
+        // a second later, would read the stale/disagreeing CG API and flip it right
+        // back to false, so the card never visibly showed Granted even though the
+        // permission genuinely was. Fixed: only let this poll RAISE the flag
+        // (false→true, to catch a grant made directly in System Settings and trigger
+        // the relaunch below); never let it lower a flag that a more authoritative
+        // check already confirmed true.
+        let prevScreenRec = self.permScreenRecording
+        if !self.permScreenRecording {
+            self.permScreenRecording = screenRecording
+        }
+
+        // ROOT CAUSE of "Space only works after I click inside the app, every
+        // time": a CGEventTap created with .defaultTap only actually receives
+        // events reliably when Accessibility was ALREADY granted before this
+        // process launched (see GlobalHotkey.swift's own long-standing comment on
+        // this). Calling setupHotkeys() again in-place, mid-session, right after
+        // the user grants Accessibility in System Settings, creates a tap object
+        // that LOOKS fine (hotkeyActive=true, no error) but silently never fires —
+        // so the user is left thinking the global hotkey works when only the
+        // LOCAL monitor (window must be key) actually does, forever, for that
+        // whole run. The only reliable fix is a full relaunch: the NEW process
+        // starts already trusted, so its tap attaches correctly from birth.
+        // Screen Recording has the exact same "needs a fresh process" requirement.
+        // Both are checked into ONE combined relaunch call — triggering it twice in
+        // the same tick (if both flip true together) would race two new instances
+        // against each other, so `newlyGranted` collapses them into a single call.
+        // NOTE: for Screen Recording this transition CANNOT be observed.
+        // CGPreflightScreenCaptureAccess() answers for the life of the process, so a
+        // grant made while the app is running is invisible to it and this auto-relaunch
+        // never fires — a recovery conditioned on a signal that cannot arrive. That is
+        // why the setup screen offers an explicit Quit & Reopen once a request has been
+        // made and not landed: the user knows they granted it, and the app cannot.
+        // Accessibility does flip live, so this still does its job for that one.
+        let newlyGranted = (!prevAX && self.permAccessibility) || (!prevScreenRec && self.permScreenRecording)
+        if newlyGranted {
+            dlog("Accessibility=\(self.permAccessibility) ScreenRecording=\(self.permScreenRecording) newly granted — relaunching so both take effect", tag: "PERM")
+            MainViewModel.relaunchApp()
+        }
+        // Safety net for the global-Space gate: re-sync it every second for the
+        // first 5 minutes after launch, in ADDITION to the explicit refreshes at
+        // login/logout. This guarantees Space can never get stuck thinking the user
+        // is signed out, no matter which async path updates isLoggedIn first — the
+        // exact bug that made Space (and the mic) do nothing until something else
+        // (like opening the debug log) happened to trigger a refresh.
+        self.refreshHotkeyGate()
+        // Stop after 5 min from the first activation, even across multiple reopens.
+        if let start = self.permPollingStarted, Date().timeIntervalSince(start) > 300 {
+            let t = self.permTimer
+            self.permTimer = nil
+            self.permPollingStarted = nil
+            t?.invalidate()
         }
     }
 
@@ -1549,8 +1565,10 @@ class MainViewModel {
         case "wake":      reconnectAfterWake()
         // The system's own wake announcement, so the observer wired to it is the thing under test.
         case "wakenote":  NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+        #if DEBUG
         case "busy":   engine.debugSimulateConcurrencyRefusal()
         case "weak":   engine.debugSimulateConnectionTrouble()
+        #endif
         // The buttons on the answer bar and the history controls, pressed by name.
         case "clear":    clearAnswer()
         case "new":      newSession()
@@ -1559,6 +1577,10 @@ class MainViewModel {
         case "prev":     showPreviousAnswer()
         case "next":     showNextAnswer()
         case "live":     returnToLive()
+        #if DEBUG
+        case "stallstart": StallMonitor.start(); StallMonitor.reset()
+        case "stallreport": dlog("STALL: \(StallMonitor.summary)\nSTALL timeline: \(StallMonitor.timeline)", tag: "FLOW")
+        #endif
         case "dump":     dlog("FLOWSTATE: step=\(appStep) sessions=\(sessionsOpen) answer='\(aiAnswer.prefix(60).replacingOccurrences(of: "\n", with: " "))' transcript='\(transcript.prefix(40))' shownQuestion='\(transcriptForDisplay.prefix(40))' history=\(answerHistory.count) detailed=\(answerDetailed) badge='\(creditsText)' plan='\(creditsPlanText)' alert='\(alertTitle)' hint='\(aiAnswerHint.prefix(50))'", tag: "FLOW")
         default:
             // "ask What is a queue?" types the question into the Ask bar and sends it.

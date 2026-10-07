@@ -158,6 +158,7 @@ class H(BaseHTTPRequestHandler):
                 self.end_headers()
                 def chunk(text):
                     self.wfile.write(("data: " + json.dumps({"choices": [{"delta": {"content": text}}]}) + "\n\n").encode()); self.wfile.flush()
+                if os.environ.get("MOCK_FIRST_DELAY"): time.sleep(float(os.environ["MOCK_FIRST_DELAY"]))   # a slow model: the app waits and thinks
                 # The usage chunk some providers send first: no "choices" at all.
                 self.wfile.write(b'data: {"usage":{"prompt_tokens":1}}\n\n'); self.wfile.flush()
                 time.sleep(0.12)
@@ -187,8 +188,13 @@ class H(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Cache-Control", "no-cache")
                 self.end_headers()
-                for word in ["That", " is", " a", " test", " answer", " from", " the", " fake", " server.", " Let", " me", " know", " if", " you", " want", " more", " detail."]:
+                words = ["That", " is", " a", " test", " answer", " from", " the", " fake", " server."]
+                # A spoken answer of realistic length, paced like a model: MOCK_ASK_WORDS words, 30 ms apart.
+                words += [" word%d" % i for i in range(int(os.environ.get("MOCK_ASK_WORDS") or 0))]
+                words += [" Let", " me", " know", " if", " you", " want", " more", " detail."]
+                for word in words:
                     self.wfile.write(('data: {"choices":[{"delta":{"content":"%s"}}]}\n\n' % word).encode()); self.wfile.flush()
+                    if os.environ.get("MOCK_ASK_WORDS"): time.sleep(0.03)
                 self.wfile.write(b"data: [DONE]\n\n"); self.wfile.flush()
                 return
         elif url == "/api/v1/usage/listening":

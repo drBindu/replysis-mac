@@ -10,7 +10,6 @@ private struct MainTranscriptHeightKey: PreferenceKey {
 
 struct MainView: View {
     /// Height the transcript actually needs; the box grows to it, up to a cap, then scrolls.
-    @State private var transcriptContentHeight: CGFloat = 0
     @Environment(MainViewModel.self) var vm
     @State private var resumeCollapsed = false
     @State private var showSettings    = false
@@ -949,8 +948,12 @@ struct MainView: View {
             .buttonStyle(.plain)
             .padding(.horizontal, 3)
 
-            // Right panel
-            rightPanel
+            // Right panel. In an overlay of a flexible clear view, so the answer and the transcript inside it are
+            // sized by the room they are given and never by their own content: a change in there no longer makes
+            // the stacks around it measure everything again (about 400 ms of the main thread per change).
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay { rightPanel }
         }
         .padding(22)
         .padding(.top, 0)
@@ -1329,19 +1332,7 @@ struct MainView: View {
                     .cornerRadius(6)
 
                     // STAR badge — lights up when the answer used STAR structure (behavioral Q)
-                    if vm.answerIsBehavioral && !vm.aiAnswer.isEmpty {
-                        HStack(spacing: 3) {
-                            Image(systemName: "star.fill").font(.system(size: 8))
-                            Text("STAR").font(.system(size: 9, weight: .bold)).tracking(0.5)
-                        }
-                        .foregroundColor(Color(hex: "#fbbf24"))
-                        .padding(.horizontal, 7).padding(.vertical, 3)
-                        .background(Color(hex: "#241a06"))
-                        .overlay(Capsule().stroke(Color(hex: "#fbbf24").opacity(0.5), lineWidth: 1))
-                        .clipShape(Capsule())
-                        .help("Behavioral question: the answer follows STAR structure (Situation, Task, Action, Result)")
-                        .transition(.scale.combined(with: .opacity))
-                    }
+                    StarBadge()
 
                     // minLength (not a plain Spacer): this row can show up to 3 clusters
                     // at once (label+STAR badge, thinking indicator, 4 action buttons) —
@@ -1372,43 +1363,15 @@ struct MainView: View {
                 }
                 .padding(.bottom, 10)
 
-                // Answer text
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        Group {
-                            if vm.aiAnswer.isEmpty {
-                                // A hint is not an answer: 12 pt regular and dimmer, so an empty screen is
-                                // never mistaken for an answer that arrived.
-                                Text(vm.aiAnswerHint)
-                                    .font(.system(size: 12, weight: .regular))
-                                    .foregroundColor(Color(hex: "#94A3B8").opacity(0.55))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            } else if vm.isProcessing && (vm.aiAnswer.contains("```") || vm.aiAnswer.hasPrefix("From your screen")) {
-                                // An answer with code, or a screen answer, streams in the layout it will end in.
-                                AnswerContentView(raw: vm.aiAnswer, streaming: true)
-                            } else if vm.isProcessing {
-                                // While streaming: plain text only — no parsing/highlighting
-                                // overhead, so tokens render smoothly instead of in janky bursts.
-                                Text(vm.aiAnswer)
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundColor(.white)
-                                    .shadow(color: .black.opacity(0.6), radius: 3, x: 0, y: 1)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
-                            } else {
-                                // Finished: apply the rich renderer (headers + highlighted code)
-                                AnswerContentView(raw: vm.aiAnswer)
-                            }
-                        }
-                        .padding(.bottom, 4)
-                        .id("aiContent")
-                    }
-                    // Jump to the TOP when a NEW answer starts so you read from the
-                    // beginning. Do NOT auto-follow to the bottom while it streams.
-                    .onChange(of: vm.answerEpoch) {
-                        proxy.scrollTo("aiContent", anchor: .top)
-                    }
-                }
+                // Answer text. Its own view, so the words arriving every few tokens redraw this and not the whole
+                // window (the header, the buttons, the setup panel): one answer used to cost the main thread several
+                // hundred milliseconds of layout at a time.
+                // Put in an overlay of a flexible clear view, so the answer's length never takes part in the
+                // size negotiation of the stacks around it. Measured: every update of the answer made the window's
+                // nested stacks measure their children again, about 135 ms of the main thread each time.
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay(alignment: .topLeading) { AnswerTextArea() }
             }
             .padding(22)
             .frame(maxWidth: .infinity)
@@ -1451,43 +1414,9 @@ struct MainView: View {
                 }
                 .padding(.bottom, 8)
 
-                // Transcript or hint
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        if vm.transcriptForDisplay.isEmpty {
-                            HStack(spacing: 8) {
-                                Image(systemName: "waveform")
-                                    .font(.system(size: 14, weight: .light))
-                                    .foregroundColor(Color(hex: "#33506f"))
-                                Text("The conversation appears here as it is spoken")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(Color(hex: "#33506f"))
-                            }
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.top, 6)
-                        } else {
-                            Text(vm.transcriptForDisplay)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(.white)
-                                .shadow(color: .black.opacity(0.6), radius: 3, x: 0, y: 1)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .background(GeometryReader { g in
-                                    Color.clear.preference(key: MainTranscriptHeightKey.self, value: g.size.height)
-                                })
-                                .id("transcriptBottom")
-                        }
-                    }
-                    // GROWS WITH THE QUESTION, then scrolls. It was a fixed 64pt — about three
-                    // lines — so a long interviewer turn was read through a letterbox while the
-                    // window had room to show it. Capped at 152pt (about eight lines, the cap
-                    // Windows uses on its compact overlay) so the answer below keeps its space.
-                    .frame(height: vm.transcriptForDisplay.isEmpty ? 64 : min(max(transcriptContentHeight, 64), 152))
-                    .onPreferenceChange(MainTranscriptHeightKey.self) { transcriptContentHeight = $0 }
-                    .onChange(of: vm.transcriptForDisplay) {
-                        withAnimation { proxy.scrollTo("transcriptBottom", anchor: .bottom) }
-                    }
-                }
+                // Transcript or hint. Its own view for the same reason: it changes every few milliseconds while
+                // someone speaks.
+                TranscriptTextArea()
             }
             .padding(.horizontal, 22).padding(.vertical, 12)
             .frame(maxWidth: .infinity)
@@ -1762,6 +1691,117 @@ struct MainView: View {
 
 // Which text field currently has keyboard focus (so Space types instead of toggling mic)
 enum FocusField: Hashable { case resume, hints, company, job, pay }
+
+
+// The three parts of the main window that change many times a second while an answer streams or someone
+// speaks. Each is a view of its own, reading only what it shows, so a change redraws it alone. Held inside
+// MainView they invalidated the whole window (every button, the header, the setup panel) on every few tokens
+// or every typed character of the transcript, which cost the main thread hundreds of milliseconds at a time.
+
+struct StarBadge: View {
+    @Environment(MainViewModel.self) var vm
+    var body: some View {
+        if vm.answerIsBehavioral && !vm.aiAnswer.isEmpty {
+            HStack(spacing: 3) {
+                Image(systemName: "star.fill").font(.system(size: 8))
+                Text("STAR").font(.system(size: 9, weight: .bold)).tracking(0.5)
+            }
+            .foregroundColor(Color(hex: "#fbbf24"))
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(Color(hex: "#241a06"))
+            .overlay(Capsule().stroke(Color(hex: "#fbbf24").opacity(0.5), lineWidth: 1))
+            .clipShape(Capsule())
+            .help("Behavioral question: the answer follows STAR structure (Situation, Task, Action, Result)")
+            .transition(.scale.combined(with: .opacity))
+        }
+    }
+}
+
+struct AnswerTextArea: View {
+    @Environment(MainViewModel.self) var vm
+    var body: some View {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        Group {
+                            if vm.aiAnswer.isEmpty {
+                                // A hint is not an answer: 12 pt regular and dimmer, so an empty screen is
+                                // never mistaken for an answer that arrived.
+                                Text(vm.aiAnswerHint)
+                                    .font(.system(size: 12, weight: .regular))
+                                    .foregroundColor(Color(hex: "#94A3B8").opacity(0.55))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            } else if vm.isProcessing && (vm.aiAnswer.contains("```") || vm.aiAnswer.hasPrefix("From your screen")) {
+                                // An answer with code, or a screen answer, streams in the layout it will end in.
+                                AnswerContentView(raw: vm.aiAnswer, streaming: true)
+                            } else if vm.isProcessing {
+                                // While streaming: plain text only — no parsing/highlighting
+                                // overhead, so tokens render smoothly instead of in janky bursts.
+                                Text(vm.aiAnswer)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .shadow(color: .black.opacity(0.6), radius: 3, x: 0, y: 1)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(.enabled)
+                            } else {
+                                // Finished: apply the rich renderer (headers + highlighted code)
+                                AnswerContentView(raw: vm.aiAnswer)
+                            }
+                        }
+                        .padding(.bottom, 4)
+                        .id("aiContent")
+                    }
+                    // Jump to the TOP when a NEW answer starts so you read from the
+                    // beginning. Do NOT auto-follow to the bottom while it streams.
+                    .onChange(of: vm.answerEpoch) {
+                        proxy.scrollTo("aiContent", anchor: .top)
+                    }
+                }
+    }
+}
+
+struct TranscriptTextArea: View {
+    @Environment(MainViewModel.self) var vm
+    @State private var transcriptContentHeight: CGFloat = 0
+    var body: some View {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        if vm.transcriptForDisplay.isEmpty {
+                            HStack(spacing: 8) {
+                                Image(systemName: "waveform")
+                                    .font(.system(size: 14, weight: .light))
+                                    .foregroundColor(Color(hex: "#33506f"))
+                                Text("The conversation appears here as it is spoken")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(Color(hex: "#33506f"))
+                            }
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 6)
+                        } else {
+                            Text(vm.transcriptForDisplay)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.white)
+                                .shadow(color: .black.opacity(0.6), radius: 3, x: 0, y: 1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .background(GeometryReader { g in
+                                    Color.clear.preference(key: MainTranscriptHeightKey.self, value: g.size.height)
+                                })
+                                .id("transcriptBottom")
+                        }
+                    }
+                    // GROWS WITH THE QUESTION, then scrolls. It was a fixed 64pt — about three
+                    // lines — so a long interviewer turn was read through a letterbox while the
+                    // window had room to show it. Capped at 152pt (about eight lines, the cap
+                    // Windows uses on its compact overlay) so the answer below keeps its space.
+                    .frame(height: vm.transcriptForDisplay.isEmpty ? 64 : min(max(transcriptContentHeight, 64), 152))
+                    .onPreferenceChange(MainTranscriptHeightKey.self) { transcriptContentHeight = $0 }
+                    .onChange(of: vm.transcriptForDisplay) {
+                        withAnimation { proxy.scrollTo("transcriptBottom", anchor: .bottom) }
+                    }
+                }
+    }
+}
+
 
 // A parsed segment of an AI answer (for the rich coding-answer renderer)
 enum AnswerBlock {
