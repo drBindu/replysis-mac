@@ -1377,10 +1377,15 @@ struct MainView: View {
                     ScrollView {
                         Group {
                             if vm.aiAnswer.isEmpty {
+                                // A hint is not an answer: 12 pt regular and dimmer, so an empty screen is
+                                // never mistaken for an answer that arrived.
                                 Text(vm.aiAnswerHint)
-                                    .font(.system(size: 15))
-                                    .foregroundColor(Color(hex: "#94A3B8").opacity(0.7))
+                                    .font(.system(size: 12, weight: .regular))
+                                    .foregroundColor(Color(hex: "#94A3B8").opacity(0.55))
                                     .frame(maxWidth: .infinity, alignment: .leading)
+                            } else if vm.isProcessing && (vm.aiAnswer.contains("```") || vm.aiAnswer.hasPrefix("From your screen")) {
+                                // An answer with code, or a screen answer, streams in the layout it will end in.
+                                AnswerContentView(raw: vm.aiAnswer, streaming: true)
                             } else if vm.isProcessing {
                                 // While streaming: plain text only — no parsing/highlighting
                                 // overhead, so tokens render smoothly instead of in janky bursts.
@@ -1695,8 +1700,8 @@ struct MainView: View {
     }
 
     func copyAnswer() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(vm.aiAnswer, forType: .string)
+        let text = vm.aiAnswer
+        Task { @MainActor in _ = await Clipboard.copy(text) }   // retries while another program holds the clipboard
     }
 
     func creditsTapped() {
@@ -1763,9 +1768,37 @@ enum AnswerBlock {
     case header(String)
     case code(String)
     case text(String)
+    /// The one quiet line above a screen answer: what was read.
+    case note(String)
+    /// The code panel of a spoken or screen answer, with the language the fence named.
+    case panel(code: String, language: String)
+    /// The complexity under the code: "Time O(n)   Space O(1)".
+    case complexity(String)
 }
 
+/// Cuts an answer into the places it is shown. The answer shape is the same for a spoken and a screen answer:
+/// the part to say, then the code in a panel of its own, then the complexity under it (Windows ShowAnswer).
+/// An older answer built from ━━━ section headers is still read the way it always was.
 func parseAnswerBlocks(_ raw: String) -> [AnswerBlock] {
+    if raw.contains("━━━") { return parseLegacyAnswerBlocks(raw) }
+    var rest = raw
+    var blocks: [AnswerBlock] = []
+    // "From your screen: Chrome, LeetCode" on the first line says what was read.
+    let first = rest.prefix(while: { $0 != "\n" })
+    if first.hasPrefix("From your screen") {
+        blocks.append(.note(String(first)))
+        rest = String(rest.dropFirst(first.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    let parts = AnswerLayout.split(rest)
+    if !parts.prose.isEmpty { blocks.append(.text(parts.prose)) }
+    if !parts.code.isEmpty {
+        blocks.append(.panel(code: parts.code, language: parts.language))
+        if let c = parts.complexity { blocks.append(.complexity(c)) }
+    }
+    return blocks
+}
+
+func parseLegacyAnswerBlocks(_ raw: String) -> [AnswerBlock] {
     // The SAME list the history collapse uses. Kept in one place because when they were
     // two, they drifted immediately — a QUERY section rendered as code here and was still
     // carried as code into every later prompt.
@@ -1814,6 +1847,9 @@ struct AnswerContentView: View {
     let raw: String
     var fontSize: CGFloat = 15
     var codeFontSize: CGFloat = 13
+    /// True while the answer is still arriving: the same layout as the finished answer, without the syntax
+    /// colouring, so nothing jumps when it ends.
+    var streaming = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1827,8 +1863,23 @@ struct AnswerContentView: View {
                             .foregroundColor(Color(hex: "#7dd3fc"))
                     }
                     .padding(.top, 2)
+                case .note(let line):
+                    Text(line)
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundColor(Color(hex: "#94A3B8").opacity(0.85))
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 case .code(let code):
-                    CodeBlockView(code: code, fontSize: codeFontSize)
+                    CodeBlockView(code: code, fontSize: codeFontSize, plain: streaming)
+                case .panel(let code, let language):
+                    CodeBlockView(code: code, language: language, fontSize: codeFontSize, plain: streaming)
+                case .complexity(let line):
+                    Text(line)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundColor(Color(hex: "#9fd3f5"))
+                        .padding(.horizontal, 11).padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.05)))
+                        .textSelection(.enabled)
                 case .text(let text):
                     Text(text)
                         .font(.system(size: fontSize, weight: .semibold))
@@ -1845,25 +1896,37 @@ struct AnswerContentView: View {
 
 struct CodeBlockView: View {
     let code: String
+    /// What the fence called it ("python"), or empty to guess from the code.
+    var language = ""
     var fontSize: CGFloat = 13
+    /// Colouring is skipped while the code is still arriving.
+    var plain = false
+
+    private enum CopyState { case ready, copied, failed }
+    @State private var copy = CopyState.ready
+
+    private var label: String {
+        switch copy {
+        case .ready: return "Copy code"
+        case .copied: return "Copied"
+        case .failed: return "Copy failed, try again"
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Top bar: language tag + copy
             HStack {
-                Text(SyntaxHighlighter.detectLanguage(code))
+                Text(language.isEmpty ? SyntaxHighlighter.detectLanguage(code) : language.uppercased())
                     .font(.system(size: 9, weight: .bold)).tracking(0.6)
                     .foregroundColor(Color(hex: "#64748b"))
                 Spacer()
-                Button(action: {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(code, forType: .string)
-                }) {
+                Button(action: copyCode) {
                     HStack(spacing: 3) {
-                        Image(systemName: "doc.on.doc").font(.system(size: 9))
-                        Text("Copy code").font(.system(size: 10, weight: .semibold))
+                        Image(systemName: copy == .failed ? "exclamationmark.triangle" : "doc.on.doc").font(.system(size: 9))
+                        Text(label).font(.system(size: 10, weight: .semibold)).lineLimit(1).fixedSize()
                     }
-                    .foregroundColor(Color(hex: "#7dd3fc"))
+                    .foregroundColor(copy == .failed ? Color(hex: "#fbbf24") : Color(hex: "#7dd3fc"))
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Color(hex: "#0c2a40"))
                     .cornerRadius(6)
@@ -1879,14 +1942,33 @@ struct CodeBlockView: View {
             // existed. In a coding round the line that runs off is as likely as not the one
             // with the return statement in it.
             ScrollView(.horizontal, showsIndicators: true) {
-                Text(SyntaxHighlighter.highlight(code, size: fontSize))
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 12).padding(.vertical, 10)
+                Group {
+                    if plain {
+                        Text(code)
+                            .font(.system(size: fontSize, design: .monospaced))
+                            .foregroundColor(Color(hex: "#d6e7ff"))
+                    } else {
+                        Text(SyntaxHighlighter.highlight(code, size: fontSize))
+                    }
+                }
+                .textSelection(.enabled)
+                .padding(.horizontal, 12).padding(.vertical, 10)
             }
         }
         .background(RoundedRectangle(cornerRadius: 10).fill(Color(red: 5/255, green: 9/255, blue: 16/255)))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "#1e90d8").opacity(0.2), lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// Another program (a clipboard manager, a remote desktop client) often holds the clipboard for a moment.
+    /// The copy retries for about a second, and the button says so if it still could not copy.
+    private func copyCode() {
+        Task { @MainActor in
+            let ok = await Clipboard.copy(code)
+            copy = ok ? .copied : .failed
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            copy = .ready
+        }
     }
 }
 

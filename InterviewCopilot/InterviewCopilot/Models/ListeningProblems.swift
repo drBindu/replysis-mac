@@ -144,4 +144,16 @@ enum ListeningProblems {
         if connectionStalled { return .noSpeechService }
         return nil
     }
+
+    /// Whether a speech connection that is not up has been missing long enough to call stalled.
+    ///
+    /// The wait is counted from when the connection WENT AWAY: the later of the engine process starting and the
+    /// last moment it was up. Counted from the process start alone, any drop in a session older than the
+    /// patience was "stalled" the instant it happened, and a banner about a work network or a VPN appeared over
+    /// a transcript that was working a second later.
+    static func connectionStalled(now: Date, startedAt: Date?, lastReadyAt: Date, patience: TimeInterval) -> Bool {
+        let since = max(startedAt ?? .distantPast, lastReadyAt)
+        guard since > .distantPast else { return false }
+        return now.timeIntervalSince(since) > patience
+    }
 }

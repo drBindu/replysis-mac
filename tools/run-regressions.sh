@@ -5,7 +5,7 @@ SRC="$ROOT/InterviewCopilot/InterviewCopilot/Models"
 BUILD="$(mktemp -d /private/tmp/replysis-regression.XXXXXX)"
 trap 'rm -rf "$BUILD"' EXIT
 xcrun swiftc -module-cache-path "$BUILD/cache" \
-  "$SRC/AutoTurnDetector.swift" "$SRC/PromptBuilder.swift" "$SRC/AudioSourceRules.swift" "$SRC/PlanFacts.swift" "$SRC/ListeningProblems.swift" "$SRC/RecoveryPolicy.swift" "$SRC/Gzip.swift" "$SRC/TranscriptTyping.swift" "$SRC/VocabTerms.swift" "$SRC/AccountScope.swift" "$SRC/SessionInsights.swift" \
+  "$SRC/AutoTurnDetector.swift" "$SRC/PromptBuilder.swift" "$SRC/AudioSourceRules.swift" "$SRC/PlanFacts.swift" "$SRC/ListeningProblems.swift" "$SRC/RecoveryPolicy.swift" "$SRC/Gzip.swift" "$SRC/TranscriptTyping.swift" "$SRC/VocabTerms.swift" "$SRC/AccountScope.swift" "$SRC/SessionInsights.swift" "$SRC/UplinkGovernor.swift" "$SRC/OcrLayout.swift" "$SRC/AnswerClosers.swift" "$SRC/AnswerLayout.swift" "$SRC/CaptureTarget.swift" "$SRC/Clipboard.swift" "$SRC/ScreenOcr.swift" "$SRC/OAuthLoopback.swift" "$SRC/ClosingMarker.swift" \
   "$SRC/GlobalHotkey.swift" "$SRC/AppNotifications.swift" \
   "$SRC/AudioInputRoute.swift" "$SRC/ListeningMode.swift" "$SRC/ResumeParser.swift" \
   "$ROOT/tools/regression/main.swift" -o "$BUILD/regressions"

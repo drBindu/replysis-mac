@@ -204,6 +204,34 @@ class SpeechmaticsEngine {
         nukePreviousProcesses()
         killAndDispose()
 
+        // The launch itself waits behind any engine still closing its speech session, but never on the
+        // main thread: waiting for the old engine here froze the whole window for up to 1.5 s on every
+        // restart. The queue is serial, so the new engine still starts only after the old one has
+        // ended, and a stop() or a newer start() that arrives in the meantime cancels this launch.
+        startGeneration &+= 1
+        let generation = startGeneration
+        endQueue.async { [weak self] in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard self.startGeneration == generation, !self.engineCancelled else {
+                    self.isStarting = false
+                    dlog("SM start cancelled before launch (stopped or superseded)", tag: "SM")
+                    return
+                }
+                self.launchEngine(smKey: smKey)
+            }
+        }
+    }
+
+    /// Bumped by every start() and stop(). A launch queued behind an ending engine only goes ahead if
+    /// this is still the number it was queued with, so a close during a start stops the engine it was
+    /// starting and two requests can never launch two engines.
+    private var startGeneration = 0
+
+    /// Engines are ended one at a time, in order, off the main thread.
+    private let endQueue = DispatchQueue(label: "replysis.engine.end", qos: .userInitiated)
+
+    private func launchEngine(smKey: String) {
         let baseDir = Bundle.main.bundleURL
             .appendingPathComponent("Contents")
             .appendingPathComponent("Resources")
@@ -247,6 +275,7 @@ class SpeechmaticsEngine {
             isStarting = false
             statusText = "NO ENGINE"
             dlog("SM FATAL: speechmatics_engine binary NOT FOUND in any location", tag: "SM")
+            noteLaunchFailure()
             return
         }
 
@@ -420,8 +449,10 @@ class SpeechmaticsEngine {
             isStarting = false
             statusText = "ENGINE ERR"
             dlog("SM launch FAILED (posix_spawn returned error)", tag: "SM")
+            noteLaunchFailure()
             return
         }
+        consecutiveSpawnFailures = 0
         enginePid = pid
         isRunning = true
         statusText = "READY"
@@ -829,6 +860,9 @@ class SpeechmaticsEngine {
 
     private func checkEngine() {
         guard !engineCancelled else { return }
+        // A launch is queued behind an engine that is still closing its session. That is progress, not a
+        // dead engine, and asking for another start now would only be refused as a duplicate.
+        guard !isStarting else { return }
 
         // TRANSCRIPTION OFFLINE WHILE THE PROCESS IS FINE. The monitor below only notices a
         // DEAD process, so a live engine with a dropped websocket was invisible to it: the
@@ -887,22 +921,21 @@ class SpeechmaticsEngine {
                 return
             }
             start(smKey: key)
-            // start() sets isRunning the moment the process spawns. If it's STILL false
-            // here, the engine couldn't even launch (binary missing from the bundle,
-            // spawn failure) — a permanent condition retrying every 3s will never fix.
-            // Give it a few chances (transient failures do happen), then stop the loop
-            // and leave an honest status instead of spamming the log forever while the
-            // UI pretends everything is fine.
-            if isRunning {
-                consecutiveSpawnFailures = 0
-            } else {
-                consecutiveSpawnFailures += 1
-                if consecutiveSpawnFailures >= 5 {
-                    monitorTimer?.invalidate(); monitorTimer = nil
-                    statusText = "ENGINE ERR"
-                    dlog("checkEngine: engine failed to launch \(consecutiveSpawnFailures) times in a row — giving up. The app bundle is likely damaged; reinstalling should fix it.", tag: "SM")
-                }
-            }
+            // The launch happens a moment later, off this call (see launchEngine); a launch that
+            // cannot happen at all is counted there.
+        }
+    }
+
+    /// A launch that could not happen at all (binary missing from the bundle, spawn failure) is a
+    /// permanent condition that retrying every 3 s will never fix. Give it a few chances (transient
+    /// failures do happen), then stop the loop and leave an honest status instead of spamming the log
+    /// forever while the UI pretends everything is fine.
+    private func noteLaunchFailure() {
+        consecutiveSpawnFailures += 1
+        if consecutiveSpawnFailures >= 5 {
+            monitorTimer?.invalidate(); monitorTimer = nil
+            statusText = "ENGINE ERR"
+            dlog("checkEngine: engine failed to launch \(consecutiveSpawnFailures) times in a row — giving up. The app bundle is likely damaged; reinstalling should fix it.", tag: "SM")
         }
     }
 
@@ -916,6 +949,8 @@ class SpeechmaticsEngine {
     // AudioHardwareCreateProcessTap fail, which falls back to mic-only above.
 
     func stop() {
+        startGeneration &+= 1       // a launch still waiting behind an ending engine must not happen
+        isStarting = false
         engineCancelled = true
         stoppedByUser = true      // deliberate stop — retry loops must not resurrect it
         isReady = false
@@ -926,6 +961,16 @@ class SpeechmaticsEngine {
         killAndDispose()
     }
 
+    /// Stops the engine and does not return until it has ended its speech session. For the one moment that must
+    /// not leave it to a background thread: the app is exiting, and a process that exits first leaves the engine
+    /// holding a session slot on a shared account.
+    func stopAndWait() {
+        stop()
+        endQueue.sync { }
+    }
+
+    /// Lets go of the running engine at once and ends it in the background. Nothing here waits: the graceful
+    /// shutdown (up to 1.5 s) used to run on the main thread and froze the window on every restart.
     private func killAndDispose() {
         // Clear the pipe readers BEFORE terminating so a dangling handler can't keep firing.
         outHandle?.readabilityHandler = nil
@@ -933,20 +978,24 @@ class SpeechmaticsEngine {
         outHandle = nil
         errHandle = nil
         exitSource?.cancel(); exitSource = nil
-        if enginePid > 0 {
-            let pid = enginePid
+        let pid = enginePid
+        enginePid = 0
+        isRunning = false
+        guard pid > 0 else { return }
+        let flag = shutdownFlagPath
+        endQueue.async {
             // Ask it to close the Speechmatics socket FIRST. A killed engine never closes its
-            // websocket, so the server keeps that session slot reserved until it times out —
-            // and with one shared account those ghosts are charged against every customer on
-            // both platforms, not just this machine. Windows found the same thing and fixed it
-            // the same way (RELAY.md, 2349f80).
-            try? "1".write(to: shutdownFlagPath, atomically: true, encoding: .utf8)
+            // websocket, so the server keeps that session slot reserved until it times out and
+            // with one shared account those ghosts are charged against every customer on both
+            // platforms, not just this machine. Windows found the same thing and fixed it the same
+            // way (RELAY.md, 2349f80).
+            try? "1".write(to: flag, atomically: true, encoding: .utf8)
             let deadline = Date().addingTimeInterval(1.5)
             while Date() < deadline, kill(pid, 0) == 0 { usleep(50_000) }
-            try? FileManager.default.removeItem(at: shutdownFlagPath)
+            try? FileManager.default.removeItem(at: flag)
             kill(pid, SIGTERM)
-            // Reap off main. WNOHANG loop with a SIGKILL fallback after 2s so a hung
-            // engine never blocks this GCD thread indefinitely.
+            // Reap off this queue. WNOHANG loop with a SIGKILL fallback after 2s so a hung engine
+            // never blocks a thread indefinitely.
             DispatchQueue.global(qos: .utility).async {
                 var st: Int32 = 0
                 for _ in 0..<20 {
@@ -957,8 +1006,6 @@ class SpeechmaticsEngine {
                 waitpid(pid, &st, 0)
             }
         }
-        enginePid = 0
-        isRunning = false
     }
 
     private func nukePreviousProcesses() {

@@ -108,95 +108,28 @@ class GoogleSignIn {
     // MARK: — Socket
 
     private static func bindListenSocket() -> (Int32, Int)? {
-        let sock = socket(AF_INET, SOCK_STREAM, 0)
-        guard sock >= 0 else { dlog("Google: socket() failed", tag: "GOOGLE"); return nil }
-        var yes: Int32 = 1
-        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port   = 0
-        // Bind to 127.0.0.1 ONLY (RFC 8252 loopback) — not 0.0.0.0, which would expose
-        // the OAuth callback port to the whole local network.
-        addr.sin_addr   = in_addr(s_addr: inet_addr("127.0.0.1"))
-        let ok = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                bind(sock, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
+        guard let bound = OAuthLoopback.bind() else {
+            dlog("Google: could not open the local listening port", tag: "GOOGLE")
+            return nil
         }
-        guard ok == 0 else {
-            dlog("Google: bind failed errno=\(errno) (\(String(cString:strerror(errno))))", tag: "GOOGLE")
-            Darwin.close(sock); return nil
-        }
-        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
-        withUnsafeMutablePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { _ = getsockname(sock, $0, &len) }
-        }
-        let port = Int(addr.sin_port.bigEndian)
-        listen(sock, 1)
-        dlog("Google: listening on port \(port)", tag: "GOOGLE")
-        return (sock, port)
+        dlog("Google: listening on port \(bound.port)", tag: "GOOGLE")
+        return (bound.fd, bound.port)
     }
 
     // MARK: — Callback Listener
 
-    private struct Callback {
-        let code: String?
-        let stateValid: Bool
-        let error: String?
-    }
+    private typealias Callback = OAuthLoopback.Callback
 
+    /// Waits for this attempt's answer for two minutes. A browser's spare connections and its request for an icon
+    /// are not the answer and are ignored (see OAuthLoopback).
     private static func waitForCallback(serverFd: Int32, expectedState: String) async -> Callback? {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                defer { Darwin.close(serverFd) }
-                var tv = timeval(tv_sec: 120, tv_usec: 0)
-                setsockopt(serverFd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-
-                let client = accept(serverFd, nil, nil)
-                guard client >= 0 else { continuation.resume(returning: nil); return }
-                defer { Darwin.close(client) }
-
-                // Read timeout on the CLIENT too — otherwise a connection that opens but
-                // never sends data would block recv() forever and hang the sign-in spinner.
-                var ctv = timeval(tv_sec: 15, tv_usec: 0)
-                setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &ctv, socklen_t(MemoryLayout<timeval>.size))
-
-                var buf = [UInt8](repeating: 0, count: 8192)
-                let n = recv(client, &buf, buf.count - 1, 0)
-                guard n > 0 else { continuation.resume(returning: nil); return }
-
-                let req = String(bytes: buf.prefix(n), encoding: .utf8) ?? ""
-                let cb  = parseRequest(req, expectedState: expectedState)
-
-                let html = (cb.code != nil && cb.stateValid) ? successHTML : failHTML
-                let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: \(html.utf8.count)\r\nConnection: close\r\n\r\n\(html)"
-                resp.withCString { _ = send(client, $0, strlen($0), 0) }
-
-                continuation.resume(returning: cb)
+                continuation.resume(returning: OAuthLoopback.waitForCallback(
+                    serverFd: serverFd, expectedState: expectedState, timeout: 120,
+                    successHTML: successHTML, failHTML: failHTML))
             }
         }
-    }
-
-    nonisolated private static func parseRequest(_ req: String, expectedState: String) -> Callback {
-        guard let line  = req.components(separatedBy: "\r\n").first,
-              let qMark = line.range(of: "?"),
-              let http  = line.range(of: " HTTP") else {
-            return Callback(code: nil, stateValid: false, error: "Invalid callback")
-        }
-        var params: [String: String] = [:]
-        for pair in String(line[qMark.upperBound ..< http.lowerBound]).components(separatedBy: "&") {
-            // Split on the FIRST '=' only — a value can itself contain '=' (base64),
-            // and the old kv.count==2 check silently dropped those params.
-            guard let eq = pair.firstIndex(of: "=") else { continue }
-            let key = String(pair[..<eq])
-            let val = String(pair[pair.index(after: eq)...])
-            params[key] = val.removingPercentEncoding ?? val
-        }
-        return Callback(
-            code:       params["code"],
-            stateValid: (params["state"] ?? "") == expectedState,
-            error:      params["error"] == nil ? nil : "Google sign-in was cancelled."
-        )
     }
 
     // MARK: — Token Exchange

@@ -546,6 +546,10 @@ class PromptBuilder {
         "want me to go deeper", "do you want more detail",
     ]
 
+    /// The answer ends on its last point. Owner, 2026-10-06 (Windows): "it is asking a reverse question".
+    /// AnswerClosers is the net under this rule, because a prompt is a request and the model sometimes ignores it.
+    static let stopOnLastPointRule = "Stop on your last point. Never end an answer with a question to the interviewer or an offer to say more, such as \"let me know if you want more detail\", \"would you like me to go deeper\", \"does that make sense\" or \"what does your team use\". The only time you ask anything is when the interviewer invites your questions."
+
     /// The interviewer has handed the conversation to the candidate for questions, or is
     /// checking that an earlier candidate question was answered — and nothing new follows.
     static func isCandidateQuestionInvitation(_ question: String) -> Bool {
@@ -1089,7 +1093,8 @@ class PromptBuilder {
         sb += "  Never state immigration, visa, tax or legal facts, such as what STEM OPT, H-1B or an EAD allows, beyond what the candidate's own profile says. Confirm status only; do not explain the rules.\n"
         sb += "  Be specific and credible. Do not cut off a useful explanation, but never pad the answer with generic filler.\n"
         sb += "  Do not turn an answer into a tour of the resume. Use one relevant example, and name at most two tools unless the interviewer specifically asks for the stack.\n"
-        sb += "  When the interviewer is explaining or wrapping up, react conversationally. Do not paraphrase their whole statement back to them.\n\n"
+        sb += "  When the interviewer is explaining or wrapping up, react conversationally. Do not paraphrase their whole statement back to them.\n"
+        sb += "  \(Self.stopOnLastPointRule)\n\n"
 
         if hasResume {
             sb += "YOUR RESUME (use only these facts, never invent):\n\(resumeFacts)\n\n"

@@ -41,6 +41,12 @@ final class RegionPicker {
             let window = RegionPickerWindow(contentRect: screen.frame, styleMask: [.borderless],
                                             backing: .buffered, defer: false, screen: screen)
             window.contentView = view
+            // Placed by the display's own frame in global coordinates, once the window exists. A frame given
+            // to the initialiser can be read relative to the screen, which puts the overlay of a second
+            // display beside it instead of on it; the part of the desktop it misses cannot be selected.
+            // Each display is covered at its own size and scale, so a Retina laptop next to a 1x monitor
+            // is covered exactly.
+            window.setFrame(screen.frame, display: true)
             window.backgroundColor = .clear
             window.isOpaque = false
             window.hasShadow = false

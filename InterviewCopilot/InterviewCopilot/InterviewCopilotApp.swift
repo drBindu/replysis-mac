@@ -78,12 +78,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if !isIntentionalRelaunch, let bundleID = Bundle.main.bundleIdentifier {
             let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
                 .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
-            if let existing = others.first {
+            let marked = SpeechmaticsEngine.shared.appDataFolder
+            var stillThere = others.first
+            // A copy that is still closing (saving, ending its speech session) is not a duplicate: a restart
+            // done in a hurry would otherwise hand over to it and quit, and leave nothing running. Wait for it,
+            // up to eight seconds. A real second copy, with nothing closing, is handed over to at once.
+            if let closing = stillThere, ClosingMarker.isClosing(pid: closing.processIdentifier, in: marked) {
+                dlog("The previous copy (pid=\(closing.processIdentifier)) is still closing — waiting up to 8 s for it instead of taking it for a duplicate", tag: "BOOT")
+                if ClosingMarker.waitForExit(pid: closing.processIdentifier) {
+                    dlog("The previous copy has closed — starting normally", tag: "BOOT")
+                    stillThere = nil
+                }
+            }
+            if let existing = stillThere {
                 dlog("Another instance is already running (pid=\(existing.processIdentifier)) — activating it and quitting this launch", tag: "BOOT")
                 existing.activate(options: [.activateAllWindows])
                 NSApp.terminate(nil)
                 return
             }
+            ClosingMarker.clear(in: marked)
         }
 
         // LSUIElement=YES in Info.plist makes the process start as .accessory from birth
@@ -333,6 +346,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let quit = alert.runModal() == .alertSecondButtonReturn
             dlog("Quit requested while busy — \(quit ? "confirmed by the user" : "cancelled, the app keeps running")", tag: "LIFECYCLE")
             if !quit { return .terminateCancel }
+            ClosingMarker.markClosing(in: SpeechmaticsEngine.shared.appDataFolder, pid: ProcessInfo.processInfo.processIdentifier)
             return .terminateNow
         }
 
@@ -341,6 +355,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // answering". Recording the moment and the cause turns that into something
         // diagnosable: a quit from the menu or ⌘Q, a kill chord, a logout, or macOS.
         dlog("Quit requested — the app is terminating (frontmost=\(NSApp.isActive))", tag: "LIFECYCLE")
+        ClosingMarker.markClosing(in: SpeechmaticsEngine.shared.appDataFolder, pid: ProcessInfo.processInfo.processIdentifier)
         return .terminateNow
     }
 
@@ -351,7 +366,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // this is the only place it ever is. Blocking, because a Task started during
             // termination dies with the process.
             vm.flushListeningMeterOnExit(synchronously: true)
-            SpeechmaticsEngine.shared.stop()
+            // And wait: the engine's graceful shutdown now runs off the main thread, and this process must not
+            // exit before it has told the speech service the session is over.
+            SpeechmaticsEngine.shared.stopAndWait()
             // The live transcript is the ONE thing this app leaves on disk unencrypted —
             // the engine writes it directly and cannot decrypt what everything else is
             // protected with. It is a scratch file for the turn in progress and has no

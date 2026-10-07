@@ -83,31 +83,115 @@ class NetworkClient {
     // the image going up the wire. Cached server-side for ninety seconds, returned only to
     // the identity that sent it, and returned exactly once.
 
-    /// Upload a screenshot now and get an id to reference it by later. Returns nil on any
-    /// failure — the caller then sends the bytes inline, which still works.
-    func cacheScreenshot(imageBase64: String) async -> String? {
+    /// How one send ahead of the question went.
+    struct EarlyUpload {
+        /// The id to put in `imageIds`, when the server kept it.
+        var id: String?
+        /// HTTP status, or 0 when nothing came back.
+        var status = 0
+        var elapsed: TimeInterval = 0
+        /// Stopped because a question was about to be asked, so it says nothing about the line.
+        var droppedForQuestion = false
+    }
+
+    /// Never waits for connectivity and never retries: a send ahead that cannot go now is not worth holding the line for.
+    private let uploadSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.waitsForConnectivity = false
+        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForResource = 15
+        return URLSession(configuration: config)
+    }()
+    private var earlyUploadWork: Task<(Data, URLResponse), Error>?
+    private var earlyUploadDropped = false
+
+    /// A question is about to be asked: the send ahead stops so the question has the connection.
+    func dropEarlyUploadForQuestion() {
+        guard let work = earlyUploadWork else { return }
+        earlyUploadDropped = true
+        work.cancel()
+    }
+
+    private func screenCacheRequest(body: Data) -> URLRequest? {
         guard let url = URL(string: "\(AppConfig.backendUrl)/api/v1/interview/screen-cache") else { return nil }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(UserSession.shared.idToken)", forHTTPHeaderField: "Authorization")
         req.setValue(DeviceIdentity.current, forHTTPHeaderField: "X-Device-Id")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: ["image": imageBase64])
+        req.httpBody = body
+        return req
+    }
+
+    /// One bounded request to /screen-cache. Gives up after `timeout` so a doomed upload holds the line for as little time as possible.
+    private func sendEarly(_ body: Data, timeout: TimeInterval) async -> (EarlyUpload, Data?) {
+        guard let req = screenCacheRequest(body: body) else { return (EarlyUpload(), nil) }
+        let started = Date()
+        earlyUploadDropped = false
+        let work = Task { try await uploadSession.data(for: req) }
+        earlyUploadWork = work
+        let watchdog = Task {
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            work.cancel()
+        }
+        defer { watchdog.cancel(); earlyUploadWork = nil }
         do {
-            let (data, response) = try await session.data(for: req)
-            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                return nil
-            }
-            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-            return obj["imageId"] as? String
-        } catch { return nil }
+            let (data, response) = try await work.value
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            return (EarlyUpload(id: nil, status: status, elapsed: Date().timeIntervalSince(started)), data)
+        } catch {
+            return (EarlyUpload(id: nil, status: 0, elapsed: Date().timeIntervalSince(started),
+                                droppedForQuestion: earlyUploadDropped), nil)
+        }
+    }
+
+    private func idFrom(_ data: Data?, status: Int) -> String? {
+        guard (200...299).contains(status), let data,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return obj["imageId"] as? String
+    }
+
+    /// Upload a screenshot now and get an id to reference it by later. The id is nil on any failure; the
+    /// caller then sends the bytes inline, which still works.
+    func cacheScreenshot(imageBase64: String) async -> EarlyUpload {
+        guard let body = try? JSONSerialization.data(withJSONObject: ["image": imageBase64]) else { return EarlyUpload() }
+        var (result, data) = await sendEarly(body, timeout: UplinkGovernor.uploadTimeout)
+        result.id = idFrom(data, status: result.status)
+        return result
+    }
+
+    /// The screen's words, sent in place of a picture on a line too slow to carry one: kilobytes, not hundreds of them.
+    func cacheScreenText(_ text: String) async -> EarlyUpload {
+        guard let body = try? JSONSerialization.data(withJSONObject: ["text": text]) else { return EarlyUpload() }
+        var (result, data) = await sendEarly(body, timeout: UplinkGovernor.uploadTimeout)
+        result.id = idFrom(data, status: result.status)
+        return result
+    }
+
+    private static let probeBody: Data = {
+        // Incompressible filler of the test size, made once. Repeating letters would be squeezed to
+        // nothing by anything on the way that compresses, and the test would measure nothing.
+        var bytes = [UInt8](repeating: 0, count: UplinkGovernor.probeBytes * 3 / 4)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        let json = "{\"probe\":\"" + Data(bytes).base64EncodedString() + "\"}"
+        return Data(json.utf8)
+    }()
+
+    /// Times a small throw-away upload to the same server the pictures go to. The server reads the body,
+    /// finds no image in it, answers 400 and keeps nothing, so the only thing measured is how fast this
+    /// line carries 160 KB. `reached` is true when the server answered the way it should (400, or 200).
+    func probeUplink() async -> (reached: Bool, status: Int, elapsed: TimeInterval, droppedForQuestion: Bool) {
+        let (result, _) = await sendEarly(Self.probeBody, timeout: UplinkGovernor.probeTimeout)
+        return (result.status == 400 || result.status == 200, result.status, result.elapsed, result.droppedForQuestion)
     }
 
     // MARK: - Screen Analysis Stream
 
     func streamScreenAnalysis(imageBase64: String, resumeCtx: String, provider: String,
+                              question: String = "",
                               transcript: String = "", jobContext: String = "",
                               captureSource: String = "", imageIds: [String]? = nil,
+                              screenText: String? = nil,
                               onToken: @escaping (String) -> Void,
                               onDone: @escaping () -> Void,
                               onError: @escaping (String) -> Void) {
@@ -116,13 +200,17 @@ class NetworkClient {
         }
 
         var payload: [String: Any] = [
-            "prompt": buildScreenPrompt(resumeCtx: resumeCtx, transcript: transcript, jobContext: jobContext, captureSource: captureSource),
+            "prompt": buildScreenPrompt(resumeCtx: resumeCtx, question: question, transcript: transcript,
+                                        jobContext: jobContext, captureSource: captureSource),
             "provider": provider
         ]
-        // Reference an already-uploaded picture when there is one; otherwise send the bytes,
-        // which is what happens whenever the pre-upload did not finish in time or failed.
+        // Reference an already-uploaded picture (or the words read from the screen) when there is one;
+        // otherwise send the bytes, which is what happens whenever the pre-upload did not finish in time
+        // or failed. On a line too slow for a picture the screen's words go inline instead.
         if let imageIds, !imageIds.isEmpty {
             payload["imageIds"] = imageIds
+        } else if let screenText, !screenText.isEmpty {
+            payload["screenText"] = screenText
         } else {
             payload["image"] = imageBase64
         }
@@ -327,9 +415,22 @@ class NetworkClient {
         if json.hasPrefix(" ") { json.removeFirst() }
         guard json.hasPrefix("{"), json.contains("\"error\""),
               let data = json.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let message = obj["error"] as? String, !message.isEmpty else { return nil }
-        return message
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return serverErrorText(obj["error"])
+    }
+
+    /// The words of an error the server put in a stream: a plain string, or an object carrying a
+    /// `message`. An error sent as an object used to fall through as "no tokens", and was retried into the
+    /// same fault and shown as an empty reply.
+    static func serverErrorText(_ value: Any?) -> String? {
+        if let text = value as? String { return text.isEmpty ? nil : text }
+        if let obj = value as? [String: Any] {
+            for key in ["message", "error", "detail", "description"] {
+                if let text = obj[key] as? String, !text.isEmpty { return text }
+            }
+            return "The server could not answer this request."
+        }
+        return nil
     }
 
     private static func tokenFromSSELine(_ line: String) -> String? {
@@ -544,7 +645,8 @@ class NetworkClient {
     private static func parseSSEToken(_ json: String) -> String? {
         guard let data = json.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        if let err = obj["error"] as? String { return "⚠ Error: \(err)" }
+        // An error is reported by errorFromSSELine before this is reached; it is never answer text.
+        // A line with no "choices" (the final usage chunk, a keep-alive) is simply not a token.
         guard let choices = obj["choices"] as? [[String: Any]],
               let first = choices.first,
               let delta = first["delta"] as? [String: Any],
@@ -552,182 +654,292 @@ class NetworkClient {
         return content
     }
 
-    // Rich, structured screen-analysis prompt — ported 1:1 from the working .NET
-    // ScreenAnalyzer.BuildStaticPromptBody so coding answers match the original app.
-    func buildScreenPrompt(resumeCtx: String, transcript: String = "", jobContext: String = "", captureSource: String = "") -> String {
-        var p = """
-You are an expert interview coach helping a candidate in a live interview.
-The screenshot was taken with the Replysis app excluded from capture, so you are seeing only the user's own work — so you are seeing whatever was behind it: Zoom/Meet shared screens, browsers with coding problems, job descriptions, terminal output, etc.
-IMPORTANT: Look at the ENTIRE screenshot. Identify ALL visible content — browser windows, coding platforms (LeetCode, HackerRank, CoderPad), video call screens, error messages, design mockups, or any interview question text.
-Respond using the EXACT structure shown below for the matching content type.
+    /// What the app tells the models when it sends a screen. Ported from the Windows ScreenAnalyzer so both
+    /// apps ask for the same thing and get the same shape back: SAY THIS first (the part to say), DETAIL
+    /// with the code fenced, and the bare section titles the answer view lifts into its own places.
+    ///
+    /// Two things here are a contract with the server, not style:
+    ///   1. A question asked out loud goes after "THE QUESTION:" and is followed by a blank line and
+    ///      "Answer in this shape". The server cuts exactly that span out to tell the model what was asked;
+    ///      without the marker the answering stage is told only to "analyze what is on the screen".
+    ///   2. The reply starts with the part to say, which is what lets the server stream it before the
+    ///      code is written.
+    func buildScreenPrompt(resumeCtx: String, question: String = "", transcript: String = "",
+                           jobContext: String = "", captureSource: String = "") -> String {
+        var sb = ""
+        func line(_ s: String = "") { sb += s + "\n" }
+        let asked = question.trimmingCharacters(in: .whitespacesAndNewlines)
 
-ANSWER THE QUESTION, DO NOT DESCRIBE THE SCREEN BACK TO THEM:
-• They are looking at the screen. Describing its panels, its editor and its error
-  messages answers nothing, in front of somebody waiting to hear how they would solve it.
-• "You can see my screen, right? Can you solve this?" contains ONE real question and it
-  is the second. Confirm you can see it in at most four words, and only if asked, then
-  answer the actual question.
-• Asked to solve something, solve it, with the code. Not a description of the problem.
-
-NOT EVERY QUESTION IS ABOUT THE SCREEN:
-• The screen is sent with every question while a shared screen is being watched,
-  including questions that have nothing to do with it. "Which language do you prefer?",
-  "tell me about yourself", "why are you leaving your current role?" are ordinary
-  interview questions that happen to have arrived while a screen was on show.
-• When the question is about the candidate, IGNORE the screen entirely. Do not work it
-  into the answer, do not mention it.
-
-IF THE PROBLEM STATEMENT IS CUT OFF, SAY SO FIRST:
-• A coding problem rarely fits on one screen, and answering from half of it produces a
-  confident solution to the wrong constraints.
-• When the statement, the constraints or the examples are cut off, open with a section
-  headed exactly ━━━ SCROLL ━━━ containing ONE sentence the candidate can say out loud —
-  e.g. "Let me scroll down and read the constraints before I answer." — followed by a short
-  line naming exactly what is missing.
-• Then answer as fully as you can from what IS visible. Do not refuse; a partial answer
-  with its gap named is useful, and the app will read the screen again once they scroll.
-
-IF THE SCREEN SHOWS A FAILURE, LEAD WITH IT:
-• A compile error, a failed test or a red error panel is the most useful thing on that
-  screen and nobody will ask about it — an interviewer waits to see whether you notice.
-• Say what is broken and where, in one line, before anything else.
-
-CRITICAL OUTPUT RULES — OBEY EXACTLY:
-1. Use ━━━ TITLE ━━━ as section headers — nothing else (no ##, no **, no ---).
-2. One blank line after each section header, one blank line before the next header.
-3. Bullets use the • character only (never -, *, numbers).
-4. No markdown: no **bold**, no _italic_, no backtick code fences.
-5. Code goes directly after ━━━ SOLUTION ━━━ with no fences.
-6. Never truncate code — write the complete solution even if it's long.
-7. Keep non-code sections short and scannable.
-
-─────────────────────────────────────────────────────
-IF SCREEN SHOWS A CODING / ALGORITHM PROBLEM, output:
-─────────────────────────────────────────────────────
-
-━━━ PROBLEM ━━━
-[One sentence: what the problem is asking for]
-
-━━━ APPROACH ━━━
-Brute force:  [brief — 1 sentence]  →  O(n²) time
-Optimal:      [brief — 1 sentence]  →  O(n) time
-
-━━━ SOLUTION ━━━
-[Complete working code. Language = whatever is on screen, default Python.]
-[Inline comments on non-obvious lines. Handle edge cases. No truncation.]
-
-━━━ COMPLEXITY ━━━
-Time: O(?)   |   Space: O(?)
-
-━━━ SAY THIS ━━━
-• "[Opening line to say to the interviewer before coding]"
-• "[What to narrate as you write the key part]"
-• "[How to wrap up and state the complexity]"
-
-─────────────────────────────────────────────────────
-IF SCREEN SHOWS A SYSTEM DESIGN / ARCHITECTURE DIAGRAM, output:
-─────────────────────────────────────────────────────
-
-━━━ COMPONENTS ━━━
-• [Component name] — [what it does in 1 sentence]
-
-━━━ DATA FLOW ━━━
-[2-3 sentences describing how data moves through the system]
-
-━━━ TRADE-OFFS ━━━
-• [Scalability / bottleneck / consistency issue]
-
-━━━ IMPROVEMENT ━━━
-[One concrete suggestion]
-
-─────────────────────────────────────────────────────
-IF SCREEN SHOWS A SQL / DATABASE QUESTION, output:
-─────────────────────────────────────────────────────
-
-━━━ QUERY ━━━
-[The complete SQL query, ready to run. No fences.]
-
-━━━ EXPLAIN ━━━
-[1-2 sentences on how it works and any join/index consideration]
-
-─────────────────────────────────────────────────────
-IF SCREEN SHOWS A MULTIPLE CHOICE / QUIZ QUESTION, output:
-─────────────────────────────────────────────────────
-
-━━━ ANSWER ━━━
-[Correct option — state it directly]
-
-━━━ WHY ━━━
-• Correct ([option]): [why it's right — 1 sentence]
-• Wrong ([option]):   [why it's wrong — 1 sentence]
-
-━━━ WATCH OUT ━━━
-[Any trick or common misconception in this question]
-
-─────────────────────────────────────────────────────
-IF SCREEN SHOWS A BEHAVIORAL / SITUATIONAL TEXT QUESTION, output:
-─────────────────────────────────────────────────────
-
-━━━ SITUATION ━━━
-[Context: where, when, what was at stake — 1-2 sentences]
-
-━━━ ACTION ━━━
-• [Specific step you took]
-• [Another concrete step]
-
-━━━ RESULT ━━━
-[Outcome with a specific number or metric]
-
-─────────────────────────────────────────────────────
-IF SCREEN SHOWS AN ERROR, BUG, OR STACK TRACE, output:
-─────────────────────────────────────────────────────
-
-━━━ ROOT CAUSE ━━━
-[One sentence — the actual problem]
-
-━━━ FIX ━━━
-[The corrected code line(s) — complete, ready to paste]
-
-━━━ EXPLAIN ━━━
-[One sentence to say out loud to the interviewer]
-
-─────────────────────────────────────────────────────
-IF SCREEN CONTENT DOES NOT MATCH ANY ABOVE (e.g. only desktop/wallpaper visible), output:
-─────────────────────────────────────────────────────
-
-━━━ WHAT I SEE ━━━
-[Describe ALL visible windows, apps, and content — be specific about what applications are open]
-If the Replysis app is visible, mention the current transcript and any question being discussed.
-
-━━━ GUIDANCE ━━━
-• [Most relevant interview advice based on what you see]
-• TIP: For best results, keep your coding platform or the interviewer's shared screen visible on screen when using Screen Analysis
-
-"""
-        // Name the window the pixels came from. An answer about the WRONG window is
-        // otherwise indistinguishable from a bad answer about the right one, and the user
-        // has no way to tell which happened.
-        if !captureSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            p += "\n\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n"
-            p += "WHAT WAS CAPTURED: \(captureSource)\n"
-            p += "If this is clearly not what the question is about, say so in one line before answering.\n"
+        if !asked.isEmpty {
+            line("The image below is the user's own screen, as it looks right now.")
+            line("They are looking at it. Someone has asked them about it and they")
+            line("want to reply out loud.")
+            line()
+            line("You are writing their reply, so you are answering as someone who can")
+            line("see this screen, because they can. Never write a reply that denies")
+            line("being able to see it.")
+            line()
+            line("SAY WHEN SOMETHING IS BROKEN, EVEN IF NOBODY ASKED.")
+            line("If the screen shows a compile error, a failed test case, a stack")
+            line("trace, \"Wrong Answer\", \"Time Limit Exceeded\", or a red error")
+            line("panel, that is the most useful thing on it and the candidate may")
+            line("not have noticed yet. Nobody in an interview says \"can you solve")
+            line("that error\": they wait to see whether you spot it.")
+            line()
+            line("So put it first, in one short line they can say out loud:")
+            line("  \"I have got a compile error on line 63, let me fix that first.\"")
+            line("  \"Case 3 is failing, looks like the empty input case.\"")
+            line("Then answer whatever was actually asked. Name the line number and")
+            line("the message if they are readable, and give the corrected code in")
+            line("DETAIL. Never invent an error that is not on the screen.")
+            line()
+            line("NOT EVERY QUESTION IS ABOUT THE SCREEN. While the app is watching a")
+            line("shared screen it sends you the screen with every question, including")
+            line("the ones that have nothing to do with it. \"Which language do you")
+            line("prefer?\", \"tell me about yourself\", \"why are you leaving your")
+            line("current role?\" are ordinary interview questions that happen to have")
+            line("arrived while a screen was on show.")
+            line()
+            line("Answer those normally, as the candidate, and ignore the screen")
+            line("completely. Do not mention it, do not work it into the answer, do not")
+            line("say you can see it. Nobody asked. An answer about a code editor to")
+            line("\"which language do you prefer\" is a non-answer, and it tells the")
+            line("interviewer something is reading the screen.")
+            line()
+            line("Use the screen only when the question is about what is on it: solve")
+            line("this, what is this error, walk me through this code, can you see my")
+            line("screen.")
+            line()
+            line("DO THE TASK. Confirming you can see the screen is never the answer.")
+            line("Interviewers put the two together in one breath: \"you can see my")
+            line("screen, right? Can you solve this?\" There is one real question there")
+            line("and it is the second one. Answer it.")
+            line()
+            line("An unclear question is asked about, not answered around. When the")
+            line("question arrives half transcribed, such as \"do you know coding or coding")
+            line("language? You\", ask for it again in one short line and stop:")
+            line("\"Sorry, could you say that again?\" Do not fill the gap with an")
+            line("inventory of the screen. Listing the problem number, the language")
+            line("selected and which panel it is in reads as stalling, and it tells")
+            line("them nothing they cannot see.")
+            line()
+            line("Confirming sight is at most four words, and only when they asked:")
+            line("\"Yes, I can see it.\" Then the actual answer, immediately. Asked to")
+            line("solve something, solve it, with the code. Asked how you would")
+            line("approach it, give the approach. Never describe the screen back to")
+            line("them: they are looking at it, and they know what is on it.")
+            line()
+            line("THE QUESTION:")
+            line(asked)
+            line()
+            line("Answer in this shape, and nothing else:")
+            line()
+            line("SAY THIS")
+            line("The reply, written in the user's voice, first person, ready to say")
+            line("out loud with no editing. Two to four sentences. Not a description")
+            line("of the screen and not advice about what to do: the actual reply.")
+            line()
+            line("DETAIL")
+            line("Only when the answer needs code, numbers, or steps to work through.")
+            line("Complete code, never abbreviated. Leave this section out entirely")
+            line("when the spoken reply is the whole answer.")
+            line()
+            line("SCREEN NOTES")
+            line("One dense line of what is visible: window name, menu and tab labels,")
+            line("button labels, headings, figures. Facts only, comma separated. Not")
+            line("shown to the user. It is what you will be given if they ask a")
+            line("follow-up about this same screen.")
+            line()
+            line("Rules:")
+            line("- Name things. \"Visual Studio\", \"Chrome\", \"the LeetCode Two Sum")
+            line("  page\", \"a Postgres query in DBeaver\". Never \"an application\", \"an")
+            line("  IDE\", \"a code editor\", \"a document\". A person looking at their own")
+            line("  screen says what it is, and hedging is the one thing that makes a")
+            line("  reply sound like it came from something that cannot really see.")
+            line("  Title bars, tabs, logos and menu names are all in the image; read")
+            line("  them. Only if the name is genuinely not visible, describe it by")
+            line("  what it does rather than calling it \"an application\".")
+            line("- Say when the question is cut off, and ask for the rest.")
+            line("  A coding problem often runs past the bottom of the screen. If the")
+            line("  statement, the examples or the constraints are clearly incomplete,")
+            line("  such as text that ends mid sentence, a section that is missing, or a")
+            line("  scrollbar showing more below, do not answer from half of it. Say so in")
+            line("  the user's own voice, as a line they can speak out loud while they")
+            line("  scroll:")
+            line("    \"Let me scroll down and read the constraints before I answer.\"")
+            line("    \"Give me a second, I want to see the rest of the examples.\"")
+            line("  Then add one line beginning NEED: naming exactly what is missing,")
+            line("  such as NEED: the constraints and the third example.")
+            line("  Scrolling is captured, so the next answer will have both halves.")
+            line("  Answering a half read question confidently is the worst outcome")
+            line("  here: it sounds right and it is wrong, and nobody can tell which.")
+            line("- Describe only what is visible. If you cannot read the part being")
+            line("  asked about, SAY THIS becomes a natural line that buys a moment,")
+            line("  such as \"Let me scroll up so I get the exact wording.\" Never guess.")
+            line("- Never invent the user's own history, employers, projects, or")
+            line("  numbers. Where their own detail belongs, write [your example].")
+            line("- Stop on your last point. Never end with a question to the interviewer")
+            line("  or an offer to say more, such as \"let me know if you want more")
+            line("  detail\" or \"does that make sense\". The only time a question belongs")
+            line("  at the end is when the screen itself asks the candidate for one.")
+            line("- Plain text and section titles exactly as above. No markdown, with")
+            line("  one exception: code goes inside a fence, ```language on its own")
+            line("  line before it and ``` on its own line after. The app lifts")
+            line("  anything fenced into a monospace panel of its own, so fence every")
+            line("  line of code and nothing else. Code left outside a fence is shown")
+            line("  in a proportional font with its indentation flattened.")
+        } else {
+            line("You are sitting beside someone who is in a live interview right now. They")
+            line("have just captured their screen and need something they can use within")
+            line("seconds.")
+            line()
+            line("Work in this order:")
+            line("1. Read the screen. Find the one thing they need help with: a question, a")
+            line("   coding problem, an error, a diagram, or a form. Ignore tabs, toolbars,")
+            line("   chat panels, notifications, and anything else around it.")
+            line("2. Answer that. Lead with the answer. Do not describe the screenshot back")
+            line("   to them.")
+            line()
+            line("Rules that matter more than the format:")
+            line("- Use only what you can actually see. If the part that matters is too")
+            line("  small, cut off, or blurred, say which part you cannot read and stop.")
+            line("  A confident wrong answer can cost them the job.")
+            line("- Say when the problem itself is cut off, and stop rather than guess")
+            line("  the rest. A coding problem statement runs past the bottom of the")
+            line("  screen more often than it fits: a scrollbar showing more below,")
+            line("  text ending mid sentence, a constraints or examples section that")
+            line("  looks started but not finished. When that is what you see, do not")
+            line("  write a final SOLUTION or FIX from a partial statement: say what")
+            line("  is missing,")
+            line("  NEED: the constraints and the second example.")
+            line("  and nothing else. Guessing at unseen constraints is how a")
+            line("  solution that looks right fails on a case nobody could see.")
+            line("- Never invent their experience. No employers, projects, metrics, or")
+            line("  numbers about them that are not on the screen. Where their own detail")
+            line("  belongs, write [your example] and let them fill it in.")
+            line("- Answer this screen, not the general topic. If an error code or a")
+            line("  message is shown, work out what it means here, in this program,")
+            line("  using everything else visible around it. Reciting what the code")
+            line("  usually means is not an answer, and it is usually the wrong one.")
+            line("- Code must be complete and runnable. Never write \"...\" or \"rest of the")
+            line("  code unchanged\".")
+            line("- Put every piece of code in a fenced block, opening with three")
+            line("  backticks and the language and closing with three backticks.")
+            line("  Including a single line.")
+            line("- Everything that is not code stays short. They are reading this while")
+            line("  another person is talking to them.")
+            line("- Stop on your last point. Never end with a question to the interviewer")
+            line("  or an offer to say more, such as \"let me know if you want more")
+            line("  detail\" or \"does that make sense\".")
+            line()
+            line("Every answer ends with a SAY THIS line: one or two sentences, first")
+            line("person, ready to speak out loud with no editing. It is the one thing")
+            line("they can use in the next three seconds while someone is looking at")
+            line("them, so it is never optional, whatever is on the screen.")
+            line()
+            line("Match the shape of your answer to what is on the screen.")
+            line()
+            line("A coding or algorithm problem:")
+            line("APPROACH")
+            line("One or two lines. Name the technique.")
+            line("SOLUTION")
+            line("Complete code, in whatever language is on screen, Python if none is.")
+            line("Comment only the lines whose logic is not obvious.")
+            line("COMPLEXITY")
+            line("Time: O(?)   Space: O(?)")
+            line("SAY THIS")
+            line("One sentence they can speak while writing it.")
+            line()
+            line("An error, failing test, or stack trace:")
+            line("CAUSE")
+            line("One line. The real cause, not the symptom.")
+            line("FIX")
+            line("The corrected code, ready to paste.")
+            line("SAY THIS")
+            line("One sentence they can speak.")
+            line()
+            line("A multiple choice or quiz question:")
+            line("ANSWER")
+            line("The option, stated flatly.")
+            line("WHY")
+            line("One line for why it is right. One line for why the closest wrong option")
+            line("is wrong.")
+            line("SAY THIS")
+            line("One sentence they can say out loud, giving the answer and the reason.")
+            line()
+            line("A system design or architecture diagram:")
+            line("SCOPE")
+            line("What it has to do, and the scale you are assuming.")
+            line("DESIGN")
+            line("The components, and how one request travels through them.")
+            line("TRADE-OFF")
+            line("The one an interviewer will push on.")
+            line("SAY THIS")
+            line("One sentence to open with.")
+            line()
+            line("A question about them, such as \"tell me about a time\":")
+            line("STRUCTURE")
+            line("Situation, action, result, with [your example] everywhere their own")
+            line("detail belongs.")
+            line("SAY THIS")
+            line("An opening sentence that is safe to say exactly as written.")
+            line()
+            line("Anything else:")
+            line("WHAT THIS IS")
+            line("One line.")
+            line("DO THIS")
+            line("The single most useful next step.")
+            line("SAY THIS")
+            line("One sentence they can say out loud right now.")
+            line()
+            line("After the answer, and always, add one final section:")
+            line()
+            line("SCREEN NOTES")
+            line("A single dense line listing what is actually visible: the page or")
+            line("window name, menu and tab labels, button labels, headings, and any")
+            line("figures or identifiers on screen. Facts only, comma separated, no")
+            line("commentary. This is not shown to the user. It is what you will be")
+            line("given if they ask you something about this screen later, so include")
+            line("the things your answer did not need but a follow-up question might.")
+            line()
+            line("Format: plain text, nothing decorative. A section title is the bare word on")
+            line("its own line, in capitals, with its content on the very next line and")
+            line("no blank line between them. No lines of dashes, no markdown, no")
+            line("asterisks. Code is the one exception and must be fenced: ```language")
+            line("on its own line before it, ``` on its own line after, so the app can")
+            line("show it in a monospace panel instead of flattening it into prose.")
+            line("Bullets, where you need them, use the \u{2022} character.")
+            line()
+            line("Keep the whole thing as short as it can be and still answer. Three")
+            line("clean lines beat three decorated sections.")
         }
-        if !transcript.isEmpty {
-            p += "\n─────────────────────────────────────────────────────\n"
-            p += "WHAT THE INTERVIEWER SAID (audio transcript) — use this to understand what they're asking about the screen:\n"
-            p += "─────────────────────────────────────────────────────\n\"\(transcript)\"\n"
+
+        // Name the window the pixels came from. An answer about the WRONG window is otherwise
+        // indistinguishable from a bad answer about the right one.
+        if !captureSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            line()
+            line("WHAT WAS CAPTURED: \(captureSource)")
+            line("If this is clearly not what the question is about, say so in one line before answering.")
+        }
+        // No spoken question (a hotkey): what the interviewer said so far still says what they are asking about.
+        if asked.isEmpty, !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            line()
+            line("WHAT THE INTERVIEWER SAID (audio transcript), to understand what they are asking about the screen:")
+            line("\"\(transcript)\"")
         }
         if !jobContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            p += "\n─────────────────────────────────────────────────────\n"
-            p += "THE ROLE / COMPANY (tailor any spoken guidance to this):\n"
-            p += "─────────────────────────────────────────────────────\n\(jobContext)\n"
+            line()
+            line("THE ROLE / COMPANY (tailor any spoken guidance to this):")
+            line(jobContext)
         }
         if !resumeCtx.isEmpty && resumeCtx != ResumeParser.noResumeMarker {
-            p += "\n─────────────────────────────────────────────────────\n"
-            p += "CANDIDATE BACKGROUND (reference only if directly relevant):\n"
-            p += "─────────────────────────────────────────────────────\n\(resumeCtx)\n"
+            line()
+            line("The candidate's background is below. Use it only to choose which of their real experiences")
+            line("fits, and only when the screen is asking about them. It is never a licence to invent detail")
+            line("that is not in it.")
+            line(resumeCtx)
         }
-        return p
+        return sb
     }
 
     // Post-processor matching .NET ScreenAnalyzer.PostProcess — strips markdown and

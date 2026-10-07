@@ -437,7 +437,44 @@ class MainViewModel {
         startTranscriptTimer()
         startThinkingTimer()
         startCreditsTimer()
+        // What was learned about the line (can it carry a picture?) belongs to that line.
+        NetworkReachability.shared.onChange = { [weak self] in
+            Task { @MainActor [weak self] in self?.networkChanged() }
+        }
+        // Ready the moment the Mac wakes.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.reconnectAfterWake() }
+        }
         restoreSession()
+    }
+
+    // ── Ready the moment the Mac wakes ────────────────────────────────────────────────
+    //
+    // A speech connection that was open when the lid closed is dead after it, and the engine only finds that
+    // out by timing out (about twenty seconds) and then backing off, so the first question after opening the
+    // lid met a deaf app. The network adapter needs a moment to come back, so wait 2.5 s and reconnect.
+    private var wakeObserver: NSObjectProtocol?
+    static let wakeReconnectDelay: TimeInterval = 2.5
+
+    func reconnectAfterWake() {
+        dlog("WAKE: the Mac woke up; reconnecting speech in \(Self.wakeReconnectDelay)s instead of waiting for the old connection to time out", tag: "SM")
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.wakeReconnectDelay * 1_000_000_000))
+            guard let self, self.session.isLoggedIn else { return }
+            // Whatever was learned about the line before the lid closed no longer holds.
+            self.networkChanged()
+            guard self.engine.isRunning else { return }   // not running: the engine's own check starts it
+            // A long sleep outlives the speech key.
+            if let expiry = self.session.speechKeyExpiresAt, expiry.timeIntervalSinceNow < 120 {
+                _ = await self.session.fetchSpeechmaticsKeyAsync(forceRefresh: true)
+            }
+            guard !self.session.speechmaticsKey.isEmpty else { return }
+            dlog("WAKE: reconnecting speech now", tag: "SM")
+            self.engine.stop()
+            self.engine.start(smKey: self.session.speechmaticsKey)
+            await self.fetchCredits()
+        }
     }
 
     // MARK: - Session Restore
@@ -1195,7 +1232,7 @@ class MainViewModel {
             startBusyWatchdog()
             answerEpoch += 1
             updateMicUI()
-            Task { await _doScreenCapture(label: "👁 SCREEN") }
+            Task { await _doScreenCapture(label: "SCREEN", question: q) }
             return
         }
         guard !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -1248,6 +1285,10 @@ class MainViewModel {
         var accumulated = ""
         var tokenCount = 0
         resumeLocked = true
+        // When the interviewer has just invited the candidate's questions, a closing question IS the answer.
+        let allowClosingQuestion = PromptBuilder.isCandidateQuestionInvitation(q)
+        // A question is about to take the line: a picture or words still going up stop first.
+        NetworkClient.shared.dropEarlyUploadForQuestion()
 
         let msgArr: [[String: String]] = messages.compactMap { dict in
             guard let role = dict["role"], let content = dict["content"] else { return nil }
@@ -1283,14 +1324,17 @@ class MainViewModel {
                          tag: "PERF")
                 }
                 if tokenCount % 3 == 0 || token.contains("\n") {
-                    self.aiAnswer = "Q: \(q)\n\n\(lowBanner)\(accumulated)"
+                    // The same cleaning the finished answer gets, so a hand-back ("let me know if you want
+                    // more") is never shown and then removed, and fences never show raw.
+                    let soFar = AnswerLayout.composeSpokenAnswer(self.cleanAIOutput(accumulated), allowClosingQuestion: allowClosingQuestion)
+                    self.aiAnswer = "Q: \(q)\n\n\(lowBanner)\(soFar)"
                 }
             },
             onDone: { [weak self] in
                 guard let self = self, self.answerEpoch == epoch else { return }
                 dlog(String(format: "LATENCY: complete in %.2fs (%d tokens)",
                             Date().timeIntervalSince(askedAt), tokenCount), tag: "PERF")
-                let final = self.cleanAIOutput(accumulated)
+                let final = AnswerLayout.composeSpokenAnswer(self.cleanAIOutput(accumulated), allowClosingQuestion: allowClosingQuestion)
                 self.finishAI(question: q, answer: final, prefix: "Q: \(q)\n\n\(lowBanner)",
                               historyAnswer: accumulated)
                 Task { [weak self] in await self?.fetchCredits() }
@@ -1748,6 +1792,7 @@ class MainViewModel {
         isWatchMode = enabled
         saveSettings()
         dlog("Screen answers \(enabled ? "ARMED" : "off")", tag: "SCREEN")
+        if enabled { runUplinkProbe() }
     }
 
     func toggleWatchMode() {
@@ -1767,7 +1812,10 @@ class MainViewModel {
         }
     }
 
-    private func _doScreenCapture(label: String) async {
+    private func _doScreenCapture(label: String, question: String = "") async {
+        // A question about the screen takes the line: a picture still going up stops, so the question has the connection.
+        NetworkClient.shared.dropEarlyUploadForQuestion()
+
         // No hide/show dance: captureScreen() either targets the frontmost OTHER window or
         // excludes this app from the display capture, so our window is never in the pixels
         // to begin with. The old approach ordered every window out, slept 80ms for the
@@ -1776,85 +1824,101 @@ class MainViewModel {
         // In watch mode the capture taken on the last 2-second tick IS the screen now; using
         // it takes the capture out of the candidate's wait. An F8 window capture always
         // captures fresh, since the prepared ones are of the whole screen.
+        //
+        // On a line too slow for a picture the screen's WORDS go instead (item 23 of the Windows audit):
+        // a few kilobytes, so the first word comes in about a second instead of eight to eighteen.
+        let wordsLine = !lineCarriesPictures()
         var imageData: Data?
-        if capturingWholeScreen, pendingRegionRect == nil, let prepared = freshPreparedShot() {
-            dlog("SCREEN: using the capture from \(Int(Date().timeIntervalSince(preparedShotDataAt) * 1000))ms ago; no capture wait", tag: "SCREEN")
-            imageData = prepared
-        } else {
-            imageData = await captureScreen()
-        }
+        var screenWords: String?
+        var imageIds: [String]?
+        var signature: [UInt8] = []
 
-        guard let imageData = imageData, !imageData.isEmpty else {
-            // Failing SILENTLY here is not acceptable: the user asked a question, watched
-            // nothing happen, and had no way to know why. macOS shows its own permission
-            // prompt, but that can be dismissed or already-declined, in which case every
-            // future capture fails with no visible reason at all. Say what happened and
-            // what fixes it, and turn Watch Mode off so it does not keep failing per
-            // question for the rest of the interview.
-            dlog("Screen capture returned nil — telling the user instead of failing silently", tag: "SCREEN")
-            let wasWatching = isWatchMode
-            if wasWatching {
-                isWatchMode = false
+        if wordsLine {
+            guard let image = await captureCGImage() else { screenCaptureUnavailable(); return }
+            signature = Self.coarseSignature(image: image)
+            // The words sent ahead, when the screen has not moved since they were read.
+            imageIds = usableImageIds(matching: signature)
+            if imageIds == nil {
+                let started = Date()
+                if let words = await Self.readWords(from: image) {
+                    screenWords = words
+                    dlog("SCREEN: slow line, read \(words.count) characters from the screen in \(Int(Date().timeIntervalSince(started) * 1000))ms and sending those instead of a picture", tag: "SCREEN")
+                } else {
+                    dlog("SCREEN: slow line, but no readable words on the screen; sending the picture", tag: "SCREEN")
+                    imageData = Self.encodeCapture(image, wholeScreen: capturingWholeScreen)
+                }
             }
-            aiAnswer = """
-            ⚠ Screen Recording permission is needed to read your screen.
-
-            macOS blocked the capture, so there is nothing to answer from.\(wasWatching ? " Watch Screen has been switched off." : "")
-
-            To fix it: System Settings → Privacy & Security → Screen & System Audio Recording → enable Replysis, then quit and reopen the app.
-
-            Speech still works — ask by voice, or press SPACE.
-            """
-            stopThinkingUI(); return
+        } else {
+            if capturingWholeScreen, pendingRegionRect == nil, let prepared = freshPreparedShot() {
+                dlog("SCREEN: using the capture from \(Int(Date().timeIntervalSince(preparedShotDataAt) * 1000))ms ago; no capture wait", tag: "SCREEN")
+                imageData = prepared
+            } else {
+                imageData = await captureScreen()
+            }
+            guard let data = imageData, !data.isEmpty else { screenCaptureUnavailable(); return }
+            signature = Self.coarseSignature(data)
+            // When the picture went up while they were still speaking, the question carries its id and
+            // not two hundred kilobytes. Nil falls back to sending the bytes.
+            imageIds = usableImageIds(matching: signature)
         }
 
-        dlog("Screen captured: \(imageData.count) bytes", tag: "SCREEN")
-        let base64 = imageData.base64EncodedString()
+        dlog("Screen captured: \(imageData?.count ?? 0) bytes\(screenWords != nil ? ", words instead" : "")\(imageIds != nil ? ", sent ahead" : "")", tag: "SCREEN")
+        let base64 = imageIds == nil && screenWords == nil ? (imageData?.base64EncodedString() ?? "") : ""
         let resumeFacts = ResumeParser.extractFacts(resumeText)
         let provider = Self.providerLabel
-        let ts = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)
         let currentTranscript = transcript  // pass what interviewer said too
 
-        aiAnswer = "\(label)   \(ts)\n\n"
+        // One quiet line says what was read, and the answer replaces whatever was on screen: it is the same
+        // shape as a spoken answer (the part to say, the code in a panel, the complexity under it) and is kept
+        // in the answer history like every other answer. They used to stack under a time stamp.
+        let header = Self.screenHeader(captureSource: lastCaptureSource)
+        // Pressing a screen key is a deliberate act, so it is shown even if an older answer was being read.
+        if historyIndex != nil { historyIndex = nil; newerAnswerWaiting = false; newerAnswerCount = 0 }
+        aiAnswer = "\(header)\n\n"
         showThinking = true
         var accumulated = ""; var tokenCount = 0
         let epoch = answerEpoch   // ignore stale callbacks if the answer is replaced
+        _ = label
 
         NetworkClient.shared.streamScreenAnalysis(
             imageBase64: base64,
             resumeCtx: resumeFacts,
             provider: provider,
+            question: question,
             transcript: currentTranscript,
             jobContext: jobContext,
             captureSource: lastCaptureSource,
-            // When the picture went up while they were still speaking, the question carries
-            // its id and not two hundred kilobytes. Nil falls back to sending the bytes.
-            imageIds: usableImageIds(matching: Self.coarseSignature(imageData)),
+            imageIds: imageIds,
+            screenText: screenWords,
             onToken: { [weak self] token in
                 guard let self = self, self.answerEpoch == epoch else { return }
                 accumulated += token; tokenCount += 1
                 if tokenCount == 1 { self.showThinking = false }
-                if tokenCount % 3 == 0 || token.contains("\n") {
-                    self.aiAnswer = "\(label)   \(ts)\n\n\(accumulated)"
+                // Paint the first few tokens the moment they land, then settle into batches of three. What
+                // shows while it streams is cleaned with the same pipeline the finished answer gets, so
+                // headings and fences never show raw and then jump into place at the end.
+                if tokenCount <= 3 || tokenCount % 3 == 0 || token.contains("\n") {
+                    self.aiAnswer = "\(header)\n\n\(AnswerLayout.composeScreenAnswer(accumulated))"
                 }
             },
             onDone: { [weak self] in
                 guard let self = self, self.answerEpoch == epoch else { return }
-                // Screen answers use the ━━━-aware post-processor (keeps headers + code)
-                let final = NetworkClient.postProcessScreen(accumulated)
-                self.aiAnswer = "\(label)   \(ts)\n\n\(final)"
-                PromptBuilder.shared.addToHistory(question: "Analyze what is on my screen", answer: final)
-                self.appendToSessionLog(q: "[Screen Analysis]", a: final)
-                self.stopThinkingUI()
+                let final = AnswerLayout.composeScreenAnswer(accumulated)
+                guard !final.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    self.aiAnswer = "Screen AI returned no answer. Please try again."
+                    self.stopThinkingUI()
+                    return
+                }
+                self.finishScreenAnswer(header: header, answer: final)
                 dlog("Screen analysis complete — \(final.count) chars", tag: "SCREEN")
                 // The answer said part of the problem was off-screen. Watch for them to
                 // scroll and read the rest by ourselves, rather than telling them to scroll
                 // and then ignoring them for doing it.
-                if final.contains(Self.scrollMarker) {
-                    self.armScrollWatch(question: currentTranscript.isEmpty
-                                          ? "Analyze what is on my screen" : currentTranscript,
-                                        signature: Self.coarseSignature(imageData))
+                if Self.askedForMorePage(accumulated) {
+                    self.armScrollWatch(question: question, signature: signature)
+                    self.showListeningNotice("SCROLL TO SHOW THE REST OF THE QUESTION")
                 }
+                Task { [weak self] in await self?.fetchCredits() }
             },
             onError: { [weak self] err in
                 guard let self = self, self.answerEpoch == epoch else { return }
@@ -1878,6 +1942,62 @@ class MainViewModel {
                 self.stopThinkingUI()
             }
         )
+    }
+
+    /// Failing SILENTLY here is not acceptable: the user asked a question, watched nothing happen, and had no
+    /// way to know why. macOS shows its own permission prompt, but that can be dismissed or already declined,
+    /// in which case every future capture fails with no visible reason at all. Say what happened and what
+    /// fixes it, and turn Watch Mode off so it does not keep failing per question for the rest of the interview.
+    private func screenCaptureUnavailable() {
+        dlog("Screen capture returned nil — telling the user instead of failing silently", tag: "SCREEN")
+        let wasWatching = isWatchMode
+        if wasWatching { isWatchMode = false }
+        aiAnswer = """
+        ⚠ Screen Recording permission is needed to read your screen.
+
+        macOS blocked the capture, so there is nothing to answer from.\(wasWatching ? " Watch Screen has been switched off." : "")
+
+        To fix it: System Settings → Privacy & Security → Screen & System Audio Recording → enable Replysis, then quit and reopen the app.
+
+        Speech still works — ask by voice, or press SPACE.
+        """
+        stopThinkingUI()
+    }
+
+    /// The one quiet line above a screen answer: what was read.
+    static func screenHeader(captureSource: String) -> String {
+        let source = captureSource.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch source {
+        case "", "full screen": return "From your screen"
+        case "selected area": return "From your screen: the area you selected"
+        default: return "From your screen: " + (source.count > 70 ? String(source.prefix(70)) + "..." : source)
+        }
+    }
+
+    /// A finished screen answer: kept in the answer history like every other, so ⌃⌥← and ⌃⌥→ reach older ones.
+    private func finishScreenAnswer(header: String, answer: String) {
+        answerHistory.append(AnsweredTurn(question: header, answer: answer, at: Date()))
+        if answerHistory.count > 60 { answerHistory.removeFirst() }
+        aiAnswer = "\(header)\n\n\(answer)"
+        PromptBuilder.shared.addToHistory(question: "Analyze what is on my screen", answer: answer)
+        appendToSessionLog(q: "[Screen Analysis]", a: answer)
+        stopThinkingUI()
+    }
+
+    /// Phrases the answer uses when it cannot see all of the question. NEED: is what the prompt asks for; the
+    /// rest are what the model writes when it follows the spirit and not the letter.
+    static func askedForMorePage(_ answer: String) -> Bool {
+        let low = answer.lowercased()
+        if answer.contains(Self.scrollMarker) { return true }
+        if answer.range(of: #"(?m)^[ \t]*NEED[ \t]*:?"#, options: .regularExpression) != nil { return true }
+        return ["scroll down", "scroll up", "see the rest", "read the rest", "the constraints before",
+                "rest of the examples", "rest of the question"].contains { low.contains($0) }
+    }
+
+    /// The words on a capture, read off the main thread: a dense screen takes a second or so.
+    private static func readWords(from image: CGImage) async -> String? {
+        nonisolated(unsafe) let image = image
+        return await Task.detached(priority: .userInitiated) { ScreenOcr.read(image) }.value
     }
 
     /// What the last capture actually looked at, so the answer can name it. Vision answers
@@ -2010,11 +2130,19 @@ class MainViewModel {
     /// "2,332 Online" counter produces different bytes every two seconds, so comparing bytes
     /// re-sent a still screen constantly and doubled the token cost of every question. A
     /// coarse 16x16 sixteen-grey signature tells scrolling from a ticking counter.
+    ///
+    /// A picture goes ahead only on a line that has shown it can carry one in good time (see
+    /// UplinkGovernor). On any other line the screen's WORDS go instead.
     private func prepareScreenshotAhead() async {
         guard isWatchMode, session.isLoggedIn, !preparingScreenshot, screenPreparationAllowed else { return }
         guard Date().timeIntervalSince(lastMicLiveAt) <= Self.prepareShotsAfterMicWithin || isListening else { return }
         preparingScreenshot = true
         defer { preparingScreenshot = false }
+
+        let pictureLine = lineCarriesPictures()
+        if !pictureLine, uplink.mayUpload(now: Date()), !uplink.verified, uplink.needsProbe(now: Date()) {
+            runUplinkProbe()
+        }
 
         // Watching means the screen. Passed explicitly rather than through the shared
         // flag, so a timed capture can never flip an F8 window capture mid-flight.
@@ -2029,18 +2157,47 @@ class MainViewModel {
             preparedShotDataAt = Date()   // the picture on hand still shows what is there
             return
         }
-        guard let data = Self.encodeCapture(image, wholeScreen: true), !data.isEmpty else { return }
-        preparedShotData = data
-        preparedShotDataAt = Date()
-        guard let id = await NetworkClient.shared.cacheScreenshot(imageBase64: data.base64EncodedString()) else {
-            preparedImageId = nil; preparedSignature = []
-            return
+
+        let id: String
+        let heldBytes: Int
+        if pictureLine {
+            guard let data = Self.encodeCapture(image, wholeScreen: true), !data.isEmpty else { return }
+            preparedShotData = data
+            preparedShotDataAt = Date()
+            let sent = await NetworkClient.shared.cacheScreenshot(imageBase64: data.base64EncodedString())
+            if sent.droppedForQuestion {
+                dlog("SCREEN: screenshot upload dropped so the question has the connection", tag: "SCREEN")
+                preparedImageId = nil; preparedSignature = []
+                return
+            }
+            noteUplinkOutcome(succeeded: sent.id != nil, elapsed: sent.id != nil ? sent.elapsed : UplinkGovernor.uploadTimeout, imageBytes: data.count)
+            guard let got = sent.id else { preparedImageId = nil; preparedSignature = []; return }
+            id = got; heldBytes = data.count
+        } else {
+            // Words in place of a picture: nothing to encode and a few kilobytes to send.
+            preparedShotData = nil
+            let started = Date()
+            guard let words = await Self.readWords(from: image) else { return }
+            let sent = await NetworkClient.shared.cacheScreenText(words)
+            if sent.droppedForQuestion {
+                dlog("SCREEN: words upload dropped so the question has the connection", tag: "SCREEN")
+                preparedImageId = nil; preparedSignature = []
+                return
+            }
+            guard let got = sent.id else {
+                dlog("SCREEN: the words sent ahead were declined (HTTP \(sent.status))", tag: "SCREEN")
+                preparedImageId = nil; preparedSignature = []
+                return
+            }
+            dlog("SCREEN: words sent ahead in \(Int(Date().timeIntervalSince(started) * 1000))ms (\(words.count) characters); the question now carries an id", tag: "SCREEN")
+            id = got; heldBytes = words.utf8.count
         }
+
         preparedImageId = id
         preparedImageAt = Date()
         preparedSignature = signature
         // A moved page is a new view; the same view re-uploaded only replaces the newest.
-        let entry = (id: id, bytes: data.count, at: Date())
+        let entry = (id: id, bytes: heldBytes, at: Date())
         recentShots.removeAll { Date().timeIntervalSince($0.at) >= preparedImageLifetime }
         if recentShots.isEmpty || !Self.signaturesMatch(signature, lastKeptSignature) {
             lastKeptSignature = signature
@@ -2050,6 +2207,81 @@ class MainViewModel {
         }
         while recentShots.count > Self.maxShotsPerQuestion { recentShots.removeFirst() }
         dlog("SCREEN: uploaded ahead of the question (id \(id.prefix(8)), \(recentShots.count) view\(recentShots.count == 1 ? "" : "s") held)", tag: "SCREEN")
+    }
+
+    // ── Is this line fit to carry a picture? ──────────────────────────────────────────
+    //
+    // Found on a phone hotspot that uploads 20 to 50 KB a second: a screenshot of 300 to 500 KB sent
+    // ahead was still going when the first question was asked, and the answer waited behind it
+    // (measured 9.8 s to the first word, the server having answered in half a second). A throw-away
+    // 160 KB test upload decides first (UplinkGovernor); pictures go ahead only after it came back
+    // within 1.2 s, and any other line sends the screen's words, which are a few kilobytes.
+
+    private var uplink = UplinkGovernor()
+    private var uplinkProbeRunning = false
+
+    /// Whether this line has shown it can carry a picture in good time. When not, the screen's words go instead.
+    private func lineCarriesPictures() -> Bool {
+        #if DEBUG
+        // Developer builds only: REPLYSIS_LINE=slow sends words, fast sends pictures, whatever the line really is.
+        switch ProcessInfo.processInfo.environment["REPLYSIS_LINE"] {
+        case "slow": return false
+        case "fast": return true
+        default: break
+        }
+        #endif
+        return uplink.mayUpload(now: Date()) && uplink.verified
+    }
+
+    /// A line that has failed a test or lost a picture gets lighter screenshots until it proves itself again.
+    private func applyLineSpeedToCaptures() {
+        var slow = uplink.failureStreak > 0
+        #if DEBUG
+        switch ProcessInfo.processInfo.environment["REPLYSIS_LINE"] {
+        case "fast": slow = false
+        case "slow": slow = true
+        default: break
+        }
+        #endif
+        Self.setSlowLine(slow)
+    }
+
+    /// Run at launch (while Setup is on screen) and again whenever the line is in doubt, never with a picture.
+    func runUplinkProbe() {
+        guard !uplinkProbeRunning, session.isLoggedIn else { return }
+        uplinkProbeRunning = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.uplinkProbeRunning = false }
+            let result = await NetworkClient.shared.probeUplink()
+            if result.droppedForQuestion {
+                dlog("SCREEN: upload test dropped so the question has the connection", tag: "SCREEN")
+                return
+            }
+            let quiet = self.uplink.recordProbe(now: Date(), succeeded: result.reached, elapsed: result.elapsed)
+            self.applyLineSpeedToCaptures()
+            let ms = Int(result.elapsed * 1000)
+            dlog(quiet == 0
+                 ? "SCREEN: upload test: \(UplinkGovernor.probeBytes / 1024) KB in \(ms)ms; this line can carry screenshots ahead of a question"
+                 : "SCREEN: upload test: \(UplinkGovernor.probeBytes / 1024) KB took \(ms)ms (HTTP \(result.status)); the screen's words go ahead of questions instead of a picture, and the line is tested again in \(Int(quiet))s",
+                 tag: "SCREEN")
+        }
+    }
+
+    /// Tells the governor how a picture sent ahead went, and says so once when it backs off.
+    private func noteUplinkOutcome(succeeded: Bool, elapsed: TimeInterval, imageBytes: Int) {
+        let quiet = uplink.record(now: Date(), succeeded: succeeded, elapsed: elapsed)
+        applyLineSpeedToCaptures()
+        guard quiet > 0 else { return }
+        dlog("SCREEN: sending the screenshot ahead is too slow on this connection (\(imageBytes / 1024) KB, \(succeeded ? "took \(Int(elapsed))s" : "gave up")); words go ahead instead for \(Int(quiet))s", tag: "SCREEN")
+    }
+
+    /// The network changed (another Wi-Fi, a hotspot, a cable): what was learned about the old line no longer holds.
+    func networkChanged() {
+        uplink.reset()
+        applyLineSpeedToCaptures()
+        preparedImageId = nil; preparedSignature = []
+        if isWatchMode { runUplinkProbe() }
     }
 
     /// The prepared capture when it is fresh enough to stand in for a new one.
@@ -2103,21 +2335,58 @@ class MainViewModel {
     /// below the size a vision model reads reliably, which is the failure the larger capture
     /// was introduced to fix. Shrinking is the last resort, not the first.
     static func encodeWithinBudget(_ rep: NSBitmapImageRep, width: Int, height: Int) -> Data? {
-        if let png = rep.representation(using: .png, properties: [:]), png.count <= screenshotByteBudget {
+        let budget = uploadBudget
+        if let png = rep.representation(using: .png, properties: [:]), png.count <= budget {
             dlog("Screen capture: \(png.count) bytes PNG \(width)x\(height)", tag: "SCREEN")
             return png
         }
         for quality in [0.92, 0.85, 0.75, 0.6] {
             guard let jpg = rep.representation(using: .jpeg,
                                                properties: [.compressionFactor: quality]) else { continue }
-            if jpg.count <= screenshotByteBudget {
+            if jpg.count <= budget {
                 dlog("Screen capture: \(jpg.count) bytes JPEG q\(quality) \(width)x\(height) — PNG exceeded the budget", tag: "SCREEN")
                 return jpg
+            }
+        }
+        // Nothing left to give in quality. On a slow line the picture is made smaller, a step at a time, and
+        // never below what stays legible: four steps of 0.8 is about 40 percent of the pixels.
+        if budget < screenshotByteBudget, let source = rep.cgImage {
+            var w = width, h = height
+            for step in 1...4 {
+                w = max(1, Int(Double(w) * 0.8)); h = max(1, Int(Double(h) * 0.8))
+                guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { break }
+                ctx.interpolationQuality = .high
+                ctx.draw(source, in: CGRect(x: 0, y: 0, width: w, height: h))
+                guard let smaller = ctx.makeImage() else { break }
+                let smallRep = NSBitmapImageRep(cgImage: smaller)
+                for quality in [0.75, 0.6] {
+                    if let jpg = smallRep.representation(using: .jpeg, properties: [.compressionFactor: quality]),
+                       jpg.count <= budget {
+                        dlog("Screen capture: \(jpg.count) bytes JPEG q\(quality) \(w)x\(h) after \(step) reduction\(step == 1 ? "" : "s") for a slow line", tag: "SCREEN")
+                        return jpg
+                    }
+                }
             }
         }
         let last = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.5])
         dlog("Screen capture: \(last?.count ?? 0) bytes JPEG q0.5 \(width)x\(height) — still over budget, sending anyway", tag: "SCREEN")
         return last
+    }
+
+    /// The most bytes a screenshot may occupy right now: the normal budget, or the lighter one while the line is slow.
+    nonisolated(unsafe) static var uploadBudget = screenshotByteBudget
+    /// About four seconds on a line that carries 50 KB a second (Windows measured 66 KB/s on a hotspot).
+    static let slowLineByteBudget = 200 * 1024
+
+    /// Tells the capture whether the line is known to be slow, so it sends a lighter picture.
+    static func setSlowLine(_ slow: Bool) {
+        let wanted = slow ? slowLineByteBudget : screenshotByteBudget
+        guard uploadBudget != wanted else { return }
+        uploadBudget = wanted
+        dlog(slow ? "SCREEN: slow connection: screenshots are kept under \(slowLineByteBudget / 1024) KB so a screen question does not wait on the upload"
+                  : "SCREEN: connection is fast again: screenshots are sent at full quality", tag: "SCREEN")
     }
 
     static func coarseSignature(_ jpeg: Data) -> [UInt8] {
@@ -2196,8 +2465,8 @@ class MainViewModel {
         answerEpoch += 1
         capturingWholeScreen = true
         isScreenAnalyzing = true; isProcessing = true; startBusyWatchdog(); updateMicUI()
-        transcript = question
-        Task { await _doScreenCapture(label: "AFTER SCROLL") }
+        if !question.isEmpty { transcript = question }
+        Task { await _doScreenCapture(label: "AFTER SCROLL", question: question) }
     }
 
     /// The prepared ids, but ONLY if the newest still shows the screen being asked about.
@@ -2247,14 +2516,16 @@ class MainViewModel {
             // pixels where the question actually is. Falls back to the display when there is
             // no sensible foreground window (e.g. only the desktop is showing).
             let ownPID = ProcessInfo.processInfo.processIdentifier
-            let candidate = wholeScreenCapture ? nil : content.windows.first { w in
-                guard w.isOnScreen, w.frame.width > 200, w.frame.height > 200 else { return false }
-                guard let app = w.owningApplication else { return false }
-                // Never target ourselves — the user wants what is BEHIND this app.
-                guard app.processID != ownPID else { return false }
-                let layerIsNormal = w.windowLayer == 0          // excludes dock, menu bar, overlays
-                return layerIsNormal
-            }
+            // A dialog or sheet in front means the window it belongs to is what the question is about, so that
+            // window is read with the dialog drawn on top (see CaptureTarget). `windows` is front to back.
+            let choice: CaptureChoice? = wholeScreenCapture ? nil : CaptureTarget.choose(
+                windows: content.windows.filter { $0.isOnScreen }.compactMap { w in
+                    guard let app = w.owningApplication else { return nil }
+                    return CaptureWindow(id: w.windowID, pid: app.processID, frame: w.frame,
+                                         layer: w.windowLayer, title: w.title ?? "")
+                },
+                ownPID: ownPID)
+            let candidate = choice.flatMap { c in content.windows.first { $0.windowID == c.window.id } }
 
             let cgImage: CGImage
             let config = SCStreamConfiguration()
@@ -2263,13 +2534,35 @@ class MainViewModel {
             if let win = candidate {
                 config.width  = Int(win.frame.width)
                 config.height = Int(win.frame.height)
-                let filter = SCContentFilter(desktopIndependentWindow: win)
-                cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+                let dialogs = (choice?.dialogs ?? []).compactMap { d in content.windows.first { $0.windowID == d.id } }
+                if !dialogs.isEmpty,
+                   let display = content.displays.max(by: { a, b in
+                       let ia = a.frame.intersection(win.frame), ib = b.frame.intersection(win.frame)
+                       return (ia.isNull ? 0 : ia.width * ia.height) < (ib.isNull ? 0 : ib.width * ib.height)
+                   }) {
+                    // The window and the dialog in front of it, and nothing else, cropped to the window.
+                    let filter = SCContentFilter(display: display, including: [win] + dialogs)
+                    config.sourceRect = CGRect(x: win.frame.minX - display.frame.minX,
+                                               y: win.frame.minY - display.frame.minY,
+                                               width: win.frame.width, height: win.frame.height)
+                    cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+                    dlog("SCREEN: a dialog is in front; reading the window behind it with the dialog on top", tag: "SCREEN")
+                } else {
+                    let filter = SCContentFilter(desktopIndependentWindow: win)
+                    cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+                }
                 let owner = win.owningApplication?.applicationName ?? "window"
                 let title = win.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 lastCaptureSource = title.isEmpty ? owner : "\(owner): \(title)"
             } else {
-                guard let display = content.displays.first else { return nil }
+                // A selected area is cut from the display it was drawn on, which is not always the first one.
+                let selectedOn = pendingRegionRect.flatMap { r in
+                    content.displays.max(by: { a, b in
+                        let ia = CGDisplayBounds(a.displayID).intersection(r), ib = CGDisplayBounds(b.displayID).intersection(r)
+                        return (ia.isNull ? 0 : ia.width * ia.height) < (ib.isNull ? 0 : ib.width * ib.height)
+                    })
+                }
+                guard let display = selectedOn ?? content.displays.first else { return nil }
                 config.width  = display.width
                 config.height = display.height
                 // EXCLUDE our own app from the capture instead of hiding the window first.
@@ -3355,6 +3648,8 @@ class MainViewModel {
         // below called it a tail — and the question it was actually introducing was then
         // answered without it. Windows caps a tail at eight words for the same reason.
         let wordCount = n.split(whereSeparator: { $0 == " " }).count
+        // The second half of one sentence after a long pause ("... and what alerts you would set up?").
+        if AutoTurnDetector.isEmbeddedClause(n) { return wordCount <= 12 }
         let joiners = ["and ", "or ", "also ", "plus ", "but ", "as well", "along with",
                        "versus ", "vs ", "compared to", "what about", "how about", "then "]
         for j in joiners where n.hasPrefix(j) { return wordCount <= 12 }
@@ -4009,6 +4304,9 @@ class MainViewModel {
     /// timer, or anything that watches the screen: on the Setup page none of that may run.
     private func prepareSession() {
         resetAnswerHistory()
+        // Test the upload line now, while Setup is on screen, so the first question of the interview never
+        // finds a picture still going up.
+        if isWatchMode { runUplinkProbe() }
         // BUG FIX: refresh the global-hotkey gate now that we're logged in. Session restore
         // is async, so the gate was seeded as "signed out" at launch and Space wasn't being
         // handled globally until the user first interacted with the app (e.g. opened the
@@ -4212,7 +4510,7 @@ class MainViewModel {
     private let network = NetworkReachability.shared
 
     /// How long an engine may take to connect before it counts as stalled (Windows: 25s).
-    private static let connectPatience: TimeInterval = 25
+    static let connectPatience: TimeInterval = 25
 
     private func tickListeningProblem() {
         let now = Date()
@@ -4220,8 +4518,14 @@ class MainViewModel {
         lastProblemCheckAt = now
         guard session.isLoggedIn else { currentProblem = nil; return }
 
+        // The wait is counted from when the connection WENT AWAY, not from when the engine process started.
+        // Counting from the process start made any drop in a session older than 25 seconds "stalled" the
+        // instant it happened, so a banner about a work network or a VPN appeared over a transcript that
+        // was working and a second later reconnected (seen live on Windows: engine back online 1.4 s after
+        // being killed, banner on screen anyway).
+        if engine.isReady { lastEngineReadyAt = now }
         let stalled = !engine.isReady && engine.isRunning &&
-            (engine.startedAt.map { now.timeIntervalSince($0) > Self.connectPatience } ?? false)
+            ListeningProblems.connectionStalled(now: now, startedAt: engine.startedAt, lastReadyAt: lastEngineReadyAt, patience: Self.connectPatience)
         let problem = ListeningProblems.detect(
             engineOnline: engine.isReady,
             speechStatusCode: session.speechKeyLastStatus,
@@ -4234,13 +4538,27 @@ class MainViewModel {
             anotherDevice: engine.accountBusy,
             poorConnection: network.isUp && engine.connectionIsPoor)
         currentProblem = problem
-        if let problem { showProblemOnce(problem) } else { problemsShown.removeAll() }
+        if let problem {
+            showProblemOnce(problem)
+        } else {
+            problemsShown.removeAll()
+            // A notice that explains a speech problem comes down by itself the moment nothing is wrong any
+            // more. It used to sit above a transcript that was working, with nothing to take it down.
+            if let title = problemAlertTitle, alertTitle == title { dismissAlert() }
+            problemAlertTitle = nil
+        }
     }
+
+    private var lastEngineReadyAt = Date.distantPast
+    /// The title of the notice a speech problem put on screen, so it can be taken down when the problem ends.
+    private var problemAlertTitle: String?
+
 
     /// Said once per occurrence, in words. A problem that clears and comes back is said again.
     private func showProblemOnce(_ kind: ListeningProblems.Kind) {
         guard problemsShown.insert(kind).inserted else { return }
         let d = ListeningProblems.describe(kind, freeTrial: onFreeTrial)
+        problemAlertTitle = d.title
         dlog("Problem shown to the user: \(kind)", tag: "MODE")
         let action: (label: String, run: () -> Void)?
         switch d.step {
@@ -5240,20 +5558,23 @@ class MainViewModel {
     /// The half that is read aloud: strip markdown, and normalise dashes to commas so the
     /// candidate never has to voice an em-dash mid-sentence.
     private func cleanSpoken(_ text: String) -> String {
-        var s = text
-        s = s.replacingOccurrences(of: "```[a-zA-Z]*\n?", with: "", options: .regularExpression)
-        s = s.replacingOccurrences(of: "```", with: "")
-        // Was `\*{1,3}([^*\n]+)\*{1,3}` — any paired asterisk, which shredded every line
-        // of code that reached this path. See stripMarkdownPreservingCode.
-        s = PromptBuilder.stripMarkdownPreservingCode(s)
-        s = s.replacingOccurrences(of: " — ", with: ", ").replacingOccurrences(of: " – ", with: ", ")
-             .replacingOccurrences(of: "—", with: ", ").replacingOccurrences(of: "–", with: ", ")
-        for f in ["Certainly! ","Absolutely! ","Of course! ","Great question! ","Sure! ",
-                  "I'd be happy to ","I'm happy to ","Good question! "] {
-            s = s.replacingOccurrences(of: f, with: "")
+        // Code is never part of what is spoken, so it stays exactly as written (fences kept, which is what lets
+        // the answer show it in a panel of its own) and only the prose around it is cleaned.
+        let s = AnswerLayout.transformProseOnly(text) { prose in
+            // Was `\*{1,3}([^*\n]+)\*{1,3}` — any paired asterisk, which shredded every line of code that
+            // reached this path. See stripMarkdownPreservingCode.
+            var p = PromptBuilder.stripMarkdownPreservingCode(prose)
+            p = p.replacingOccurrences(of: " — ", with: ", ").replacingOccurrences(of: " – ", with: ", ")
+                 .replacingOccurrences(of: "—", with: ", ").replacingOccurrences(of: "–", with: ", ")
+            for f in ["Certainly! ","Absolutely! ","Of course! ","Great question! ","Sure! ",
+                      "I'd be happy to ","I'm happy to ","Good question! "] {
+                p = p.replacingOccurrences(of: f, with: "")
+            }
+            return p
         }
-        while s.contains("\n\n\n") { s = s.replacingOccurrences(of: "\n\n\n", with: "\n\n") }
-        return s.trimmingCharacters(in: .whitespacesAndNewlines)
+        var out = s
+        while out.contains("\n\n\n") { out = out.replacingOccurrences(of: "\n\n\n", with: "\n\n") }
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// The half that is only glanced at. Asked for "•" the model often emits "-" or "*"

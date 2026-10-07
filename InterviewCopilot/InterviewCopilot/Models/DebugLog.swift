@@ -12,8 +12,22 @@ class DebugLog {
     ///
     /// The cap used to be checked only when the handle was first opened, so a single long
     /// interview could grow the file without limit — the one session most worth capping.
-    private static let maxFileBytes = 2_000_000
+    ///
+    /// Ten megabytes, and when it is reached the file is set aside as the "previous" log and a fresh one
+    /// starts, so the lines from just before are never the ones lost (Windows 1.0.30, item 6: no size cap
+    /// there once let one session reach 1.6 GB). At most twice this on disk.
+    private static let maxFileBytes = 10_000_000
     private var bytesWritten = 0
+
+    static let previousLogFileURL: URL = logFileURL.deletingLastPathComponent()
+        .appendingPathComponent("InterviewCopilot-debug.previous.log")
+
+    /// Sets the full log aside as the previous one. Called on the I/O queue, or before it exists.
+    nonisolated private static func setAsidePreviousLog() {
+        let fm = FileManager.default
+        try? fm.removeItem(at: previousLogFileURL)
+        try? fm.moveItem(at: logFileURL, to: previousLogFileURL)
+    }
 
     /// In release, quoted spans are replaced by their length.
     ///
@@ -73,7 +87,8 @@ class DebugLog {
         // grown large (stale logs from many past sessions), not on every single launch.
         let existingSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? nil
         if let size = existingSize, size > Self.maxFileBytes {
-            try? "".write(to: url, atomically: true, encoding: .utf8)   // reset only when it's gotten big
+            Self.setAsidePreviousLog()   // only when it's gotten big, and the lines before it are kept
+            FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
         } else if !FileManager.default.fileExists(atPath: url.path) {
             // 0600 AT CREATION. The default umask left this world-readable, and the file
             // carries what was said in an interview — the session transcripts beside it are
@@ -109,6 +124,11 @@ class DebugLog {
         if mustRotate { bytesWritten = data.count }
         ioQueue.async {
             if mustRotate {
+                // Keep what was there as the previous log, then carry on in the same open handle from the top.
+                let fm = FileManager.default
+                try? fm.removeItem(at: Self.previousLogFileURL)
+                try? fm.copyItem(at: Self.logFileURL, to: Self.previousLogFileURL)
+                try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: Self.previousLogFileURL.path)
                 try? handle.truncate(atOffset: 0)
                 try? handle.seek(toOffset: 0)
             }
@@ -130,6 +150,8 @@ class DebugLog {
         }
         try? FileManager.default.setAttributes([.posixPermissions: 0o600],
                                                ofItemAtPath: Self.logFileURL.path)
+        // The previous log is the same interview content, so signing out takes it too.
+        try? FileManager.default.removeItem(at: Self.previousLogFileURL)
     }
 
     var text: String { entries.joined(separator: "\n") }

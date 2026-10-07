@@ -614,5 +614,335 @@ let json = Data(("{\"question\":\"What is a queue?\",\"messages\":[" + (0..<40).
 check(Gzip.compress(json).flatMap(gunzip) == json, "a realistic request body round-trips")
 check(Gzip.crc32(Data("123456789".utf8)) == 0xCBF43926, "CRC-32 matches the standard check value")
 
+
+// ── Windows 1.0.30 audit port: line test, screen words, answer closers, answer layout, joined questions ──
+do {
+    let t0 = Date(timeIntervalSince1970: 1_790_000_000)
+    var g = UplinkGovernor()
+    check(g.mayUpload(now: t0), "a fresh start may send ahead")
+    var quiet = g.record(now: t0, succeeded: true, elapsed: 0.7)
+    check(quiet == 0 && g.mayUpload(now: t0.addingTimeInterval(1)) && g.failureStreak == 0, "a quick upload is trusted and changes nothing")
+    quiet = g.record(now: t0, succeeded: false, elapsed: UplinkGovernor.uploadTimeout)
+    check(quiet == 60 && !g.mayUpload(now: t0.addingTimeInterval(59)) && g.mayUpload(now: t0.addingTimeInterval(60)), "one failed upload pauses sending ahead for a minute")
+    quiet = g.record(now: t0.addingTimeInterval(60), succeeded: false, elapsed: 8)
+    check(quiet == 120, "failing again doubles the pause")
+    quiet = g.record(now: t0.addingTimeInterval(200), succeeded: false, elapsed: 8)
+    check(quiet == 240, "and again")
+    for _ in 0..<12 { quiet = g.record(now: t0.addingTimeInterval(3600), succeeded: false, elapsed: 8) }
+    check(quiet == UplinkGovernor.maxBackoff, "the pause never grows past ten minutes")
+    quiet = g.record(now: t0.addingTimeInterval(7200), succeeded: true, elapsed: 0.9)
+    check(quiet == 0 && g.failureStreak == 0 && g.mayUpload(now: t0.addingTimeInterval(7200)), "one quick upload after a bad patch trusts the connection again")
+    var slow = UplinkGovernor()
+    check(slow.record(now: t0, succeeded: true, elapsed: 9) > 0, "an upload that works but takes nine seconds counts as slow")
+    var fresh = UplinkGovernor()
+    check(!fresh.verified && fresh.needsProbe(now: t0), "a new start tests the line first")
+    quiet = fresh.recordProbe(now: t0, succeeded: true, elapsed: 0.18)
+    check(quiet == 0 && fresh.verified && !fresh.needsProbe(now: t0) && fresh.mayUpload(now: t0), "a test back within 1.2 s trusts the line")
+    var hotspot = UplinkGovernor()
+    quiet = hotspot.recordProbe(now: t0, succeeded: true, elapsed: 2.0)
+    check(quiet == 60 && !hotspot.verified && !hotspot.needsProbe(now: t0.addingTimeInterval(59)) && hotspot.needsProbe(now: t0.addingTimeInterval(60)), "the hotspot fails the test and is tested again a minute later")
+    check(hotspot.recordProbe(now: t0.addingTimeInterval(60), succeeded: false, elapsed: UplinkGovernor.probeTimeout) == 120, "a test that does not finish doubles the pause")
+    check(UplinkGovernor.probeBytes * 3 < 500 * 1024, "a test costs a third of a picture or less")
+    var wobble = UplinkGovernor()
+    wobble.recordProbe(now: t0, succeeded: true, elapsed: 0.15)
+    wobble.record(now: t0.addingTimeInterval(300), succeeded: false, elapsed: 8)
+    check(!wobble.verified && !wobble.needsProbe(now: t0.addingTimeInterval(300)) && wobble.needsProbe(now: t0.addingTimeInterval(360)), "after a lost picture the line is in doubt and gets a small test when the pause ends")
+    wobble.recordProbe(now: t0.addingTimeInterval(360), succeeded: true, elapsed: 0.2)
+    check(wobble.verified && wobble.failureStreak == 0, "one good test brings pictures back")
+    wobble.reset()
+    check(!wobble.verified && wobble.needsProbe(now: t0), "a changed network is tested again from scratch")
+    _ = slow; _ = fresh
+}
+
+do {
+    func W(_ t: String, _ x: Double, _ y: Double) -> OcrWord { OcrWord(text: t, x: x, y: y, w: Double(t.count) * 8, h: 16) }
+    var single: [OcrWord] = []
+    for i in 0..<8 { single.append(W("Second", 60, 20 * Double(i))); single.append(W("first\(i)", 0, 20 * Double(i))) }
+    let singleLines = OcrLayout.toText(single).components(separatedBy: "\n")
+    check(singleLines.count == 8 && singleLines[0].hasPrefix("first0 ") && singleLines[0].hasSuffix("Second") && singleLines[7].hasPrefix("first7"), "screen words: one column reads in rows, left to right")
+    var two: [OcrWord] = []
+    for i in 0..<10 {
+        two.append(W("left\(i)row", 0, 20 * Double(i))); two.append(W("more", 80, 20 * Double(i))); two.append(W("right\(i)", 400, 20 * Double(i)))
+    }
+    let spread = OcrLayout.toText(two)
+    let parts = spread.components(separatedBy: "\n\n")
+    check(parts.count == 2 && parts[0].components(separatedBy: "\n").allSatisfy { $0.hasPrefix("left") } && parts[1].components(separatedBy: "\n").allSatisfy { $0.hasPrefix("right") }, "screen words: two panels side by side, the left read down, then the right")
+    var withTitle = two
+    withTitle.append(W("Practice - live session title that runs across", 100, -40))
+    let titled = OcrLayout.toText(withTitle).components(separatedBy: "\n\n")
+    check(titled.count >= 2 && (titled.last ?? "").components(separatedBy: "\n").last?.hasPrefix("right9") == true, "screen words: a title bar across the gutter does not merge the panels")
+    var code: [OcrWord] = []
+    let xs: [Double] = [0, 32, 64, 32, 0, 0]
+    for (i, x) in xs.enumerated() { code.append(W("stmt\(i)", x, 20 * Double(i))) }
+    let codeLines = OcrLayout.toText(code).components(separatedBy: "\n")
+    check(codeLines[0] == "stmt0" && codeLines[1] == "    stmt1" && codeLines[2] == "        stmt2" && codeLines[4] == "stmt4", "screen words: indentation is kept, four characters per 32 pixels")
+    var gapped: [OcrWord] = []
+    for i in 0..<6 { gapped.append(W("abc", 0, 20 * Double(i))); gapped.append(W("def", 40, 20 * Double(i))) }
+    check(OcrLayout.toText(gapped).components(separatedBy: "\n")[0] == "abc  def", "screen words: a gap of two characters is two spaces")
+    check(OcrLayout.toText([]) == "", "screen words: nothing found reads as nothing")
+    check(OcrLayout.toText([OcrWord(text: "   ", x: 0, y: 0, w: 10, h: 10)]) == "", "screen words: blank words are not text")
+    let longText = Array(repeating: "a line of the page that is fairly long", count: 1000).joined(separator: "\n")
+    let fitted = OcrLayout.fit(longText)
+    check(fitted.count <= OcrLayout.maxChars && fitted.hasSuffix("long"), "screen words: a very long page is cut at the end of a line")
+    check(OcrLayout.fit("short") == "short", "screen words: a short page is untouched")
+}
+
+do {
+    let body = "I moved the nightly jobs to a queue. That cut the failures by half. "
+    let base = "I moved the nightly jobs to a queue. That cut the failures by half."
+    func strip(_ s: String, _ allow: Bool = false) -> String { AnswerClosers.stripTrailingOffer(s, allowClosingQuestion: allow) }
+    check(strip(body + "Let me know if you'd like more detail.") == base, "closers: \"Let me know if you'd like more detail\" comes off")
+    check(strip(body + "Let me know if you\u{2019}d like more detail.") == base, "closers: the same with a typographic apostrophe")
+    check(strip(body + "Would you like me to go deeper?") == base, "closers: \"Would you like me to go deeper?\" comes off")
+    check(strip(body + "Does that make sense?") == base, "closers: \"Does that make sense?\" comes off")
+    check(strip(body + "Happy to elaborate on any of that. Feel free to ask.") == base, "closers: two offers in a row both come off")
+    check(strip(body + "I can also walk you through the design if that helps.") == base, "closers: \"I can also walk you through\" comes off")
+    check(strip(body + "What does your team use today?") == base, "closers: a question put to the interviewer comes off")
+    check(strip(body + "What does your team use today?", true).hasSuffix("What does your team use today?"), "closers: it stays when the interviewer just invited questions")
+    check(!strip(body + "Happy to go deeper.", true).contains("Happy to"), "closers: an offer to say more comes off even then")
+    check(strip(body + "Let me know if") == base, "closers: half a closing offer is hidden while it is still arriving")
+    check(strip("If you want fast lookups, use a hash map. If you need ordering, use a tree.") == "If you want fast lookups, use a hash map. If you need ordering, use a tree.", "closers: advice that starts with \"if you want\" is content")
+    check(strip("Would you like me to go deeper?") == "Would you like me to go deeper?", "closers: the only sentence of an answer is never removed")
+    check(strip(body + "I used it daily at Contoso.") == base + " I used it daily at Contoso.", "closers: an ordinary last sentence stays")
+    let mid = "A mutex guards one resource. A semaphore allows N holders. Is a semaphore always better? No, a mutex is simpler and safer."
+    check(strip(mid) == mid, "closers: a question in the middle of an answer stays")
+    let code = "Here is the loop.\n\n```python\nfor x in items:\n    print(x)\n```"
+    check(strip(code) == code, "closers: an answer ending in code is left exactly as it is")
+    let openCode = "Here is the loop.\n\n```python\nfor x in items:\n    # Does that make sense?"
+    check(strip(openCode) == openCode, "closers: code that is still arriving is never touched")
+    check(strip(code + "\n\nThat is O(n). Let me know if you want the recursive version.") == code + "\n\nThat is O(n).", "closers: an offer after the code comes off, the code does not move")
+    let cleaned = strip(body + "Does that help?\n\nMORE TO SAY\n\u{2022} I added retries with backoff.\n\u{2022} Let me know if you want more.")
+    check(!cleaned.contains("Does that help") && !cleaned.contains("Let me know") && cleaned.contains("MORE TO SAY") && cleaned.contains("I added retries with backoff."), "closers: offers come off the spoken part and the last bullet, the real bullets stay")
+    check(PromptBuilder.isCandidateQuestionInvitation("Do you have any questions for me?"), "closers: an invitation for questions is recognised")
+}
+
+do {
+    let spoken = "I'll use a hash map to store each number's index as we iterate; this gives O(n) time and O(n) extra space."
+    check(AnswerLayout.complexityOf(spoken + "\n\nTime O(n), space O(n).") == "Time O(n), space O(n).", "complexity: the spoken sentence stays and only the complexity line goes to the bar")
+    check(AnswerLayout.complexityOf(spoken) == nil, "complexity: a sentence that merely mentions O(n) is not a complexity line")
+    check(AnswerLayout.complexityOf("Time: O(n)\nSpace: O(1)") == "Time: O(n)   Space: O(1)", "complexity: time and space on two lines both reach the bar")
+    check(AnswerLayout.complexityOf("- Time complexity O(n log n)") == "Time complexity O(n log n)", "complexity: a bullet is trimmed")
+    check(AnswerLayout.complexityOf("O(n^2) time, O(1) space") == "O(n^2) time, O(1) space", "complexity: a line that opens with the figure counts")
+    check(AnswerLayout.complexityOf("Sorting first costs O(n log n), then one pass.") == nil, "complexity: advice that contains a figure is not a complexity line")
+    check(AnswerLayout.rewriteNeedHeading("Let me scroll down and read the constraints before I answer.\n\nNEED\nThe constraints section.") == "Let me scroll down and read the constraints before I answer.\n\nStill need to see: The constraints section.", "NEED on its own line becomes \"Still need to see: ...\"")
+    check(AnswerLayout.rewriteNeedHeading("Let me scroll.\nNEED: the constraints and the third example.") == "Let me scroll.\nStill need to see: the constraints and the third example.", "NEED: on one line reads the same way")
+    check(AnswerLayout.rewriteNeedHeading("I need to see how you handled it.") == "I need to see how you handled it.", "the word need inside a sentence is left alone")
+
+    // The three places a screen answer is shown.
+    let raw = "SAY THIS\nI would use a hash map, one pass.\n\nDETAIL\n```python\ndef two_sum(nums, target):\n    seen = {}\n    return seen\n```\n\nTime: O(n)\nSpace: O(n)\n\nSCREEN NOTES\nLeetCode, Two Sum, Python3 editor"
+    let shown = AnswerLayout.composeScreenAnswer(raw)
+    check(!shown.contains("SCREEN NOTES") && !shown.contains("Python3 editor"), "screen answer: the notes for the next question are never shown")
+    let p = AnswerLayout.split(shown)
+    check(p.prose == "I would use a hash map, one pass.", "screen answer: the part to say is alone in the answer text (\(p.prose))")
+    check(p.code.hasPrefix("def two_sum(nums, target):") && p.code.contains("    seen = {}") && p.language == "python", "screen answer: the code is in its own panel, indentation kept")
+    check(p.complexity == "Time: O(n)   Space: O(n)", "screen answer: the complexity is under the code")
+    let streaming = AnswerLayout.split(AnswerLayout.composeScreenAnswer("SAY THIS\nI would use a hash map.\n\nDETAIL\n```py"))
+    check(streaming.prose == "I would use a hash map." && streaming.code.isEmpty, "screen answer: a half-written fence never shows while it streams")
+    let streaming2 = AnswerLayout.split(AnswerLayout.composeScreenAnswer("SAY THIS\nI would use a hash map.\n\nDETAIL\n```python\ndef f(x):\n    ret"))
+    check(streaming2.code == "def f(x):\n    ret" && streaming2.prose == "I would use a hash map.", "screen answer: code arriving shows in the panel and not in the text")
+    let star = AnswerLayout.composeScreenAnswer("SAY THIS\nFix the pointer.\n\nDETAIL\n```cpp\nListNode* insertionSortList(ListNode* head) {\n    int area = w * h * depth;\n}\n```")
+    check(star.contains("ListNode* insertionSortList(ListNode* head)") && star.contains("w * h * depth"), "screen answer: asterisks and underscores in code are never touched")
+    let dashes = AnswerLayout.composeScreenAnswer("SAY THIS\nIt is a hash map \u{2014} one pass, then done.")
+    check(!dashes.contains("\u{2014}") && dashes.contains("hash map, one pass"), "screen answer: long dashes become plain punctuation")
+    let handBack = AnswerLayout.composeScreenAnswer("SAY THIS\nUse a hash map. One pass. Let me know if you want the code.")
+    check(!handBack.contains("Let me know"), "screen answer: a hand-back is filtered while it streams too")
+    let design = AnswerLayout.composeScreenAnswer("SAY THIS\nI would shard by user id. Which region carries most of the traffic?")
+    check(design.hasSuffix("Which region carries most of the traffic?"), "screen answer: a clarifying question may end a design answer")
+    let need = AnswerLayout.split("SAY THIS\nLet me scroll down and read the constraints before I answer.\n\nNEED\nThe constraints section.")
+    check(need.prose == "Let me scroll down and read the constraints before I answer.\n\nStill need to see: The constraints section.", "screen answer: NEED reads as a sentence")
+    let noCode = AnswerLayout.split("SAY THIS\nThe sentence itself says O(n) time and O(1) space here.")
+    check(noCode.complexity == nil && noCode.prose.contains("O(n) time"), "screen answer: with no code, the spoken sentence keeps its complexity")
+    let bare = AnswerLayout.composeScreenAnswer("APPROACH\nTwo pointers.\nSOLUTION\ndef f(a_list, *args):\n    return a_list * 2\nCOMPLEXITY\nTime: O(n)   Space: O(1)\nSAY THIS\nTwo pointers, one pass.")
+    check(bare.contains("def f(a_list, *args):") && bare.contains("a_list * 2"), "screen answer: unfenced code under a SOLUTION heading is protected too")
+}
+
+do {
+    check(AutoTurnDetector.isFollowUpAddition("and what alerts you would set up?"), "joined: \"and what alerts you would set up\" is the second half of one question")
+    check(AutoTurnDetector.isFollowUpAddition("how you would roll it back"), "joined: \"how you would roll it back\" is a clause, not a question")
+    check(AutoTurnDetector.isEmbeddedClause("and what alerts you would set up?"), "joined: subject before verb is an embedded clause")
+    check(!AutoTurnDetector.isEmbeddedClause("and what alerts would you set up?"), "joined: verb before subject is a new question")
+    check(!AutoTurnDetector.isFollowUpAddition("and what is a memory leak?"), "joined: \"and what is a memory leak\" is still a new question")
+    check(!AutoTurnDetector.isEmbeddedClause("what is Python?"), "joined: a plain new question is not a clause")
+}
+
+
+do {
+    func win(_ id: UInt32, _ pid: Int32, _ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat, layer: Int = 0, title: String = "Window") -> CaptureWindow {
+        CaptureWindow(id: id, pid: pid, frame: CGRect(x: x, y: y, width: w, height: h), layer: layer, title: title)
+    }
+    let us: Int32 = 100
+    // An ordinary front window is read as it is.
+    let plain = CaptureTarget.choose(windows: [win(1, 200, 0, 0, 1200, 800, title: "LeetCode")], ownPID: us)
+    check(plain?.window.id == 1 && plain?.dialogs.isEmpty == true, "capture: the window in front is read")
+    // Our own window is never what a question is about.
+    let own = CaptureTarget.choose(windows: [win(9, us, 0, 0, 900, 600), win(1, 200, 0, 0, 1200, 800)], ownPID: us)
+    check(own?.window.id == 1, "capture: our own window is skipped")
+    // A sheet over a window reads the window with the sheet on top.
+    let sheet = CaptureTarget.choose(windows: [win(5, 200, 300, 200, 500, 250, title: ""), win(1, 200, 0, 0, 1200, 800, title: "Editor")], ownPID: us)
+    check(sheet?.window.id == 1 && sheet?.dialogs.map(\.id) == [5], "capture: a sheet in front means the window behind it is read, sheet included")
+    // An app modal alert is read through to the window it belongs to, even if it sits away from it.
+    let alert = CaptureTarget.choose(windows: [win(6, 200, 1300, 100, 260, 160, layer: 8, title: "Save changes?"), win(1, 200, 0, 0, 1200, 800, title: "Editor")], ownPID: us)
+    check(alert?.window.id == 1 && alert?.dialogs.map(\.id) == [6], "capture: an alert in front means the window behind it is read")
+    // A second ordinary window of the same app is not a dialog: it has a title.
+    let second = CaptureTarget.choose(windows: [win(2, 200, 100, 100, 600, 500, title: "Two Sum"), win(1, 200, 0, 0, 1200, 800, title: "Inbox")], ownPID: us)
+    check(second?.window.id == 2 && second?.dialogs.isEmpty == true, "capture: another window of the same app is read as itself")
+    // A small panel of another app with nothing behind it from the same app is skipped for the window behind.
+    let tool = CaptureTarget.choose(windows: [win(7, 300, 0, 0, 180, 120, title: "Palette"), win(1, 200, 0, 0, 1200, 800)], ownPID: us)
+    check(tool?.window.id == 1, "capture: a small panel with no owner is skipped for what is behind it")
+    check(CaptureTarget.choose(windows: [], ownPID: us) == nil, "capture: nothing on screen gives no target")
+    // Windows of another app behind a dialog never become its parent.
+    let foreign = CaptureTarget.choose(windows: [win(5, 200, 300, 200, 500, 250, title: ""), win(1, 999, 0, 0, 1200, 800)], ownPID: us)
+    check(foreign == nil || foreign?.window.id != 1, "capture: a dialog's parent is a window of the same app")
+}
+
+do {
+    var tries = 0
+    let copied = await Clipboard.copy("let x = 1", attempts: 5, pause: 0.01) { _ in tries += 1; return tries >= 3 }
+    check(copied && tries == 3, "clipboard: a copy that fails twice because another program holds it succeeds on the third try")
+    var calls = 0
+    let failed = await Clipboard.copy("x", attempts: 4, pause: 0.01) { _ in calls += 1; return false }
+    check(!failed && calls == 4, "clipboard: a copy that never opens reports failure after its attempts")
+    var once = 0
+    let quick = await Clipboard.copy("x", attempts: 10, pause: 0.01) { _ in once += 1; return true }
+    check(quick && once == 1, "clipboard: a copy that works at once tries once")
+}
+
+
+do {
+    let t = Date(timeIntervalSince1970: 1_790_000_000)
+    func stalled(_ started: Date?, _ ready: Date) -> Bool { ListeningProblems.connectionStalled(now: t, startedAt: started, lastReadyAt: ready, patience: 25) }
+    check(!stalled(t - 600, t - 1), "stalled clock: a drop in a ten minute old session is not stalled the instant it happens")
+    check(!stalled(t - 600, t - 20), "stalled clock: twenty seconds after the drop is still within patience")
+    check(stalled(t - 600, t - 30), "stalled clock: thirty seconds after the drop it is stalled")
+    check(!stalled(t - 10, .distantPast), "stalled clock: a fresh engine ten seconds old is still connecting")
+    check(stalled(t - 40, .distantPast), "stalled clock: a fresh engine forty seconds old that never connected is stalled")
+    check(!stalled(t - 5, t - 300), "stalled clock: a restarted engine is counted from its restart")
+    check(!stalled(nil, .distantPast), "stalled clock: nothing known is not stalled")
+}
+
+
+// ── Google sign-in's local listener: ignore what is not this attempt's answer, tested over real sockets ──
+do {
+    func classifyCode(_ line: String, _ state: String = "XYZ") -> String? {
+        if case .answer(let cb) = OAuthLoopback.classify(line + "\r\nHost: 127.0.0.1\r\n\r\n", expectedState: state) { return cb.code ?? "error" }
+        return nil
+    }
+    check(classifyCode("GET /?code=abc&state=XYZ HTTP/1.1") == "abc", "oauth: a request with the code and this attempt's state is the answer")
+    check(classifyCode("GET /?code=a%3Db&state=XYZ HTTP/1.1") == "a=b", "oauth: an encoded value is decoded")
+    check(classifyCode("GET /?error=access_denied&state=XYZ HTTP/1.1") == "error", "oauth: a refusal carrying the state is the answer")
+    check(classifyCode("GET /favicon.ico HTTP/1.1") == nil, "oauth: an icon request is ignored")
+    check(classifyCode("GET /?code=abc&state=OTHER HTTP/1.1") == nil, "oauth: another attempt's state is ignored")
+    check(classifyCode("GET /?code=abc HTTP/1.1") == nil, "oauth: no state is ignored")
+    check(classifyCode("garbage") == nil, "oauth: garbage is ignored")
+
+    func connectTo(_ port: Int) -> Int32 {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET); addr.sin_port = in_port_t(port).bigEndian
+        addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        _ = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        return fd
+    }
+    func write(_ fd: Int32, _ text: String) { text.withCString { _ = send(fd, $0, strlen($0), 0) } }
+    func readAll(_ fd: Int32) -> String {
+        var tv = timeval(tv_sec: 2, tv_usec: 0); setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        var out = [UInt8](); var buf = [UInt8](repeating: 0, count: 1024)
+        while true { let n = recv(fd, &buf, buf.count, 0); if n <= 0 { break }; out.append(contentsOf: buf.prefix(n)) }
+        return String(decoding: out, as: UTF8.self)
+    }
+
+    // A silent spare connection, then an icon request, then the real answer.
+    if let bound = OAuthLoopback.bind() {
+        var found: OAuthLoopback.Callback?
+        let waiter = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            found = OAuthLoopback.waitForCallback(serverFd: bound.fd, expectedState: "XYZ", timeout: 8, successHTML: "OK PAGE", failHTML: "FAIL PAGE", readTimeout: 2)
+            waiter.signal()
+        }
+        let spare = connectTo(bound.port)                                  // opens and says nothing
+        let icon = connectTo(bound.port); write(icon, "GET /favicon.ico HTTP/1.1\r\nHost: x\r\n\r\n")
+        let iconReply = readAll(icon); Darwin.close(icon)
+        let real = connectTo(bound.port); write(real, "GET /?code=thecode&state=XYZ HTTP/1.1\r\nHost: x\r\n\r\n")
+        let realReply = readAll(real); Darwin.close(real)
+        let done = waiter.wait(timeout: .now() + 6)
+        Darwin.close(spare)
+        check(done == .success && found?.code == "thecode" && found?.stateValid == true, "oauth: sign-in survives a silent spare connection and an icon request")
+        check(iconReply.hasPrefix("HTTP/1.1 404"), "oauth: the icon request is answered with a plain 404, not as the sign-in")
+        check(realReply.contains("OK PAGE"), "oauth: the real answer shows the success page")
+    } else { check(false, "oauth: a local port could be opened") }
+
+    // Another attempt's answer never ends this one.
+    if let bound = OAuthLoopback.bind() {
+        let started = Date()
+        let stray = DispatchQueue.global()
+        stray.async { let c = connectTo(bound.port); write(c, "GET /?code=old&state=OLD HTTP/1.1\r\n\r\n"); _ = readAll(c); Darwin.close(c) }
+        let got = OAuthLoopback.waitForCallback(serverFd: bound.fd, expectedState: "XYZ", timeout: 1.2, successHTML: "", failHTML: "", readTimeout: 1)
+        check(got == nil && Date().timeIntervalSince(started) >= 1.0, "oauth: another attempt's answer is ignored and this attempt times out cleanly")
+    }
+}
+
+
+do {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("closing-\(UUID().uuidString)")
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let t = Date(timeIntervalSince1970: 1_790_000_000)
+    check(!ClosingMarker.isClosing(pid: 42, in: dir, now: t), "closing: nothing marked means a second copy is a duplicate")
+    ClosingMarker.markClosing(in: dir, pid: 42, now: t)
+    check(ClosingMarker.isClosing(pid: 42, in: dir, now: t.addingTimeInterval(3)), "closing: a copy that just marked itself is closing")
+    check(!ClosingMarker.isClosing(pid: 43, in: dir, now: t.addingTimeInterval(3)), "closing: another process is not the one that marked itself")
+    check(!ClosingMarker.isClosing(pid: 42, in: dir, now: t.addingTimeInterval(120)), "closing: an old marker means nothing")
+    var polls = 0
+    check(ClosingMarker.waitForExit(pid: 42, timeout: 2, poll: 0.01) { _ in polls += 1; return polls < 4 }, "closing: the new copy waits for the old one to go, then starts")
+    check(!ClosingMarker.waitForExit(pid: 42, timeout: 0.1, poll: 0.01) { _ in true }, "closing: a copy that never goes is handed over to after the wait")
+    ClosingMarker.clear(in: dir)
+    check(!ClosingMarker.isClosing(pid: 42, in: dir, now: t), "closing: cleared at launch")
+    try? FileManager.default.removeItem(at: dir)
+}
+
+
+// ── Reading the screen's words with Vision: render a two panel page (statement left, editor right) and read it back ──
+do {
+    let width = 1600, height = 900
+    let cs = CGColorSpaceCreateDeviceRGB()
+    let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: cs, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+    ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1)); ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    let gc = NSGraphicsContext(cgContext: ctx, flipped: true)
+    NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = gc
+    ctx.translateBy(x: 0, y: CGFloat(height)); ctx.scaleBy(x: 1, y: -1)
+    let prose: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 22), .foregroundColor: NSColor.black]
+    let mono: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedSystemFont(ofSize: 22, weight: .regular), .foregroundColor: NSColor.black]
+    let left = ["Two Sum", "Given an array of integers nums and an integer target,", "return indices of the two numbers such that they add up", "to target. You may assume that each input has exactly", "one solution, and you may not use the same element twice.", "Example 1: nums = [2,7,11,15], target = 9, output [0,1]", "Constraints: 2 <= nums.length <= 10000"]
+    for (i, line) in left.enumerated() { line.draw(at: NSPoint(x: 40, y: 60 + CGFloat(i) * 44), withAttributes: prose) }
+    let right = ["def twoSum(self, nums, target):", "    seen = {}", "    for i, n in enumerate(nums):", "        if target - n in seen:", "            return [seen[target - n], i]", "        seen[n] = i"]
+    for (i, line) in right.enumerated() { line.draw(at: NSPoint(x: 900, y: 60 + CGFloat(i) * 44), withAttributes: mono) }
+    NSGraphicsContext.restoreGraphicsState()
+    let page = ctx.makeImage()!
+    let started = Date()
+    let words = ScreenOcr.read(page)
+    let took = Date().timeIntervalSince(started)
+    print("OCR took \(String(format: "%.2f", took))s; read:\n\(words ?? "(nothing)")")
+    check(words != nil, "ocr: a rendered page gives words")
+    let text = words ?? ""
+    check(text.contains("Two Sum") && text.contains("integer target"), "ocr: the problem statement is read")
+    check(text.contains("def twoSum") && text.contains("seen"), "ocr: the code is read")
+    // Panel order: the whole statement before the code, not interleaved row by row.
+    if let sIdx = text.range(of: "exactly")?.lowerBound, let cIdx = text.range(of: "def twoSum")?.lowerBound {
+        check(sIdx < cIdx, "ocr: the statement panel is read before the code panel")
+    } else { check(false, "ocr: both panels present") }
+    func indent(of fragment: String) -> Int? {
+        text.components(separatedBy: "\n").first { $0.contains(fragment) }.map { $0.prefix { $0 == " " }.count }
+    }
+    if let a = indent(of: "for i, n in enumerate"), let b = indent(of: "if target - n"), let c = indent(of: "return [seen") {
+        check(a < b && b < c, "ocr: the code's indentation steps are kept (\(a), \(b), \(c))")
+    } else { check(false, "ocr: the body lines of the code are all read") }
+    check(took < 8, "ocr: reads a 1600 by 900 page in under eight seconds")
+    check(OcrLayout.fit(text).count == text.count, "ocr: a page of this size is sent whole")
+    var blank: CGImage? = nil
+    if let c2 = CGContext(data: nil, width: 600, height: 400, bitsPerComponent: 8, bytesPerRow: 0, space: cs, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) {
+        c2.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1)); c2.fill(CGRect(x: 0, y: 0, width: 600, height: 400)); blank = c2.makeImage()
+    }
+    check(blank.flatMap { ScreenOcr.read($0) } == nil, "ocr: a blank page is not something to answer from")
+}
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

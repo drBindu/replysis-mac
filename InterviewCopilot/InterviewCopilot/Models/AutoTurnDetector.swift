@@ -898,6 +898,8 @@ struct AutoTurnDetector {
     static func isFollowUpAddition(_ addition: String) -> Bool {
         let a = addition.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         guard !a.isEmpty else { return false }
+        // A clause still inside the sentence before it, after a long pause in the middle.
+        if isEmbeddedClause(a) { return true }
         // Not a standalone question ASKED AS ONE: a tail, a fragment, or a statement such
         // as "With an example from Spring" — judged in interrogative form, because in an
         // interview a statement is usually the rest of the sentence, not a new question.
@@ -905,6 +907,28 @@ struct AutoTurnDetector {
         // A question that refers back to the thing just asked about.
         return a.range(of: #"\b(it|that|this|them|those|these|there|the same|instead|again)\b"#,
                        options: .regularExpression) != nil
+    }
+
+    /// A tail that is the second half of one sentence rather than a question of its own.
+    ///
+    /// "Can you tell me how you would monitor a service ... [2 s] ... and what alerts you would set up?":
+    /// the second half opens with "and what", which reads as a new question (that rule exists so "And what
+    /// is Python?" is not glued onto "What is Java?"). The grammar tells them apart: a new question puts the
+    /// verb before its subject ("what alerts WOULD YOU set up?"), and only a clause inside a sentence can put
+    /// the subject first ("what alerts YOU WOULD set up"). Same rule as the Windows AsksItsOwnQuestion.
+    private static let embeddedClause = try! NSRegularExpression(
+        pattern: #"^(?:what|how|why|when|where|which|who)\s+"# +
+                 #"(?:(?!(?:am|is|are|was|were|do|does|did|have|has|had|can|could|will|would|shall|should|may|might|must)\b)[a-z'\-]+\s+){0,3}"# +
+                 #"(?:(?:i|you|we|they|he|she)(?:'d|'ll|'ve|'re)?|your team|the team|your company|the company)\s+[a-z']{2,}"#)
+
+    static func isEmbeddedClause(_ tail: String) -> Bool {
+        var q = tail.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\u{2019}", with: "'")
+        q = q.replacingOccurrences(of: #"^(?:and|or|but|also|plus|so|then|okay|ok)\s+"#, with: "", options: .regularExpression)
+        guard !q.isEmpty else { return false }
+        // Pointing back means the subject is the question before, which merges anyway.
+        if q.range(of: #"\b(it|that|this|them|those|these|there|the same)\b"#, options: .regularExpression) != nil { return false }
+        return embeddedClause.firstMatch(in: q, range: NSRange(q.startIndex..., in: q)) != nil
     }
 
     static func isLikelyCompleteQuestion(_ question: String, requireInterrogative: Bool = false) -> Bool {
