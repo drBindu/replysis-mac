@@ -184,6 +184,13 @@ class UserSession {
             let who = DeveloperOverrides.testUser ?? "scenario"
             email = "\(who)@example.test"; name = who.capitalized; userId = "\(who)-user"
             idToken = "stale-token"; refreshToken = "refresh-1"
+            if mode == "aged" {
+                // A saved sign-in whose token is older than an hour, as on a real launch the next morning: the
+                // refresh has to happen before the window can open (and may fail if the network is not up yet).
+                tokenSavedAt = Date(timeIntervalSinceNow: -3 * 3600)
+                dlog("Session: TEST session (aged) against the fake server: the token is old and must be refreshed first", tag: "AUTH")
+                return false
+            }
             tokenSavedAt = mode == "expired" ? Date(timeIntervalSinceNow: -3 * 3600) : Date()
             isLoggedIn = true
             dlog("Session: TEST session (\(mode)) against the fake server", tag: "AUTH")
@@ -256,6 +263,20 @@ class UserSession {
 
     private var refreshTask: Task<Bool, Never>?
 
+    /// True when the last refresh was REFUSED by the sign-in service (see RecoveryPolicy.sessionRefused), as
+    /// opposed to failing because the network was not there.
+    private(set) var lastRefreshRefused = false
+
+    /// Opens the app signed in with the saved sign-in when the refresh could not be done for lack of a connection:
+    /// every request refreshes first and retries on a 401, so it catches up by itself when the network returns.
+    /// Only for a saved sign-in that was NOT refused.
+    func continueOfflineWithSavedSession() -> Bool {
+        guard !refreshToken.isEmpty, !lastRefreshRefused, !(email.isEmpty && userId.isEmpty) else { return false }
+        isLoggedIn = true
+        dlog("Session: the sign-in could not be refreshed (no connection yet); opening with the saved sign-in, which refreshes itself when the network is back", tag: "AUTH")
+        return true
+    }
+
     func tryRefreshAsync() async -> Bool {
         // Coalesce concurrent callers — only one network round-trip per refresh cycle.
         // Without this, two simultaneous Space presses each consume the refresh token,
@@ -278,10 +299,15 @@ class UserSession {
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
             do {
-                let (data, _) = try await URLSession.shared.data(for: req)
+                let (data, response) = try await URLSession.shared.data(for: req)
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let newToken = obj["id_token"] as? String,
-                      let newRefresh = obj["refresh_token"] as? String else { return false }
+                      let newRefresh = obj["refresh_token"] as? String else {
+                    self.lastRefreshRefused = RecoveryPolicy.sessionRefused(byStatus: status)
+                    return false
+                }
+                self.lastRefreshRefused = false
                 self.idToken = newToken
                 self.refreshToken = newRefresh
                 self.tokenSavedAt = Date()
@@ -289,6 +315,7 @@ class UserSession {
                 self.saveToDisk()
                 return true
             } catch {
+                self.lastRefreshRefused = false   // no connection is not a refusal
                 return false
             }
         }
@@ -573,7 +600,8 @@ class UserSession {
                 if statusCode == 402 {
                     // The server names which limit was hit; anything else is the answers.
                     let body = (String(data: data, encoding: .utf8) ?? "").lowercased()
-                    let listeningLimit = body.contains("audio-limit") || body.contains("listening time")
+                    // The server's own text now says "this month's limit"; "audio-limit" is its reason code.
+                    let listeningLimit = body.contains("audio-limit") || body.contains("listening time") || body.contains("month's limit")
                     speechOutOfListeningTime = listeningLimit
                     speechOutOfAnswers = !listeningLimit
                     dlog(listeningLimit ? "SM key: 402, fair use limit on listening reached" : "SM key: 402, no answers left", tag: "AUTH")

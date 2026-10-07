@@ -41,7 +41,20 @@ enum DeveloperOverrides {
     /// Only while a fake server is in use.
     static let dataFolder: String? =
         backendURL == nil ? nil : ProcessInfo.processInfo.environment["REPLYSIS_DATA_DIR"]
+    /// REPLYSIS_SCREEN_IMAGE=/tmp/screen.png  -> every screen read uses this picture instead of the real screen,
+    /// so the screen path can be tested end to end with no permission prompt and no window. Only while a fake
+    /// server is in use. REPLYSIS_SCREEN_TARGET names the window it stands for.
+    static let screenImagePath: String? =
+        backendURL == nil ? nil : ProcessInfo.processInfo.environment["REPLYSIS_SCREEN_IMAGE"]
+    /// REPLYSIS_HEADLESS=1  -> the window never shows (invisible, far off screen). Only against a fake server.
+    static let headless: Bool =
+        backendURL != nil && ProcessInfo.processInfo.environment["REPLYSIS_HEADLESS"] == "1"
+    static let screenTarget: String =
+        ProcessInfo.processInfo.environment["REPLYSIS_SCREEN_TARGET"] ?? "Google Chrome: Two Sum - LeetCode"
     #else
+    static let screenImagePath: String? = nil
+    static let headless = false
+    static let screenTarget = ""
     static let flowScript: String? = nil
     static let backendURL: String? = nil
     static let tokenURL: String? = nil

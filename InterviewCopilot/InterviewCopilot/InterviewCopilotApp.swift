@@ -75,7 +75,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // it for a duplicate. The env var set on that specific launch tells us which case
         // this is.
         let isIntentionalRelaunch = ProcessInfo.processInfo.environment[MainViewModel.relaunchEnvKey] == "1"
-        if !isIntentionalRelaunch, let bundleID = Bundle.main.bundleIdentifier {
+        // A test copy run against a fake server (developer builds only) must never hand over to, or quit in favour
+        // of, the real copy someone is using, so it skips the guard.
+        if !isIntentionalRelaunch, !DeveloperOverrides.active, let bundleID = Bundle.main.bundleIdentifier {
             let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
                 .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
             let marked = SpeechmaticsEngine.shared.appDataFolder
@@ -282,7 +284,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.contentView = hosting
         panel.contentView?.clearLayerBackgrounds()
 
-        panel.makeKeyAndOrderFront(nil)
+        if DeveloperOverrides.headless {
+            // A test copy (developer builds, fake server, REPLYSIS_HEADLESS=1) never shows itself: it sits invisible and
+            // far off screen, so a test run cannot put a window in front of whoever is using this Mac.
+            panel.alphaValue = 0
+            panel.ignoresMouseEvents = true
+            panel.setFrameOrigin(NSPoint(x: -15_000, y: -15_000))
+            panel.orderBack(nil)
+        } else {
+            panel.makeKeyAndOrderFront(nil)
+        }
 
 
         // Measure again AFTER SwiftUI has attached and laid out. The line above records the

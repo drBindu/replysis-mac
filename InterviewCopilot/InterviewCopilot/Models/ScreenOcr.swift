@@ -11,7 +11,7 @@ import Vision
 ///
 /// A fast line keeps sending the picture, which carries what text cannot (a diagram, colour, a chart). This is
 /// for the lines where the picture is the thing that makes the answer late.
-enum ScreenOcr {
+nonisolated enum ScreenOcr {
     /// Longest side read. A 5K display is 14 megapixels; reading it whole costs seconds and buys nothing, since
     /// body text is already well above what the reader needs at this size.
     private static let maxSide = 3200

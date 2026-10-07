@@ -19,7 +19,7 @@ class DebugLog {
     private static let maxFileBytes = 10_000_000
     private var bytesWritten = 0
 
-    static let previousLogFileURL: URL = logFileURL.deletingLastPathComponent()
+    nonisolated static let previousLogFileURL: URL = logFileURL.deletingLastPathComponent()
         .appendingPathComponent("InterviewCopilot-debug.previous.log")
 
     /// Sets the full log aside as the previous one. Called on the I/O queue, or before it exists.
@@ -68,7 +68,7 @@ class DebugLog {
     // Persistent log file at ~/Library/Logs/InterviewCopilot-debug.log so problems
     // (hotkey registration, mic/engine, permissions) can be diagnosed after the fact
     // without Xcode — the single most useful thing for supporting real users.
-    static let logFileURL: URL = {
+    nonisolated static let logFileURL: URL = {
         let logs = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
             .appendingPathComponent("Logs")
         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)

@@ -227,7 +227,7 @@ class NetworkClient {
     ///   • connection drop *mid-answer* → keep the partial answer instead of wiping it
     ///     with a scary error (a truncated answer beats a blank one in front of an interviewer).
     /// Set when the server refuses a gzip body; every later request in this run goes plain.
-    private static var gzipRefused = false
+    nonisolated(unsafe) private static var gzipRefused = false
 
     /// How long to wait before the one silent retry of a failed answer request.
     private static let answerRetryDelay: UInt64 = 250_000_000
@@ -236,18 +236,32 @@ class NetworkClient {
                            onToken: @escaping (String) -> Void,
                            onDone: @escaping () -> Void,
                            onError: @escaping (String) -> Void) {
-        Task {
+        let enteredAt = Date()
+        // Read now, on the main thread where this is called, so the first attempt never waits for the main thread
+        // to be free. A retry after a refresh reads it again.
+        let firstToken = UserSession.shared.idToken
+        // Also read here, not inside the task: measured, reading it from the background task waited 800 ms for the
+        // main thread to be free. This module's default isolation is the main actor, and a static that is
+        // isolated there is not free to read from another thread.
+        let deviceId = DeviceIdentity.current
+        let session = self.session
+        let onMain: @Sendable (@escaping @Sendable @MainActor () -> Void) -> Void = { block in Task { @MainActor in block() } }
+        // OFF the main thread. This used to be a plain Task, which runs on the main actor, so the request did not
+        // leave until whatever the window was doing had finished: measured 600 ms between asking for the request
+        // and the request starting, right when the answer is being waited for. Only delivering tokens to the
+        // screen needs the main thread.
+        Task.detached(priority: .userInitiated) {
             var yielded = false
             // Compress once. If the server ever refuses a compressed body (400, 415 or 501), the
             // request is resent PLAIN, once, and stays plain for the rest of this run.
             let gzipped = (Self.gzipRefused || body == nil) ? nil : body.flatMap { Gzip.compress($0) }
-            if let body, let gzipped {
-                dlog("NET: request body \(body.count / 1024)KB → \(max(1, gzipped.count / 1024))KB with gzip", tag: "NET")
-            }
+            // Nothing is logged before the request has left. Even a log line costs a hop to the main thread, and
+            // measured, that hop alone held the request back by over half a second while the window was busy.
+            let sizeNote: String? = body.flatMap { b in gzipped.map { "request body \(b.count / 1024)KB to \(max(1, $0.count / 1024))KB with gzip" } }
             var sendPlain = gzipped == nil
             for attempt in 0..<2 {
                 // Read the freshest token each attempt (it may have just been refreshed).
-                let token = await MainActor.run { UserSession.shared.idToken }
+                let token = attempt == 0 ? firstToken : await MainActor.run { UserSession.shared.idToken }
                 var req = URLRequest(url: url)
                 req.httpMethod = "POST"
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -256,7 +270,7 @@ class NetworkClient {
                 // Sent alongside the token unconditionally — the backend only consults this
                 // for the free-trial-without-sign-in path, and ignores it whenever the
                 // Authorization header carries a valid Firebase token (see IdentityResolverService).
-                req.setValue(DeviceIdentity.current, forHTTPHeaderField: "X-Device-Id")
+                req.setValue(deviceId, forHTTPHeaderField: "X-Device-Id")
                 if sendPlain || gzipped == nil {
                     req.httpBody = body
                 } else {
@@ -264,7 +278,9 @@ class NetworkClient {
                     req.setValue("gzip", forHTTPHeaderField: "Content-Encoding")
                 }
                 do {
+                    let sentAt = Date()
                     let (bytes, response) = try await session.bytes(for: req, delegate: AnswerTimingDelegate())
+                    let headersAt = Date().timeIntervalSince(sentAt)
                     if let http = response as? HTTPURLResponse {
                         // A server that cannot read a compressed body says so BEFORE it charges
                         // anything, so resending the same question plain is safe.
@@ -315,8 +331,18 @@ class NetworkClient {
                             continue
                         }
                         if tok == "[DONE]" { break }
+                        if !yielded {
+                            dlog(String(format: "NET: first token %.2fs after the request was sent (response headers at %.2fs); it left %.0fms after it was asked for",
+                                        Date().timeIntervalSince(sentAt), headersAt, sentAt.timeIntervalSince(enteredAt) * 1000)
+                                 + (sizeNote.map { "; " + $0 } ?? ""), tag: "NET")
+                        }
+                        let firstOne = !yielded
+                        let handedAt = Date()
                         yielded = true
-                        onMain { onToken(tok) }
+                        onMain {
+                            if firstOne { dlog(String(format: "NET: first token waited %.0fms for the main thread", Date().timeIntervalSince(handedAt) * 1000), tag: "NET") }
+                            onToken(tok)
+                        }
                     }
                     // Only call onDone when the server actually streamed tokens — an
                     // empty response (yielded=false) means the server sent nothing and
@@ -338,7 +364,7 @@ class NetworkClient {
 
     /// How long to wait, from Retry-After, as whole seconds. Zero when the server did not
     /// say — the caller must then not invent a number.
-    static func retryAfterSeconds(_ http: HTTPURLResponse) -> Int {
+    nonisolated static func retryAfterSeconds(_ http: HTTPURLResponse) -> Int {
         guard let raw = http.value(forHTTPHeaderField: "Retry-After")?
             .trimmingCharacters(in: .whitespaces), !raw.isEmpty else { return 0 }
         if let secs = Int(raw) { return max(0, secs) }
@@ -409,7 +435,7 @@ class NetworkClient {
     /// arrived, so the stream looked empty, was silently retried into the same limit, and
     /// surfaced as "Server returned empty response. Please try again." — the useless
     /// wording this whole area exists to remove.
-    private static func errorFromSSELine(_ line: String) -> String? {
+    nonisolated private static func errorFromSSELine(_ line: String) -> String? {
         guard line.hasPrefix("data:") else { return nil }
         var json = String(line.dropFirst(5))
         if json.hasPrefix(" ") { json.removeFirst() }
@@ -422,7 +448,7 @@ class NetworkClient {
     /// The words of an error the server put in a stream: a plain string, or an object carrying a
     /// `message`. An error sent as an object used to fall through as "no tokens", and was retried into the
     /// same fault and shown as an empty reply.
-    static func serverErrorText(_ value: Any?) -> String? {
+    nonisolated static func serverErrorText(_ value: Any?) -> String? {
         if let text = value as? String { return text.isEmpty ? nil : text }
         if let obj = value as? [String: Any] {
             for key in ["message", "error", "detail", "description"] {
@@ -433,7 +459,7 @@ class NetworkClient {
         return nil
     }
 
-    private static func tokenFromSSELine(_ line: String) -> String? {
+    nonisolated private static func tokenFromSSELine(_ line: String) -> String? {
         guard line.hasPrefix("data:") else { return nil }
         var json = String(line.dropFirst(5))
         if json.hasPrefix(" ") { json.removeFirst() }
@@ -642,7 +668,7 @@ class NetworkClient {
 
     // MARK: - Helpers
 
-    private static func parseSSEToken(_ json: String) -> String? {
+    nonisolated private static func parseSSEToken(_ json: String) -> String? {
         guard let data = json.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         // An error is reported by errorFromSSELine before this is reached; it is never answer text.

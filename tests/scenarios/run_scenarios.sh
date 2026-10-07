@@ -22,7 +22,7 @@ for sc in "${SCENARIOS[@]}"; do
   MOCK=$!; sleep 1
   M=$(wc -l < "$LOG")
   REPLYSIS_BACKEND_URL="http://127.0.0.1:$port" REPLYSIS_TOKEN_URL="http://127.0.0.1:$port/token" \
-    REPLYSIS_TEST_SESSION=$session "$BIN" >/dev/null 2>&1 &
+    REPLYSIS_TEST_SESSION=$session REPLYSIS_HEADLESS=1 "$BIN" >/dev/null 2>&1 &
   sleep "$WAIT"
   echo "=== $sc"
   echo "  server saw:"; grep REQ /tmp/mock-$sc.out | sed 's/^/    /' | uniq -c | head -8

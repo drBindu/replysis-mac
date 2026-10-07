@@ -18,7 +18,7 @@ enum Clipboard {
         return false
     }
 
-    static func systemWrite(_ text: String) -> Bool {
+    nonisolated static func systemWrite(_ text: String) -> Bool {
         let board = NSPasteboard.general
         board.clearContents()
         return board.setString(text, forType: .string)

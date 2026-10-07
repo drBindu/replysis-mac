@@ -1850,6 +1850,8 @@ struct AnswerContentView: View {
     /// True while the answer is still arriving: the same layout as the finished answer, without the syntax
     /// colouring, so nothing jumps when it ends.
     var streaming = false
+    /// For a picture of the answer taken by the developer flow: a scroll view cannot be drawn into one.
+    var flat = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1869,9 +1871,9 @@ struct AnswerContentView: View {
                         .foregroundColor(Color(hex: "#94A3B8").opacity(0.85))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 case .code(let code):
-                    CodeBlockView(code: code, fontSize: codeFontSize, plain: streaming)
+                    CodeBlockView(code: code, fontSize: codeFontSize, plain: streaming, flat: flat)
                 case .panel(let code, let language):
-                    CodeBlockView(code: code, language: language, fontSize: codeFontSize, plain: streaming)
+                    CodeBlockView(code: code, language: language, fontSize: codeFontSize, plain: streaming, flat: flat)
                 case .complexity(let line):
                     Text(line)
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
@@ -1894,6 +1896,14 @@ struct AnswerContentView: View {
     }
 }
 
+struct MaybeHorizontalScroll<Content: View>: View {
+    let flat: Bool
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        if flat { content() } else { ScrollView(.horizontal, showsIndicators: true) { content() } }
+    }
+}
+
 struct CodeBlockView: View {
     let code: String
     /// What the fence called it ("python"), or empty to guess from the code.
@@ -1901,6 +1911,7 @@ struct CodeBlockView: View {
     var fontSize: CGFloat = 13
     /// Colouring is skipped while the code is still arriving.
     var plain = false
+    var flat = false
 
     private enum CopyState { case ready, copied, failed }
     @State private var copy = CopyState.ready
@@ -1941,7 +1952,7 @@ struct CodeBlockView: View {
             // so with the scrollbar hidden there was nothing on screen saying more code
             // existed. In a coding round the line that runs off is as likely as not the one
             // with the return statement in it.
-            ScrollView(.horizontal, showsIndicators: true) {
+            MaybeHorizontalScroll(flat: flat) {
                 Group {
                     if plain {
                         Text(code)

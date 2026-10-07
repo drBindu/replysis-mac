@@ -42,12 +42,23 @@ enum ListeningProblems {
         case .noAnswers:
             let m = PlanFacts.outOfAnswers(freeTrial: false)
             return Description(label: "NO ANSWERS", title: m.title, body: m.body, step: .moreAnswers)
+        // The server keeps a hidden ceiling on how much a month can be used, so that an open microphone cannot cost
+        // money. Customers are told about ANSWERS and nothing else (owner, 2026-10-05: "we removed that completely"),
+        // so these two never say listening, minutes, hours or fair use; a test fails if they ever do. On the free
+        // trial it is simply the end of the trial, with the same way forward as running out of answers; on a paid
+        // plan it is a monthly limit that renews. Same words as Windows ListeningProblems.NoListeningTime.
+        case .noListeningTime where freeTrial:
+            return Description(
+                label: "TRIAL OVER",
+                title: "Your free trial is over",
+                body: "That is what Replysis does in a real interview. Pro gives you a whole month, enough for many interviews, and you can cancel any time. Or add a few answers with no subscription.",
+                step: .moreAnswers)
         case .noListeningTime:
             return Description(
-                label: "LISTENING LIMIT",
-                title: "Monthly listening limit reached",
-                body: "You have reached this month's fair use limit for listening. You still have answers left, but nothing more can be heard until the limit renews or you upgrade. Reading your screen with F8 still works.",
-                step: .seePlans)
+                label: "MONTHLY LIMIT",
+                title: "You have reached this month's limit",
+                body: "This month's allowance is used up, so Replysis cannot hear more until it renews on the first of next month. Your answers are safe, and reading your screen with F8 still works. If you need more, contact support.",
+                step: .none)
         case .signInExpired:
             return Description(
                 label: "SIGN IN",

@@ -103,7 +103,7 @@ enum PlanFacts {
         }
         let cost = "Each answer or screen read uses one answer."
         return listeningLimitReached
-            ? "\(line)\n\(cost)\nYou have reached this month's fair use limit for listening, so nothing more can be heard until it renews. Click for plans."
+            ? "\(line)\n\(cost)\nYou have reached this month's limit, so nothing more can be heard until it renews. Click for plans."
             : "\(line)\n\(cost)\nClick for plans."
     }
 

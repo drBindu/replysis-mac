@@ -35,4 +35,17 @@ enum RecoveryPolicy {
         default:   return 60
         }
     }
+
+    /// Whether the sign-in service REFUSED the saved sign-in (revoked, disabled), as opposed to not being
+    /// reachable. Only a refusal may send someone to the sign-in screen. The id token lasts an hour, so opening the
+    /// app later than that needs a refresh before the window can open, and a refresh that failed because the Wi-Fi
+    /// was not up yet, or the hotspot was still joining, used to throw people to "Welcome back" every time they
+    /// opened the laptop (Windows 1.0.30, `UserSession.ClassifyRefreshStatus`).
+    /// 400, 401 and 403 refuse. No answer at all (status 0), a timeout, a 429 and any 5xx do not.
+    static func sessionRefused(byStatus status: Int) -> Bool {
+        [400, 401, 403].contains(status)
+    }
+
+    /// How long to wait before asking once more when the refresh could not be done at launch.
+    static let launchRefreshRetryDelay: TimeInterval = 3
 }

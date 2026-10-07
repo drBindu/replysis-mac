@@ -485,6 +485,16 @@ class MainViewModel {
             var restored = session.tryLoadFromDisk()
             if !restored && !session.refreshToken.isEmpty {
                 restored = await session.tryRefreshAsync()
+                // A refresh that failed because the connection is not there yet (the Wi-Fi after waking the
+                // laptop, a hotspot still joining) must never ask for a new sign-in: only the sign-in service
+                // REFUSING the saved sign-in does. Ask once more shortly, then open with the saved sign-in.
+                if !restored && !session.lastRefreshRefused {
+                    try? await Task.sleep(nanoseconds: UInt64(RecoveryPolicy.launchRefreshRetryDelay * 1_000_000_000))
+                    restored = await session.tryRefreshAsync()
+                }
+                if !restored && !session.lastRefreshRefused {
+                    restored = session.continueOfflineWithSavedSession()
+                }
             }
             // BUG-4 FIX: check showProfile BEFORE awaiting to close the TOCTOU window where
             // the user taps "Continue As" while this Task is in flight and both paths reach
@@ -1189,7 +1199,7 @@ class MainViewModel {
         // Armed by default, so a brand-new user without Screen Recording must not walk into
         // a permission wall on their first question: without it we answer from what was
         // said, which is the answer the app gave before screen answers existed.
-        let canReadScreen = CGPreflightScreenCaptureAccess()
+        let canReadScreen = CGPreflightScreenCaptureAccess() || DeveloperOverrides.screenImagePath != nil
         let namesTheScreen = PromptBuilder.refersToScreen(q)
 
         // ASKED ABOUT THE SCREEN, AND WE CANNOT SEE IT.
@@ -1523,11 +1533,22 @@ class MainViewModel {
         case "snap-sessions":     snapshot(AnyView(SessionsView(preview: Self.demoSessions)), name: "sessions")
         case "snap-sessions-short": snapshot(AnyView(SessionsView(preview: Array(Self.demoSessions.reversed()))), name: "sessions-short")
         case "snap-sessions-empty": snapshot(AnyView(SessionsView(preview: [])), name: "sessions-empty")
+        case "snap-answer":       snapshot(AnyView(AnswerContentView(raw: aiAnswer, flat: true)
+                                                    .padding(22).frame(width: 760, alignment: .topLeading)
+                                                    .background(Color(hex: "#0b1220"))), name: "answer")
         case "snap-main":         snapshot(AnyView(MainView().frame(width: 1040, height: 1000, alignment: .top)), name: "main")
         case "snap-main-narrow":  snapshot(AnyView(MainView().frame(width: 840, height: 1100, alignment: .top)), name: "main-narrow")
         case "snap-login":        snapshot(AnyView(LoginView(flat: true)), name: "login")
         case "snap-login-create": snapshot(AnyView(LoginView(creating: true, flat: true)), name: "login-create")
         case "sessions": sessionsOpen = true
+        case "screen":    runScreenAnalysis(wholeScreen: true)
+        case "screenwin": runScreenAnalysis(wholeScreen: false)
+        case "micseen":   lastMicLiveAt = Date()
+        case "probe":     uplink.reset(); applyLineSpeedToCaptures(); runUplinkProbe()
+        case "linestate": dlog("FLOWSTATE: line verified=\(uplink.verified) failures=\(uplink.failureStreak) carriesPictures=\(lineCarriesPictures()) budget=\(Self.uploadBudget / 1024)KB prepared=\(preparedImageId != nil)", tag: "FLOW")
+        case "wake":      reconnectAfterWake()
+        // The system's own wake announcement, so the observer wired to it is the thing under test.
+        case "wakenote":  NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
         case "busy":   engine.debugSimulateConcurrencyRefusal()
         case "weak":   engine.debugSimulateConnectionTrouble()
         // The buttons on the answer bar and the history controls, pressed by name.
@@ -1813,6 +1834,7 @@ class MainViewModel {
     }
 
     private func _doScreenCapture(label: String, question: String = "") async {
+        let askedAt = Date()
         // A question about the screen takes the line: a picture still going up stops, so the question has the connection.
         NetworkClient.shared.dropEarlyUploadForQuestion()
 
@@ -1835,7 +1857,8 @@ class MainViewModel {
 
         if wordsLine {
             guard let image = await captureCGImage() else { screenCaptureUnavailable(); return }
-            signature = Self.coarseSignature(image: image)
+            nonisolated(unsafe) let shot = image
+            signature = await Self.offMain { Self.coarseSignature(image: shot) }
             // The words sent ahead, when the screen has not moved since they were read.
             imageIds = usableImageIds(matching: signature)
             if imageIds == nil {
@@ -1845,7 +1868,8 @@ class MainViewModel {
                     dlog("SCREEN: slow line, read \(words.count) characters from the screen in \(Int(Date().timeIntervalSince(started) * 1000))ms and sending those instead of a picture", tag: "SCREEN")
                 } else {
                     dlog("SCREEN: slow line, but no readable words on the screen; sending the picture", tag: "SCREEN")
-                    imageData = Self.encodeCapture(image, wholeScreen: capturingWholeScreen)
+                    let whole = capturingWholeScreen
+                    imageData = await Self.offMain { Self.encodeCapture(shot, wholeScreen: whole) }
                 }
             }
         } else {
@@ -1856,7 +1880,7 @@ class MainViewModel {
                 imageData = await captureScreen()
             }
             guard let data = imageData, !data.isEmpty else { screenCaptureUnavailable(); return }
-            signature = Self.coarseSignature(data)
+            signature = await Self.offMain { Self.coarseSignature(data) }
             // When the picture went up while they were still speaking, the question carries its id and
             // not two hundred kilobytes. Nil falls back to sending the bytes.
             imageIds = usableImageIds(matching: signature)
@@ -1880,6 +1904,7 @@ class MainViewModel {
         let epoch = answerEpoch   // ignore stale callbacks if the answer is replaced
         _ = label
 
+        let requestAt = Date()
         NetworkClient.shared.streamScreenAnalysis(
             imageBase64: base64,
             resumeCtx: resumeFacts,
@@ -1893,7 +1918,11 @@ class MainViewModel {
             onToken: { [weak self] token in
                 guard let self = self, self.answerEpoch == epoch else { return }
                 accumulated += token; tokenCount += 1
-                if tokenCount == 1 { self.showThinking = false }
+                if tokenCount == 1 {
+                    self.showThinking = false
+                    dlog(String(format: "LATENCY: screen first word %.2fs after the question reached the screen path (%.2fs of it before the request, %.2fs waiting on the server)",
+                                Date().timeIntervalSince(askedAt), requestAt.timeIntervalSince(askedAt), Date().timeIntervalSince(requestAt)), tag: "PERF")
+                }
                 // Paint the first few tokens the moment they land, then settle into batches of three. What
                 // shows while it streams is cleaned with the same pipeline the finished answer gets, so
                 // headings and fences never show raw and then jump into place at the end.
@@ -1994,6 +2023,13 @@ class MainViewModel {
                 "rest of the examples", "rest of the question"].contains { low.contains($0) }
     }
 
+    /// Runs heavy picture work (the 16 by 16 signature, scaling and encoding a capture) off the main thread. Done
+    /// on the main thread it blocked everything queued behind it, the question's own request included: measured
+    /// 625 ms between asking for the request and the request starting.
+    nonisolated static func offMain<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+        await Task.detached(priority: .userInitiated, operation: work).value
+    }
+
     /// The words on a capture, read off the main thread: a dense screen takes a second or so.
     private static func readWords(from image: CGImage) async -> String? {
         nonisolated(unsafe) let image = image
@@ -2009,7 +2045,7 @@ class MainViewModel {
     /// 4K screenshot is read at ~1365x768 no matter what we send — the extra pixels are
     /// decoded, thrown away, and billed for. Capping here sends a fraction of the bytes for
     /// a byte-identical result on the model side.
-    private static let visionMaxEdge: Double = 1536
+    private nonisolated static let visionMaxEdge: Double = 1536
     /// A single window arrives close to its real size and reads well at a 768 short edge.
     /// A whole monitor does not: 1920x1080 shrunk to fit 768 becomes 1365x768, and body
     /// text on a coding site goes from about fourteen pixels to ten — the edge of what a
@@ -2020,8 +2056,8 @@ class MainViewModel {
     /// has not seen before — which is every question that matters.
     ///
     /// A 1080p monitor is now sent at its own resolution rather than three quarters of it.
-    private static let visionMaxShortEdgeFullScreen: Double = 1100
-    private static let visionMaxLongEdgeFullScreen: Double  = 2560
+    private nonisolated static let visionMaxShortEdgeFullScreen: Double = 1100
+    private nonisolated static let visionMaxLongEdgeFullScreen: Double  = 2560
 
     /// The area chosen with F7, in CoreGraphics screen coordinates, for the next capture.
     private var pendingRegionRect: CGRect?
@@ -2151,7 +2187,8 @@ class MainViewModel {
         // 2.3-13.4% of a core with screen answers on and 1.1-2.2% with them off, and the
         // difference is almost entirely scaling and encoding a screen nobody changed.
         // The 16x16 signature comes straight off the capture, so a still screen stops here.
-        let signature = Self.coarseSignature(image: image)
+        nonisolated(unsafe) let shot = image
+        let signature = await Self.offMain { Self.coarseSignature(image: shot) }
         if Self.signaturesMatch(signature, preparedSignature),
            Date().timeIntervalSince(preparedImageAt) < preparedImageLifetime, preparedImageId != nil {
             preparedShotDataAt = Date()   // the picture on hand still shows what is there
@@ -2161,7 +2198,7 @@ class MainViewModel {
         let id: String
         let heldBytes: Int
         if pictureLine {
-            guard let data = Self.encodeCapture(image, wholeScreen: true), !data.isEmpty else { return }
+            guard let data = await Self.offMain({ Self.encodeCapture(shot, wholeScreen: true) }), !data.isEmpty else { return }
             preparedShotData = data
             preparedShotDataAt = Date()
             let sent = await NetworkClient.shared.cacheScreenshot(imageBase64: data.base64EncodedString())
@@ -2322,7 +2359,7 @@ class MainViewModel {
     /// that limit is real but never reached, because a smaller request-size cap fires first
     /// and base64 inflates everything by a third on the way. 700 KB raw is ~930 KB encoded,
     /// which leaves room for the prompt and the JSON around it.
-    static let screenshotByteBudget = 700_000
+    nonisolated static let screenshotByteBudget = 700_000
 
     /// Encode a screenshot to fit the budget, giving up as little legibility as possible.
     ///
@@ -2334,7 +2371,7 @@ class MainViewModel {
     /// the whole screen keeps every character where it was; a smaller PNG moves the text
     /// below the size a vision model reads reliably, which is the failure the larger capture
     /// was introduced to fix. Shrinking is the last resort, not the first.
-    static func encodeWithinBudget(_ rep: NSBitmapImageRep, width: Int, height: Int) -> Data? {
+    nonisolated static func encodeWithinBudget(_ rep: NSBitmapImageRep, width: Int, height: Int) -> Data? {
         let budget = uploadBudget
         if let png = rep.representation(using: .png, properties: [:]), png.count <= budget {
             dlog("Screen capture: \(png.count) bytes PNG \(width)x\(height)", tag: "SCREEN")
@@ -2378,7 +2415,7 @@ class MainViewModel {
     /// The most bytes a screenshot may occupy right now: the normal budget, or the lighter one while the line is slow.
     nonisolated(unsafe) static var uploadBudget = screenshotByteBudget
     /// About four seconds on a line that carries 50 KB a second (Windows measured 66 KB/s on a hotspot).
-    static let slowLineByteBudget = 200 * 1024
+    nonisolated static let slowLineByteBudget = 200 * 1024
 
     /// Tells the capture whether the line is known to be slow, so it sends a lighter picture.
     static func setSlowLine(_ slow: Bool) {
@@ -2389,12 +2426,12 @@ class MainViewModel {
                   : "SCREEN: connection is fast again: screenshots are sent at full quality", tag: "SCREEN")
     }
 
-    static func coarseSignature(_ jpeg: Data) -> [UInt8] {
+    nonisolated static func coarseSignature(_ jpeg: Data) -> [UInt8] {
         guard let src = NSBitmapImageRep(data: jpeg)?.cgImage else { return [] }
         return coarseSignature(image: src)
     }
 
-    static func coarseSignature(image src: CGImage) -> [UInt8] {
+    nonisolated static func coarseSignature(image src: CGImage) -> [UInt8] {
         let n = 16
         var pixels = [UInt8](repeating: 0, count: n * n)
         guard let ctx = CGContext(data: &pixels, width: n, height: n, bitsPerComponent: 8,
@@ -2501,12 +2538,21 @@ class MainViewModel {
 
     private func captureScreen(wholeScreen: Bool? = nil) async -> Data? {
         guard let cgImage = await captureCGImage(wholeScreen: wholeScreen) else { return nil }
-        return Self.encodeCapture(cgImage, wholeScreen: wholeScreen ?? capturingWholeScreen)
+        nonisolated(unsafe) let shot = cgImage
+        let whole = wholeScreen ?? capturingWholeScreen
+        return await Self.offMain { Self.encodeCapture(shot, wholeScreen: whole) }
     }
 
     /// The raw capture, before any scaling or encoding.
     private func captureCGImage(wholeScreen: Bool? = nil) async -> CGImage? {
         let wholeScreenCapture = wholeScreen ?? capturingWholeScreen
+        // Developer builds only, against a fake server: a stand-in for the screen.
+        if let path = DeveloperOverrides.screenImagePath,
+           let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+           let image = CGImageSourceCreateImageAtIndex(source, 0, nil) {
+            lastCaptureSource = wholeScreenCapture ? "full screen" : DeveloperOverrides.screenTarget
+            return image
+        }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
 
@@ -2608,7 +2654,7 @@ class MainViewModel {
     /// BEFORE paying for the encode: measured on this Mac, the 2-second prepare costs
     /// 2.3-13.4% of a core with screen answers on against 1.1-2.2% with them off, and
     /// almost all of that is encoding a screen that has not changed.
-    static func encodeCapture(_ cgImage: CGImage, wholeScreen wholeScreenCapture: Bool) -> Data? {
+    nonisolated static func encodeCapture(_ cgImage: CGImage, wholeScreen wholeScreenCapture: Bool) -> Data? {
             // Downscale by the LONGEST edge (the old code only ever considered width, so a
             // tall narrow window came through far larger than intended).
             let origW = Double(cgImage.width), origH = Double(cgImage.height)
@@ -4227,7 +4273,7 @@ class MainViewModel {
     /// state minutes or hours. Same words as Windows ListeningProblems.NoListeningTime.
     private func warnIfListeningTimeLow() {
         guard audioMinutesRemaining == 0 else { return }
-        aiAnswerHint = "You have reached this month's fair use limit for listening. You still have answers left, but nothing more can be heard until the limit renews or you upgrade. Reading your screen with F8 still works."
+        aiAnswerHint = ListeningProblems.describe(.noListeningTime, freeTrial: onFreeTrial).body
     }
 
     /// Current allowance without reporting anything, so the badge is honest before the
@@ -4654,12 +4700,9 @@ class MainViewModel {
         } else {
             creditsColor = Color(red: 74/255, green: 222/255, blue: 128/255)
         }
-        // Listening time is deliberately NOT shown: it is a hidden fair use guard, not a
-        // meter. Reaching it is explained in words (tooltip, and the listening message).
-        if audioMinutesRemaining == 0 {
-            creditsColor = Color(red: 245/255, green: 158/255, blue: 11/255)
-            creditsPlanText = "Listening limit reached"
-        }
+        // The hidden monthly ceiling on listening is deliberately NOT shown beside the badge: customers see
+        // answers only (the red label that used to say so is gone). Reaching it is explained in words, in the
+        // tooltip and in the message, as "this month's limit".
     }
 
     private func startCreditsTimer() {

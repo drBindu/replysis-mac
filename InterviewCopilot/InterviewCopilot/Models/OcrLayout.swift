@@ -1,7 +1,7 @@
 import Foundation
 
 /// One word the text reader found on the screen: its text and where it sits, in pixels from the top left.
-struct OcrWord {
+nonisolated struct OcrWord {
     let text: String
     let x: Double
     let y: Double
@@ -16,7 +16,7 @@ struct OcrWord {
 /// A problem on the left and an editor on the right share every row, so read straight across they
 /// interleave: half a sentence of the statement, then half a line of code, then the rest of the sentence.
 /// Here the page is cut at its empty vertical gutters first, and each panel is read down on its own.
-enum OcrLayout {
+nonisolated enum OcrLayout {
     static func toText(_ words: [OcrWord]) -> String {
         let ws = words.filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty && $0.w > 0 && $0.h > 0 }
         guard !ws.isEmpty else { return "" }

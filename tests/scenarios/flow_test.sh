@@ -24,7 +24,7 @@ touch "$DIR/onboarding_seen"
 pkill -f "Replysis-dev.app/Contents/MacOS" 2>/dev/null; pkill -f "Debug/InterviewCopilot.app/Contents/MacOS" 2>/dev/null; sleep 2
 python3 "$HERE/mock_backend.py" healthy-credits 18190 >/tmp/flow-mock.out 2>&1 & MOCK=$!; sleep 1
 L=$(wc -l < "$LOG")
-REPLYSIS_BACKEND_URL=http://127.0.0.1:18190 REPLYSIS_TOKEN_URL=http://127.0.0.1:18190/token REPLYSIS_TEST_SESSION=stale \
+REPLYSIS_BACKEND_URL=http://127.0.0.1:18190 REPLYSIS_TOKEN_URL=http://127.0.0.1:18190/token REPLYSIS_TEST_SESSION=stale REPLYSIS_HEADLESS=1 \
   REPLYSIS_FLOW_SCRIPT="start:10,back:8,start:8,finish:8" "$BIN" >/dev/null 2>&1 & PID=$!
 sleep 50
 fail=0

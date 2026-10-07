@@ -382,8 +382,8 @@ for kind in ListeningProblems.Kind.allCases {
 check(ListeningProblems.describe(.noAnswers, freeTrial: true).title == "Your free answers are used", "free trial: the trial has ended")
 check(ListeningProblems.describe(.noAnswers, freeTrial: false).title == "No answers left this month", "paid: answers renew")
 check(ListeningProblems.describe(.noAnswers, freeTrial: true).step == .moreAnswers, "out of answers offers Get more answers")
-check(ListeningProblems.describe(.noListeningTime).step == .seePlans, "listening limit offers the plans")
-check(ListeningProblems.describe(.noListeningTime).body.contains("You still have answers left"), "listening limit says answers are fine")
+check(ListeningProblems.describe(.noListeningTime, freeTrial: true).step == .moreAnswers, "the free trial ending offers Get more answers")
+check(ListeningProblems.describe(.noListeningTime, freeTrial: false).body.contains("Your answers are safe"), "this month's limit says answers are safe")
 func detect(online: Bool = false, status: Int = 0, listening: Bool = false, answers: Bool = false,
             waiting: Bool = false, mic: Bool = false, stalled: Bool = false, net: Bool = false) -> ListeningProblems.Kind? {
     ListeningProblems.detect(engineOnline: online, speechStatusCode: status, outOfListeningTime: listening,
@@ -942,6 +942,29 @@ do {
         c2.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1)); c2.fill(CGRect(x: 0, y: 0, width: 600, height: 400)); blank = c2.makeImage()
     }
     check(blank.flatMap { ScreenOcr.read($0) } == nil, "ocr: a blank page is not something to answer from")
+}
+
+
+// ── Customers see answers, never a listening limit: the hidden monthly ceiling is "this month's limit" ──
+do {
+    let banned = ["listening", "minute", "hour", "fair use"]
+    for trial in [true, false] {
+        let d = ListeningProblems.describe(.noListeningTime, freeTrial: trial)
+        let text = (d.label + " " + d.title + " " + d.body).lowercased()
+        check(!banned.contains { text.contains($0) }, "limit wording (free trial \(trial)) never says listening, minutes, hours or fair use")
+    }
+    check(ListeningProblems.describe(.noListeningTime, freeTrial: true).title == "Your free trial is over", "the free trial's ceiling is simply the end of the trial")
+    check(ListeningProblems.describe(.noListeningTime, freeTrial: false).title == "You have reached this month's limit", "a paid plan's ceiling is this month's limit")
+    check(ListeningProblems.describe(.noListeningTime, freeTrial: false).body.contains("renews on the first of next month"), "a paid plan is told when it renews")
+    let tip = PlanFacts.tooltip(credits: 40, freeTrial: false, listeningLimitReached: true).lowercased()
+    check(!banned.contains { tip.contains($0) } && tip.contains("this month's limit"), "the badge tooltip says this month's limit and nothing about listening")
+}
+
+
+do {
+    check(RecoveryPolicy.sessionRefused(byStatus: 400) && RecoveryPolicy.sessionRefused(byStatus: 401) && RecoveryPolicy.sessionRefused(byStatus: 403), "launch: the sign-in service refusing the saved sign-in asks for a new one")
+    check(![0, 408, 429, 500, 502, 503, 504].contains { RecoveryPolicy.sessionRefused(byStatus: $0) }, "launch: no answer, a timeout, a rate limit or a server fault never asks for a new sign-in")
+    check(RecoveryPolicy.launchRefreshRetryDelay == 3, "launch: asks once more after three seconds")
 }
 
 print("RESULT: \(passed) passed, \(failed) failed")
