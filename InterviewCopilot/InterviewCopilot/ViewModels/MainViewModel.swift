@@ -459,11 +459,15 @@ class MainViewModel {
 
     func reconnectAfterWake() {
         dlog("WAKE: the Mac woke up; reconnecting speech in \(Self.wakeReconnectDelay)s instead of waiting for the old connection to time out", tag: "SM")
+        // The answer connection that was open when the lid closed is dead too. Drop it now and open a fresh one
+        // (again below, once the adapter is back), so the first question meets a warm connection, not a dead socket.
+        NetworkClient.shared.refreshConnections()
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(Self.wakeReconnectDelay * 1_000_000_000))
             guard let self, self.session.isLoggedIn else { return }
             // Whatever was learned about the line before the lid closed no longer holds.
             self.networkChanged()
+            NetworkClient.shared.warmUp()
             guard self.engine.isRunning else { return }   // not running: the engine's own check starts it
             // A long sleep outlives the speech key.
             if let expiry = self.session.speechKeyExpiresAt, expiry.timeIntervalSinceNow < 120 {
@@ -2381,6 +2385,7 @@ class MainViewModel {
 
     /// The network changed (another Wi-Fi, a hotspot, a cable): what was learned about the old line no longer holds.
     func networkChanged() {
+        NetworkClient.shared.refreshConnections()   // sockets of the old line are dead; the next question must not meet one
         uplink.reset()
         applyLineSpeedToCaptures()
         preparedImageId = nil; preparedSignature = []
@@ -2774,25 +2779,28 @@ class MainViewModel {
     /// recovery in updateTranscript and handleSpeechKeyError.
     private var keyErrorNoticeShowing = false
     private var wasListeningBeforeKeyError = false
-    // ── Never asleep while an interview session runs (Windows 1.0.31, item 26) ───────────
+    // ── Always ready: never asleep, never slowed, while the app is open and signed in ────────────
     //
-    // An interview must not meet a Mac that dozed off, or an app that macOS slowed down because nobody touched it.
-    // While a session runs the system is kept from idle sleep, and App Nap is told this app is latency critical
-    // (its timers and its network are not coalesced or delayed). Both are released the moment the session ends.
-    // The display may still sleep: only the system and the app stay ready.
+    // Windows 1.0.31 item 26 held this only while an interview ran. The owner (2026-10-08): "I don't want to sleep it
+    // anytime, it always be ready and warm, ready anytime, any situation." An interview can start at any moment, and a
+    // Mac that dozed off between two of them, or an app macOS slowed down because nobody touched it, is a deaf app
+    // for the first seconds of the next one. So from sign-in until sign-out or quit the system is kept from idle sleep,
+    // and App Nap is told this app is latency critical (its timers and its network are not coalesced or delayed).
+    // The display may still sleep: only the system and the app stay ready. Closing the lid still sleeps the Mac, and
+    // then reconnectAfterWake has everything warm again before the first question.
     @ObservationIgnored private var sessionActivity: NSObjectProtocol?
 
     private func syncWakefulness() {
-        let want = appStep == .interview && interviewStarted && !sessionsOpen && session.isLoggedIn
+        let want = session.isLoggedIn
         if want, sessionActivity == nil {
             sessionActivity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated, .idleSystemSleepDisabled, .latencyCritical],
-                reason: "A Replysis interview session is running")
-            dlog("AWAKE: an interview session is running; the Mac is kept from idle sleep and the app from App Nap", tag: "APP")
+                reason: "Replysis is open and signed in, ready for an interview at any moment")
+            dlog("AWAKE: signed in and open; the Mac is kept from idle sleep and the app from App Nap", tag: "APP")
         } else if !want, let activity = sessionActivity {
             ProcessInfo.processInfo.endActivity(activity)
             sessionActivity = nil
-            dlog("AWAKE: the session ended; the Mac may sleep again", tag: "APP")
+            dlog("AWAKE: signed out; the Mac may sleep again", tag: "APP")
         }
     }
 

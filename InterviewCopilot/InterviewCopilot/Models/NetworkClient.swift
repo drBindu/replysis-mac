@@ -409,6 +409,15 @@ class NetworkClient {
 
     func stopKeepWarm() { keepWarmTimer?.invalidate(); keepWarmTimer = nil }
 
+    /// After the Mac wakes or the network changes: close the answer connections (their sockets died with the old
+    /// line, and a question sent on one waits for a timeout) and open a fresh one now, before anyone asks.
+    func refreshConnections() {
+        session.reset { [weak self] in
+            Task { @MainActor [weak self] in self?.warmUp() }
+        }
+        dlog("NET: connections reset and a fresh one opening, so the next question does not wait on a dead socket", tag: "NET")
+    }
+
     func warmUp() {
         guard let url = URL(string: "\(AppConfig.backendUrl)/api/v1/resume/status") else { return }
         Task {
