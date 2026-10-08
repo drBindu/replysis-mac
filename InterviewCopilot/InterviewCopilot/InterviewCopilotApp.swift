@@ -189,6 +189,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return CGSize(width: width, height: height)
     }
 
+    /// Test copies only (DeveloperOverrides.headless): keep every window the app opens invisible and untouchable.
+    private static func hideEveryWindowOfATestCopy() {
+        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+            for window in NSApp.windows where window.alphaValue != 0 || !window.ignoresMouseEvents {
+                window.alphaValue = 0
+                window.ignoresMouseEvents = true
+            }
+        }
+    }
+
     private func buildPanel() {
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         // Sized as a FRACTION of the display, then capped — not a fixed 1120x740 clamped
@@ -292,6 +302,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             panel.ignoresMouseEvents = true
             panel.setFrameOrigin(NSPoint(x: -15_000, y: -15_000))
             panel.orderBack(nil)
+            // Every OTHER window of a test copy is hidden the same way. The panel being off screen is not enough: a sheet
+            // attached to it (the "Set up permissions" sheet on an unsigned build, whose mic, accessibility and screen
+            // recording are all undecided) is a window of its own, and AppKit pulls it back onto the screen. That is the
+            // blue "Allow ..." window that kept appearing in front of the owner during test runs.
+            Self.hideEveryWindowOfATestCopy()
         } else {
             panel.makeKeyAndOrderFront(nil)
         }
