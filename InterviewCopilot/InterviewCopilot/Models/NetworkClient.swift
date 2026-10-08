@@ -394,10 +394,12 @@ class NetworkClient {
     //      kept warm a connection no answer ever touched;
     //   3. it called /interview/credits with a token, a heavy route, to do a job a constant
     //      one does.
-    // Now: every 25 seconds (shorter than a proxy or home router keeps a quiet connection),
-    // a HEAD to the answer server's own constant status route, on the SAME session as answers.
+    // Now: every 5 seconds (owner, 2026-10-08: "make it every 5 sec"; it was 25, which is already shorter than a proxy or home
+    // router keeps a quiet connection), a HEAD to the answer server's own constant status route, on the SAME session as answers.
+    // One at a time: a slow reply never stacks a second request behind it.
     private var keepWarmTimer: Timer?
-    private static let keepWarmInterval: TimeInterval = 25
+    private static let keepWarmInterval: TimeInterval = 5
+    private var warmUpInFlight = false
 
     func startKeepWarm() {
         guard keepWarmTimer == nil else { return }
@@ -419,8 +421,10 @@ class NetworkClient {
     }
 
     func warmUp() {
-        guard let url = URL(string: "\(AppConfig.backendUrl)/api/v1/resume/status") else { return }
+        guard !warmUpInFlight, let url = URL(string: "\(AppConfig.backendUrl)/api/v1/resume/status") else { return }
+        warmUpInFlight = true
         Task {
+            defer { warmUpInFlight = false }
             var req = URLRequest(url: url)
             req.httpMethod = "HEAD"          // no body to carry; any reply, even a 404, proves the connection is open
             req.timeoutInterval = 6

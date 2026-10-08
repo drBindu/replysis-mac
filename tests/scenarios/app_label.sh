@@ -28,6 +28,8 @@ for p in /api/v1/interview/ask /api/v1/interview/analyze-screen /api/v1/intervie
   grep '^HDR ' /tmp/glass/lab/mock-label.out | grep -q " $p " && ok "labelled: $p" || echo "  note  no request to $p in this run"
 done
 grep '^HDR HEAD' /tmp/glass/lab/mock-label.out | grep -q 'platform=mac' && ok "the keep-warm request carries the label too" || no "keep-warm request unlabelled or missing"
+HEADS=$(grep -c '^HDR HEAD' /tmp/glass/lab/mock-label.out)
+[ "$HEADS" -ge 8 ] && ok "keep-warm pings every 5 seconds ($HEADS in about 45 s)" || no "only $HEADS keep-warm pings in about 45 s"
 grep '^HDR ' /tmp/glass/lab/mock-label.out | awk '{print $2" "$3}' | sort | uniq -c | sort -rn | head -12 | sed 's/^/        /'
 [ $fail -eq 0 ] && echo "APP LABEL: all checks passed" || echo "APP LABEL: FAILED"
 exit $fail
