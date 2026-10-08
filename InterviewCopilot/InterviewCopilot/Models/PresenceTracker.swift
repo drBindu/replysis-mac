@@ -22,6 +22,8 @@ final class PresenceTracker {
     private var timer: Timer?
     private var firstBeatSent = false
     private var beating = false
+    /// Whether the first "this app is open" ping of this run has gone out.
+    private var pingSent = false
 
     func start() {
         guard timer == nil else { return }
@@ -30,12 +32,24 @@ final class PresenceTracker {
             Task { @MainActor [weak self] in await self?.beat() }
         }
         Task { @MainActor [weak self] in await self?.beat() }
+        // The sign-in is usually not restored yet at the instant the app starts, so that first beat finds nobody signed in and the
+        // next one is a minute away: an app opened for under a minute never showed as open. Try again at the pace of a person
+        // starting the app until the first ping has really gone out.
+        for delay in [2.0, 4.0, 8.0, 15.0, 30.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                Task { @MainActor [weak self] in
+                    guard let self, self.timer != nil, !self.pingSent else { return }
+                    await self.beat()
+                }
+            }
+        }
     }
 
     func stop() {
         timer?.invalidate()
         timer = nil
         firstBeatSent = false
+        pingSent = false
     }
 
     /// `POST /api/v1/presence`, answered 204. The platform and version labels are added on the way out (AppIdentity).
@@ -45,12 +59,14 @@ final class PresenceTracker {
             do {
                 let (_, response) = try await URLSession.shared.data(for: AppIdentity.label(request))
                 if let http = response as? HTTPURLResponse { dlog("Presence: server ping answered \(http.statusCode)", tag: "PRESENCE") }
+                else { dlog("Presence: server ping got no HTTP answer", tag: "PRESENCE") }
                 if let http = response as? HTTPURLResponse, http.statusCode == 401 {
                     // A stale token: refresh so the next ping lands, rather than going quiet.
                     _ = await UserSession.shared.tryRefreshAsync()
                 }
             } catch {
-                // A dropped ping is not worth a word to anyone; the next one is a minute away.
+                // A dropped ping is not worth a word to anyone; the next one is a minute away. (Said in the log only.)
+                dlog("Presence: server ping failed: \(error.localizedDescription)", tag: "PRESENCE")
             }
         }
     }
@@ -70,6 +86,7 @@ final class PresenceTracker {
 
         // Tell OUR server this app is open (Windows 1.0.31 item 29), next to the write below and independent of it: a failed
         // Firestore write must not stop this, nor this the write. Fire and forget; nothing is shown if it fails.
+        pingSent = true
         pingServer(token: token)
 
         let formatter = ISO8601DateFormatter()
