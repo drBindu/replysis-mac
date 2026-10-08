@@ -7,6 +7,7 @@
 #          weak           66 KB/s, the real line test decides (it should fail and send words)
 #          weak-picture   66 KB/s, forced to keep sending pictures (what a weak line cost before)
 #          forced-words   a quick line, forced to send words
+#          unprepared     a quick line, but the question comes before anything was sent ahead (Read screen, a new interview): the words go, not a picture
 # Debug builds only. A stand-in picture is used instead of the screen, so there is no permission prompt.
 APP="$1"; MODE="$2"; IMG="${3:-/tmp/glass/lab/screen.png}"
 BIN="$APP/Contents/MacOS/InterviewCopilot"
@@ -22,6 +23,7 @@ case "$MODE" in
   weak)          KBPS=66; LINE="" ;;
   weak-picture)  KBPS=66; LINE="fast" ;;
   forced-words)  KBPS=0;  LINE="slow" ;;
+  unprepared)    KBPS=0;  LINE="" ;;
   *) echo "unknown mode $MODE"; exit 2 ;;
 esac
 pkill -f "Debug/InterviewCopilot.app/Contents/MacOS" 2>/dev/null; sleep 1
@@ -33,9 +35,9 @@ env REPLYSIS_BACKEND_URL=http://127.0.0.1:$PORT REPLYSIS_TOKEN_URL=http://127.0.
 cmd(){ echo "$1" >> "$DATA/flow.cmd"; }
 sleep 9                                   # the window settles and the session restores
 cmd start; sleep 3
-cmd micseen
+[ "$MODE" != "unprepared" ] && cmd micseen   # unprepared: the mic has not been live, so nothing is sent ahead
 [ "$MODE" = "weak" ] && { cmd probe; sleep 7; }       # the line test, as at launch
-[ "$MODE" != "weak" ] && sleep 6                       # a few 2 second ticks send the screen ahead
+[ "$MODE" != "weak" ] && [ "$MODE" != "unprepared" ] && sleep 6                       # a few 2 second ticks send the screen ahead
 cmd linestate; sleep 1
 [ "$MODE" = "weak" ] && sleep 8
 [ -n "$LAB_STALL" ] && cmd stallstart

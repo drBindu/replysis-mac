@@ -1926,6 +1926,21 @@ class MainViewModel {
             // When the picture went up while they were still speaking, the question carries its id and
             // not two hundred kilobytes. Nil falls back to sending the bytes.
             imageIds = usableImageIds(matching: signature)
+            // Nothing was sent ahead (Read screen, a screen that moved, an interview that has only just
+            // begun). A picture sent now waits for the server to read it: 4 to 16 seconds on the live server,
+            // against under one second for the same screen as words. So the words are read here and sent, and
+            // the picture only goes when the screen has hardly any text to read.
+            if imageIds == nil, Self.wordsBeforePicture {
+                let started = Date()
+                let decoded = await Self.offMain { NSBitmapImageRep(data: data)?.cgImage }
+                if let image = decoded, let words = await Self.readWords(from: image) {
+                    screenWords = words
+                    imageData = nil
+                    dlog("SCREEN: nothing was sent ahead; read \(words.count) characters from the screen in \(Int(Date().timeIntervalSince(started) * 1000))ms and sending those instead of a picture", tag: "SCREEN")
+                } else {
+                    dlog("SCREEN: nothing was sent ahead and the screen has no readable words; sending the picture", tag: "SCREEN")
+                }
+            }
         }
 
         dlog("Screen captured: \(imageData?.count ?? 0) bytes\(screenWords != nil ? ", words instead" : "")\(imageIds != nil ? ", sent ahead" : "")", tag: "SCREEN")
@@ -2296,16 +2311,25 @@ class MainViewModel {
     // 160 KB test upload decides first (UplinkGovernor); pictures go ahead only after it came back
     // within 1.2 s, and any other line sends the screen's words, which are a few kilobytes.
 
+    /// Whether a screen with no picture sent ahead goes as its words. Always, except in a developer build asked to keep pictures.
+    private static var wordsBeforePicture: Bool {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["REPLYSIS_LINE"] == "picture" { return false }
+        #endif
+        return true
+    }
+
     private var uplink = UplinkGovernor()
     private var uplinkProbeRunning = false
 
     /// Whether this line has shown it can carry a picture in good time. When not, the screen's words go instead.
     private func lineCarriesPictures() -> Bool {
         #if DEBUG
-        // Developer builds only: REPLYSIS_LINE=slow sends words, fast sends pictures, whatever the line really is.
+        // Developer builds only: REPLYSIS_LINE=slow sends words, fast and picture send pictures, whatever the
+        // line really is. "picture" also keeps the picture when nothing was sent ahead (see wordsBeforePicture).
         switch ProcessInfo.processInfo.environment["REPLYSIS_LINE"] {
         case "slow": return false
-        case "fast": return true
+        case "fast", "picture": return true
         default: break
         }
         #endif
