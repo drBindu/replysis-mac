@@ -383,20 +383,34 @@ class PromptBuilder {
             "nice to meet you", "good to meet you", "great to meet you", "pleasure to meet you",
             "nice meeting you", "thanks for coming", "thank you for coming",
             "thanks for joining", "thank you for joining", "thanks for having me",
+            "thanks for coming in", "thank you for coming in",
+            "how was your day", "how is your evening", "how's your evening", "how is your night",
+            // "What's up?" is how many people open a call. It used to reach the model, which answered it as a
+            // question about the Unix "up" command (seen live on Windows: a paragraph on process tables in
+            // reply to "Hello. What's up?"). Windows 1.0.31, item 27.
+            "what's up", "whats up", "what is up", "what up", "wassup", "what's new", "whats new",
+            "what's going on", "whats going on", "how's life", "hows life", "how's everything going",
+            "good to see you", "nice to see you", "great to see you",
+            "hope you're doing well", "hope you are doing well",
         ]
-        var words = q.lowercased()
+        // A speech recogniser may write the curly apostrophe; the phrases above use the straight one.
+        var words = q.lowercased().replacingOccurrences(of: "\u{2019}", with: "'")
             .split(whereSeparator: { !$0.isLetter && $0 != "'" })
             .map(String.init)
         // A greeting in front and a politeness behind are part of the same pleasantry.
         let openers: Set<String> = ["hi", "hello", "hey", "yo", "good", "morning", "afternoon",
                                     "evening", "greetings", "there", "so", "okay", "ok", "um",
                                     "uh", "well", "and", "oh"]
+        // "Good" opens "good morning" and also "good to see you": keep the whole utterance to try as well.
+        let wholeWords = words
         while let f = words.first, openers.contains(f) { words.removeFirst() }
         let trailing: Set<String> = ["today", "sir", "maam", "ma'am", "man", "then", "please",
-                                     "though", "yeah", "okay", "ok", "now", "so", "well"]
+                                     "though", "yeah", "okay", "ok", "now", "so", "well", "too", "thanks"]
         while let l = words.last, trailing.contains(l) { words.removeLast() }
+        var whole = wholeWords
+        while let l = whole.last, trailing.contains(l) { whole.removeLast() }
         guard !words.isEmpty, words.count <= 5 else { return false }
-        return phrases.contains(words.joined(separator: " "))
+        return phrases.contains(words.joined(separator: " ")) || phrases.contains(whole.joined(separator: " "))
     }
 
     /// A pleasantry of either kind, so the answer path can wait for the real question behind it.

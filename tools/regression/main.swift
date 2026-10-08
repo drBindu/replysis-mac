@@ -967,5 +967,33 @@ do {
     check(RecoveryPolicy.launchRefreshRetryDelay == 3, "launch: asks once more after three seconds")
 }
 
+
+// ── Small talk: "What's up?" is a greeting, not a question about the Unix command (Windows 1.0.31, item 27) ──
+do {
+    let pb = PromptBuilder.shared
+    func talk(_ q: String) -> Bool { pb.isSmallTalk(q) }
+    check(talk("Hello. What's up?"), "small talk: \"Hello. What's up?\"")
+    check(talk("What's up?"), "small talk: \"What's up?\"")
+    check(talk("What is up?"), "small talk: \"What is up?\"")
+    check(talk("Hey, what\u{2019}s up?"), "small talk: a curly apostrophe is handled")
+    check(talk("Wassup"), "small talk: wassup")
+    check(talk("What's going on?"), "small talk: what's going on")
+    check(talk("Good to see you."), "small talk: good to see you")
+    check(talk("Hi, how are you?"), "small talk: hi, how are you")
+    check(talk("How are you doing today?"), "small talk: how are you doing today")
+    check(talk("Nice to meet you."), "small talk: nice to meet you")
+    check(talk("Nice to meet you too, thanks!"), "small talk: nice to meet you too, thanks")
+    check(talk("Thanks for coming in today."), "small talk: thanks for coming in today")
+    check(talk("How was your day?"), "small talk: how was your day")
+    check(!talk("What's up with this memory leak in the service?"), "a real question after \"what's up\" is still a question")
+    check(!talk("What's up, tell me about your last project."), "\"what's up\" then the interview starts is not small talk")
+    check(!talk("How are you handling state in React?"), "\"how are you handling state\" is a real question")
+    check(!talk("How are you deploying to AWS?"), "\"how are you deploying\" is a real question")
+    check(!talk("Nice to meet you, shall we start with your background?"), "a greeting that opens the interview is not only small talk")
+    check(!talk("Tell me about yourself."), "\"tell me about yourself\" is not small talk")
+    check(!talk("What is a hash map?"), "\"what is a hash map\" is not small talk")
+    check(pb.isGreeting("Good morning!") && !pb.isGreeting("Hi, what is dependency injection?"), "greetings stay tight: only a greeting is a greeting")
+}
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

@@ -2736,7 +2736,30 @@ class MainViewModel {
     /// recovery in updateTranscript and handleSpeechKeyError.
     private var keyErrorNoticeShowing = false
     private var wasListeningBeforeKeyError = false
+    // ── Never asleep while an interview session runs (Windows 1.0.31, item 26) ───────────
+    //
+    // An interview must not meet a Mac that dozed off, or an app that macOS slowed down because nobody touched it.
+    // While a session runs the system is kept from idle sleep, and App Nap is told this app is latency critical
+    // (its timers and its network are not coalesced or delayed). Both are released the moment the session ends.
+    // The display may still sleep: only the system and the app stay ready.
+    @ObservationIgnored private var sessionActivity: NSObjectProtocol?
+
+    private func syncWakefulness() {
+        let want = appStep == .interview && interviewStarted && !sessionsOpen && session.isLoggedIn
+        if want, sessionActivity == nil {
+            sessionActivity = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiated, .idleSystemSleepDisabled, .latencyCritical],
+                reason: "A Replysis interview session is running")
+            dlog("AWAKE: an interview session is running; the Mac is kept from idle sleep and the app from App Nap", tag: "APP")
+        } else if !want, let activity = sessionActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            sessionActivity = nil
+            dlog("AWAKE: the session ended; the Mac may sleep again", tag: "APP")
+        }
+    }
+
     private func updateTranscript() {
+        syncWakefulness()
         tickListeningProblem()
         tickPreparedShots()
         checkAudioSourceTip()
