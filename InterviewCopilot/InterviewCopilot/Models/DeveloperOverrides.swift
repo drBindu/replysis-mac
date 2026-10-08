@@ -51,7 +51,12 @@ enum DeveloperOverrides {
         backendURL != nil && ProcessInfo.processInfo.environment["REPLYSIS_HEADLESS"] == "1"
     static let screenTarget: String =
         ProcessInfo.processInfo.environment["REPLYSIS_SCREEN_TARGET"] ?? "Google Chrome: Two Sum - LeetCode"
+    /// REPLYSIS_PRESENCE_SECONDS=5  -> the "this app is open" ping goes this often instead of every 60 s, so a test does not
+    /// have to wait a minute. Only against a fake server.
+    static let presenceSeconds: TimeInterval? =
+        backendURL == nil ? nil : ProcessInfo.processInfo.environment["REPLYSIS_PRESENCE_SECONDS"].flatMap(TimeInterval.init)
     #else
+    static let presenceSeconds: TimeInterval? = nil
     static let screenImagePath: String? = nil
     static let headless = false
     static let screenTarget = ""

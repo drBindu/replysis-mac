@@ -1030,5 +1030,19 @@ do {
     check(noVersion.value(forHTTPHeaderField: "X-App-Platform") == "mac" && noVersion.value(forHTTPHeaderField: "X-App-Version") == nil, "app label: a version that is not plain is left off, the platform still goes")
 }
 
+// Windows 1.0.31 item 29: the once-a-minute "this app is open" ping to our own server.
+do {
+    let r = PresencePing.request(backendUrl: "https://replysis.com", token: "tok123")
+    check(r?.url?.absoluteString == "https://replysis.com/api/v1/presence", "presence ping: POST to /api/v1/presence on our server")
+    check(r?.httpMethod == "POST", "presence ping: it is a POST")
+    check(r?.value(forHTTPHeaderField: "Authorization") == "Bearer tok123", "presence ping: the ID token goes as a Bearer")
+    check(r?.httpBody == nil && r?.httpBodyStream == nil && r?.value(forHTTPHeaderField: "Content-Type") == nil, "presence ping: no body and no content type")
+    check(PresencePing.request(backendUrl: "https://replysis.com/", token: "t")?.url?.absoluteString == "https://replysis.com/api/v1/presence", "presence ping: a trailing slash on the backend address is handled")
+    check(PresencePing.request(backendUrl: "https://replysis.com", token: "") == nil, "presence ping: a signed-out person (no token) sends nothing")
+    check(PresencePing.everySeconds == 60, "presence ping: once a minute")
+    let sent = r.map { AppIdentity.label($0, backendHost: "replysis.com", version: "1.0.248") }
+    check(sent?.value(forHTTPHeaderField: "X-App-Platform") == "mac" && sent?.value(forHTTPHeaderField: "X-App-Version") == "1.0.248", "presence ping: it carries the platform and version labels")
+}
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

@@ -26,7 +26,7 @@ final class PresenceTracker {
     func start() {
         guard timer == nil else { return }
         firstBeatSent = false
-        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: DeveloperOverrides.presenceSeconds ?? PresencePing.everySeconds, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in await self?.beat() }
         }
         Task { @MainActor [weak self] in await self?.beat() }
@@ -36,6 +36,23 @@ final class PresenceTracker {
         timer?.invalidate()
         timer = nil
         firstBeatSent = false
+    }
+
+    /// `POST /api/v1/presence`, answered 204. The platform and version labels are added on the way out (AppIdentity).
+    private func pingServer(token: String) {
+        guard let request = PresencePing.request(backendUrl: AppConfig.backendUrl, token: token) else { return }
+        Task { @MainActor in
+            do {
+                let (_, response) = try await URLSession.shared.data(for: AppIdentity.label(request))
+                if let http = response as? HTTPURLResponse { dlog("Presence: server ping answered \(http.statusCode)", tag: "PRESENCE") }
+                if let http = response as? HTTPURLResponse, http.statusCode == 401 {
+                    // A stale token: refresh so the next ping lands, rather than going quiet.
+                    _ = await UserSession.shared.tryRefreshAsync()
+                }
+            } catch {
+                // A dropped ping is not worth a word to anyone; the next one is a minute away.
+            }
+        }
     }
 
     private func beat() async {
@@ -50,6 +67,10 @@ final class PresenceTracker {
         if session.idToken.isEmpty { _ = await session.tryRefreshAsync() }
         let token = session.idToken
         guard !token.isEmpty else { return }
+
+        // Tell OUR server this app is open (Windows 1.0.31 item 29), next to the write below and independent of it: a failed
+        // Firestore write must not stop this, nor this the write. Fire and forget; nothing is shown if it fails.
+        pingServer(token: token)
 
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

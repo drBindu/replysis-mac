@@ -211,6 +211,15 @@ class H(BaseHTTPRequestHandler):
             body = {"remainingMinutes": s["minutes"], "usedMinutes": 15 - s["minutes"]}
         elif url == "/health":
             body = {"ok": True}
+        elif url == "/api/v1/presence" and self.command == "POST":
+            # The once-a-minute "this app is open" ping (Windows 1.0.31 item 29): a Bearer token, no body, answered 204.
+            raw = read_body(self)
+            auth = self.headers.get("Authorization") or ""
+            print(f"PRESENCE auth={'bearer' if auth.startswith('Bearer ') and len(auth) > 7 else 'missing'} body={len(raw or b'')} "
+                  f"platform={self.headers.get('X-App-Platform')} version={self.headers.get('X-App-Version')}", flush=True)
+            self.send_response(204)
+            self.end_headers()
+            return
         extra = (" auth=" + ("fresh" if self.headers.get("Authorization") == FRESH else "stale/none")) if url == "/api/v1/stt/key" else ""
         print(f"REQ {self.command} {url} -> {status}{extra}", flush=True)
         data = json.dumps(body).encode()
