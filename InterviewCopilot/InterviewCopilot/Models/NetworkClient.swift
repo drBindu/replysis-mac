@@ -400,7 +400,8 @@ class NetworkClient {
     private var keepWarmTimer: Timer?
     private static let keepWarmInterval: TimeInterval = 5
     private var warmUpInFlight = false
-
+    // Every ping says what it did, so a quiet hour can be checked afterwards (owner: 5 seconds, not minutes).
+    private var warmPings = 0, warmFailed = 0
     func startKeepWarm() {
         guard keepWarmTimer == nil else { return }
         warmUp()
@@ -428,7 +429,12 @@ class NetworkClient {
             var req = URLRequest(url: url)
             req.httpMethod = "HEAD"          // no body to carry; any reply, even a 404, proves the connection is open
             req.timeoutInterval = 6
-            _ = try? await session.data(for: AppIdentity.label(req))
+            let started = Date()
+            let reply = try? await session.data(for: AppIdentity.label(req))
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            warmPings += 1
+            if reply == nil { warmFailed += 1 }
+            dlog("NET: keep-warm ping \(warmPings): \(reply == nil ? "FAILED" : "\(ms) ms") (\(warmFailed) failed so far)", tag: "NET")
         }
     }
 
