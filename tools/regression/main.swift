@@ -1003,5 +1003,27 @@ do {
     check(AnswerLayout.copyText("\u{2501}\u{2501}\u{2501} ANSWER \u{2501}\u{2501}\u{2501}\nB") == "\u{2501}\u{2501}\u{2501} ANSWER \u{2501}\u{2501}\u{2501}\nB", "copy: the older section style is copied as shown")
 }
 
+// Windows 1.0.31 item 28: our own server is told which app this is, and nobody else is.
+do {
+    func req(_ url: String) -> URLRequest { var r = URLRequest(url: URL(string: url)!); r.setValue("Bearer x", forHTTPHeaderField: "Authorization"); return r }
+    let ours = AppIdentity.label(req("https://replysis.com/api/v1/interview/ask"), backendHost: "replysis.com", version: "1.0.247")
+    check(ours.value(forHTTPHeaderField: "X-App-Platform") == "mac", "app label: a request to our own server carries X-App-Platform: mac")
+    check(ours.value(forHTTPHeaderField: "X-App-Version") == "1.0.247", "app label: and the plain version")
+    check(ours.value(forHTTPHeaderField: "Authorization") == "Bearer x", "app label: other headers are kept")
+    for other in ["https://github.com/drBindu/replysis-mac/releases/latest/download/appcast.xml", "https://securetoken.googleapis.com/v1/token",
+                  "https://accounts.google.com/o/oauth2/v2/auth", "https://api.deepgram.com/v1/listen", "https://replysis.com.evil.example/x", "https://notreplysis.com/x"] {
+        let r = AppIdentity.label(req(other), backendHost: "replysis.com", version: "1.0.247")
+        check(r.value(forHTTPHeaderField: "X-App-Platform") == nil && r.value(forHTTPHeaderField: "X-App-Version") == nil, "app label: never added for \(URL(string: other)!.host!)")
+    }
+    check(AppIdentity.label(req("https://REPLYSIS.com:443/x"), backendHost: "replysis.com", version: "1.0.247").value(forHTTPHeaderField: "X-App-Platform") == "mac", "app label: the host compare ignores case and the port")
+    check(AppIdentity.label(req("http://127.0.0.1:18997/x"), backendHost: "127.0.0.1", version: "1.0.247").value(forHTTPHeaderField: "X-App-Platform") == "mac", "app label: a developer build's fake server counts as the backend it is configured for")
+    check(AppIdentity.label(req("https://replysis.com/x"), backendHost: nil, version: "1.0.247").value(forHTTPHeaderField: "X-App-Platform") == nil, "app label: no known backend host, no label")
+    check(AppIdentity.plainVersion("1.0.247") == "1.0.247", "app label: a plain version is kept")
+    check(AppIdentity.plainVersion("1.0.247-beta") == nil && AppIdentity.plainVersion("v1.0") == nil && AppIdentity.plainVersion("") == nil && AppIdentity.plainVersion(nil) == nil && AppIdentity.plainVersion("1..") == nil,
+          "app label: only digits and dots can be sent as the version")
+    let noVersion = AppIdentity.label(req("https://replysis.com/x"), backendHost: "replysis.com", version: "bad value")
+    check(noVersion.value(forHTTPHeaderField: "X-App-Platform") == "mac" && noVersion.value(forHTTPHeaderField: "X-App-Version") == nil, "app label: a version that is not plain is left off, the platform still goes")
+}
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

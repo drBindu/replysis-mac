@@ -94,6 +94,13 @@ SCREEN_ANSWER_CODE = ["\n\nDETAIL\n```python\n", "def two_sum(nums, target):\n",
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
+
+    def parse_request(self):
+        # One line per request with the two labels the app must send to our own server (Windows 1.0.31 item 28).
+        ok = super().parse_request()
+        if ok:
+            print(f"HDR {self.command} {self.path.split('?')[0]} platform={self.headers.get('X-App-Platform')} version={self.headers.get('X-App-Version')}", flush=True)
+        return ok
     def _do(self):
         global key_requests, credit_requests, live_credits
         if live_credits is None: live_credits = s["credits"]

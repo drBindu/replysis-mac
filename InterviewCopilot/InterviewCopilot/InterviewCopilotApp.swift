@@ -108,6 +108,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = nil
 
         // Startup diagnostics — first lines in the debug log for supporting real users.
+        AppIdentity.ourBackendHost = URL(string: AppConfig.backendUrl)?.host
         dlog("=== LAUNCH === v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") | path=\(Bundle.main.bundlePath)", tag: "BOOT")
         dlog("AXIsProcessTrusted=\(AXIsProcessTrusted())", tag: "BOOT")
 

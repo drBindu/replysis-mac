@@ -518,7 +518,7 @@ struct LoginView: View {
             "email": cleanEmail, "password": password, "returnSecureToken": true
         ])
         do {
-            let (data, _) = try await URLSession.shared.data(for: req)
+            let (data, _) = try await URLSession.shared.data(for: AppIdentity.label(req))
             guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return (false, "Sign in failed. Please try again.")
             }
@@ -580,7 +580,7 @@ struct LoginView: View {
             "email": cleanEmail, "password": password, "returnSecureToken": true
         ])
         do {
-            let (data, _) = try await URLSession.shared.data(for: req)
+            let (data, _) = try await URLSession.shared.data(for: AppIdentity.label(req))
             guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return (false, "Could not create account. Please try again.")
             }
@@ -640,7 +640,7 @@ struct LoginView: View {
         req.httpBody = try? JSONSerialization.data(withJSONObject: [
             "idToken": idToken, "displayName": name, "returnSecureToken": false
         ])
-        _ = try? await URLSession.shared.data(for: req)
+        _ = try? await URLSession.shared.data(for: AppIdentity.label(req))
     }
 
     func sendPasswordReset(email: String) async -> Bool {
@@ -650,7 +650,7 @@ struct LoginView: View {
         req.timeoutInterval = 15
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["requestType": "PASSWORD_RESET", "email": email])
-        guard let (_, resp) = try? await URLSession.shared.data(for: req) else { return false }
+        guard let (_, resp) = try? await URLSession.shared.data(for: AppIdentity.label(req)) else { return false }
         return (resp as? HTTPURLResponse)?.statusCode == 200
     }
 }

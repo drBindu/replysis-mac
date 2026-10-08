@@ -299,7 +299,7 @@ class UserSession {
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
             do {
-                let (data, response) = try await URLSession.shared.data(for: req)
+                let (data, response) = try await URLSession.shared.data(for: AppIdentity.label(req))
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let newToken = obj["id_token"] as? String,
@@ -564,14 +564,14 @@ class UserSession {
             return r
         }
         do {
-            var (data, resp) = try await URLSession.shared.data(for: makeRequest())
+            var (data, resp) = try await URLSession.shared.data(for: AppIdentity.label(makeRequest()))
             var statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 0
             // The stored timestamp is only a guess at "still valid": wrong after a long sleep,
             // a clock change, or a session revoked elsewhere. A 401 for someone signed in is
             // worth ONE forced refresh and ONE more try before it is called a sign-out.
             if statusCode == 401, !isGuestSession, !refreshToken.isEmpty, await tryRefreshAsync() {
                 dlog("SM key fetch: 401 on a stale sign-in — refreshed it and asked again", tag: "AUTH")
-                (data, resp) = try await URLSession.shared.data(for: makeRequest())
+                (data, resp) = try await URLSession.shared.data(for: AppIdentity.label(makeRequest()))
                 statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 0
             }
             keyNoConnectionFailures = 0        // an answer of any kind means the connection is back
@@ -654,7 +654,7 @@ enum AppConfig {
         guard let url = URL(string: "\(backendUrl)/api/config/keys") else { return }
         var configReq = URLRequest(url: url)
         configReq.timeoutInterval = 8
-        guard let (data, response) = try? await URLSession.shared.data(for: configReq) else {
+        guard let (data, response) = try? await URLSession.shared.data(for: AppIdentity.label(configReq)) else {
             dlog("AppConfig: remote config fetch failed (network)", tag: "CONFIG")
             return
         }

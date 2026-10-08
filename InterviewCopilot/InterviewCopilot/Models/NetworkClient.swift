@@ -128,7 +128,7 @@ class NetworkClient {
         guard let req = screenCacheRequest(body: body) else { return (EarlyUpload(), nil) }
         let started = Date()
         earlyUploadDropped = false
-        let work = Task { try await uploadSession.data(for: req) }
+        let work = Task { try await uploadSession.data(for: AppIdentity.label(req)) }
         earlyUploadWork = work
         let watchdog = Task {
             try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
@@ -279,7 +279,7 @@ class NetworkClient {
                 }
                 do {
                     let sentAt = Date()
-                    let (bytes, response) = try await session.bytes(for: req, delegate: AnswerTimingDelegate())
+                    let (bytes, response) = try await session.bytes(for: AppIdentity.label(req), delegate: AnswerTimingDelegate())
                     let headersAt = Date().timeIntervalSince(sentAt)
                     if let http = response as? HTTPURLResponse {
                         // A server that cannot read a compressed body says so BEFORE it charges
@@ -424,7 +424,7 @@ class NetworkClient {
             var req = URLRequest(url: url)
             req.httpMethod = "HEAD"          // no body to carry; any reply, even a 404, proves the connection is open
             req.timeoutInterval = 6
-            _ = try? await session.data(for: req)
+            _ = try? await session.data(for: AppIdentity.label(req))
         }
     }
 
@@ -485,7 +485,7 @@ class NetworkClient {
         req.setValue(DeviceIdentity.current, forHTTPHeaderField: "X-Device-Id")
 
         do {
-            let (data, response) = try await shortSession.data(for: req)
+            let (data, response) = try await shortSession.data(for: AppIdentity.label(req))
             // Only a successful reply carrying a real balance counts. An error reply (a 503 from
             // a server having a bad moment, a 401) has a JSON body too, and with every field
             // defaulted it read as "0 credits, free plan": a paying customer was told their free
@@ -531,7 +531,7 @@ class NetworkClient {
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["minutes": minutes])
 
         do {
-            let (data, response) = try await shortSession.data(for: req)
+            let (data, response) = try await shortSession.data(for: AppIdentity.label(req))
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                 return nil
             }
@@ -559,7 +559,7 @@ class NetworkClient {
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["minutes": minutes])
 
         let done = DispatchSemaphore(value: 0)
-        URLSession.shared.dataTask(with: req) { _, _, _ in done.signal() }.resume()
+        URLSession.shared.dataTask(with: AppIdentity.label(req)) { _, _, _ in done.signal() }.resume()
         _ = done.wait(timeout: .now() + 3)
     }
 
@@ -571,7 +571,7 @@ class NetworkClient {
         req.setValue("Bearer \(UserSession.shared.idToken)", forHTTPHeaderField: "Authorization")
         req.setValue(DeviceIdentity.current, forHTTPHeaderField: "X-Device-Id")
         do {
-            let (data, _) = try await shortSession.data(for: req)
+            let (data, _) = try await shortSession.data(for: AppIdentity.label(req))
             guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
             return obj["remainingMinutes"] as? Int
         } catch { return nil }
@@ -608,7 +608,7 @@ class NetworkClient {
 
         Task {
             do {
-                let (data, _) = try await shortSession.data(for: req)
+                let (data, _) = try await shortSession.data(for: AppIdentity.label(req))
                 guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       obj["success"] as? Bool == true else {
                     dlog("Cloud session sync failed", tag: "SESSION")
@@ -641,7 +641,7 @@ class NetworkClient {
         req.setValue("Bearer \(UserSession.shared.idToken)", forHTTPHeaderField: "Authorization")
 
         do {
-            let (data, _) = try await shortSession.data(for: req)
+            let (data, _) = try await shortSession.data(for: AppIdentity.label(req))
             guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let arr = obj["sessions"] as? [[String: Any]] else {
                 dlog("Cloud sessions fetch failed", tag: "SESSION")

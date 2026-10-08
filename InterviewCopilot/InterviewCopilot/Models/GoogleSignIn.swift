@@ -155,7 +155,7 @@ class GoogleSignIn {
             "code": code, "codeVerifier": verifier, "redirectUri": redirectUri
         ])
         do {
-            let (data, resp) = try await URLSession.shared.data(for: req)
+            let (data, resp) = try await URLSession.shared.data(for: AppIdentity.label(req))
             guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                 dlog("Google: backend exchange HTTP \((resp as? HTTPURLResponse)?.statusCode ?? 0)", tag: "GOOGLE")
                 return nil
@@ -198,7 +198,7 @@ class GoogleSignIn {
         req.httpBody = bodyStr.data(using: .utf8)
 
         do {
-            let (data, _) = try await URLSession.shared.data(for: req)
+            let (data, _) = try await URLSession.shared.data(for: AppIdentity.label(req))
             guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 dlog("Google: bad JSON: \(String(data:data,encoding:.utf8) ?? "")", tag: "GOOGLE"); return nil
             }
@@ -233,7 +233,7 @@ class GoogleSignIn {
             "returnIdpCredential": true,
             "returnSecureToken": true
         ])
-        guard let (data, _) = try? await URLSession.shared.data(for: req) else {
+        guard let (data, _) = try? await URLSession.shared.data(for: AppIdentity.label(req)) else {
             return .failure("Network error during Firebase sign-in.")
         }
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {

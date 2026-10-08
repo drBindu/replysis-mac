@@ -231,6 +231,46 @@ class SpeechmaticsEngine {
     /// Engines are ended one at a time, in order, off the main thread.
     private let endQueue = DispatchQueue(label: "replysis.engine.end", qos: .userInitiated)
 
+    // ── The first start on a computer is warmed up while the person is still signing in (Windows 1.0.30) ──
+    //
+    // The shared engine has a `--warmup` flag: it loads everything it uses and exits (0.76 s the first time, 0.2 s after) and
+    // touches no audio and no network. Run once at launch in the background, it makes the system open, scan and cache the
+    // seventy odd engine files then, not while somebody waits for "connecting" on a computer that has never run the engine.
+    // An older engine rejects the flag and exits, harmlessly.
+    nonisolated(unsafe) private static var warmedUp = false
+
+    func warmUpFiles() {
+        guard !Self.warmedUp else { return }
+        Self.warmedUp = true
+        let resources = Bundle.main.bundleURL.appendingPathComponent("Contents").appendingPathComponent("Resources")
+        let execDir = URL(fileURLWithPath: Bundle.main.executablePath ?? "").deletingLastPathComponent()
+        let candidates = [resources.appendingPathComponent("speechmatics_engine").appendingPathComponent("speechmatics_engine"),
+                          resources.appendingPathComponent("speechmatics_engine"),
+                          execDir.appendingPathComponent("speechmatics_engine")]
+        let isFile: (URL) -> Bool = { url in
+            var directory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: url.path, isDirectory: &directory) && !directory.boolValue
+                && FileManager.default.isExecutableFile(atPath: url.path)
+        }
+        guard let binary = candidates.first(where: isFile) else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let task = Process()
+            task.executableURL = binary
+            task.arguments = ["--warmup"]
+            task.standardOutput = FileHandle.nullDevice
+            task.standardError = FileHandle.nullDevice
+            let started = Date()
+            do { try task.run() } catch {
+                dlog("SM: engine warm-up could not start: \(error.localizedDescription)", tag: "SM")
+                return
+            }
+            // It takes under a second; if something is wrong it must not linger.
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 20) { if task.isRunning { task.terminate() } }
+            task.waitUntilExit()
+            dlog("SM: engine warm-up finished in \(Int(Date().timeIntervalSince(started) * 1000)) ms (exit \(task.terminationStatus)); the engine files are opened and cached", tag: "SM")
+        }
+    }
+
     private func launchEngine(smKey: String) {
         let baseDir = Bundle.main.bundleURL
             .appendingPathComponent("Contents")

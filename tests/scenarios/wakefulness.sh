@@ -1,8 +1,7 @@
 #!/bin/bash
-# Always ready (owner, 2026-10-08): from sign-in until sign-out the Mac is kept from idle sleep and the app from App Nap,
-# on the Setup page and in an interview alike, and after a wake the answer connection is already fresh and warm.
-# Starts the REAL app (a Debug build, invisible, against a fake server), reads the system's own list of sleep assertions,
-# posts the wake notification, and asks a question straight after to see which kind of connection it rode.
+# Never slowed, never asleep mid-call (Windows 1.0.31 item 26): the app is out of App Nap for its whole life without keeping the Mac
+# awake, the Mac is kept from idle sleep only while an interview session runs, and after a wake the answer connection is already fresh.
+# Starts the REAL app (a Debug build, invisible, against a fake server) and reads the system's own list of sleep assertions.
 #   wakefulness.sh <path-to-Debug-InterviewCopilot.app>
 APP="$1"; BIN="$APP/Contents/MacOS/InterviewCopilot"
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -19,15 +18,17 @@ held(){ pmset -g assertions 2>/dev/null | grep -F "pid $PID" | grep -c "PreventU
 since(){ sed -n "$((L+1)),\$p" "$LOG"; }
 fail=0; ok(){ echo "  PASS  $1"; }; no(){ echo "  FAIL  $1"; fail=1; }
 sleep 10
-[ "$(held)" -ge 1 ] && ok "signed in, on the Setup page, the Mac is kept from idle sleep" || no "not kept awake on the Setup page"
-pmset -g assertions 2>/dev/null | grep -F "pid $PID" | sed 's/^ *//' | cut -c1-170 | sed 's/^/        /'
+[ "$(held)" = "0" ] && ok "on the Setup page the Mac is not kept awake (a Mac left open sleeps normally)" || no "kept awake on the Setup page"
+since | grep -q "AWAKE: App Nap cannot slow the app" && ok "from launch App Nap is told the app is latency critical" || no "no App Nap hold at launch"
 cmd start; sleep 4
-[ "$(held)" -ge 1 ] && ok "during an interview it is still held" || no "not held during an interview"
+[ "$(held)" -ge 1 ] && ok "during an interview the Mac is kept from idle sleep" || no "not kept awake during an interview"
+pmset -g assertions 2>/dev/null | grep -F "pid $PID" | sed 's/^ *//' | cut -c1-170 | sed 's/^/        /'
 cmd back; sleep 4
-[ "$(held)" -ge 1 ] && ok "back on Setup it is still held" || no "released on going back to Setup"
+[ "$(held)" = "0" ] && ok "back on Setup the sleep hold is released" || no "still held after going back to Setup"
 cmd start; sleep 3
+[ "$(held)" -ge 1 ] && ok "a second interview holds it again" || no "second interview did not hold it"
 cmd finish; sleep 5
-[ "$(held)" -ge 1 ] && ok "after finishing an interview it is still held" || no "released after finishing"
+[ "$(held)" = "0" ] && ok "finishing the interview releases it" || no "still held after finishing"
 # A wake: the old connection is dropped and a new one opened before anyone asks
 cmd start; sleep 3
 cmd wakenote; sleep 5

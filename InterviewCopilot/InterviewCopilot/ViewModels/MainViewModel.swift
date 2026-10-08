@@ -376,6 +376,8 @@ class MainViewModel {
         // Keeps the answer connection warm, so the first question after a quiet minute does
         // not pay for a new connection and a cold server (see NetworkClient.startKeepWarm).
         NetworkClient.shared.startKeepWarm()
+        holdNeverSlowed()
+        engine.warmUpFiles()   // the engine's files opened and cached now, not while somebody waits for "connecting"
         guard !didAppear else { return }
         didAppear = true
         // Apply the persisted Stealth Mode setting to the window immediately — default is
@@ -2779,28 +2781,40 @@ class MainViewModel {
     /// recovery in updateTranscript and handleSpeechKeyError.
     private var keyErrorNoticeShowing = false
     private var wasListeningBeforeKeyError = false
-    // ── Always ready: never asleep, never slowed, while the app is open and signed in ────────────
+    // ── Ready at any moment: never slowed while open, never asleep during an interview (Windows 1.0.31 item 26) ──────
     //
-    // Windows 1.0.31 item 26 held this only while an interview ran. The owner (2026-10-08): "I don't want to sleep it
-    // anytime, it always be ready and warm, ready anytime, any situation." An interview can start at any moment, and a
-    // Mac that dozed off between two of them, or an app macOS slowed down because nobody touched it, is a deaf app
-    // for the first seconds of the next one. So from sign-in until sign-out or quit the system is kept from idle sleep,
-    // and App Nap is told this app is latency critical (its timers and its network are not coalesced or delayed).
-    // The display may still sleep: only the system and the app stay ready. Closing the lid still sleeps the Mac, and
-    // then reconnectAfterWake has everything warm again before the first question.
+    // Two holds, and the difference matters:
+    //  1. For the life of the app, App Nap is told this app is latency critical, so the speech engine and the network are
+    //     never slowed or coalesced when the window is hidden or covered. It does NOT keep the Mac awake: NSActivityUserInitiated
+    //     alone would (it includes idle system sleep), so the variant that allows sleep is used. A Mac left open with no
+    //     session sleeps normally, and reconnectAfterWake has everything warm again when it wakes.
+    //  2. While an interview session runs the system is also kept from idle sleep, so the Mac does not doze off mid call.
+    //     Released the moment the session ends. The display may still sleep.
+    // (My earlier reading of the owner's "I don't want to sleep it anytime" held the Mac awake from sign-in. That was wrong:
+    // the owner meant the speech engine and the models, not the computer. The Windows spec is the two holds above.)
+    @ObservationIgnored private var lifeActivity: NSObjectProtocol?
     @ObservationIgnored private var sessionActivity: NSObjectProtocol?
 
+    /// Held from launch to quit. Called once at start-up.
+    private func holdNeverSlowed() {
+        guard lifeActivity == nil else { return }
+        lifeActivity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+            reason: "Replysis stays responsive when its window is hidden or covered")
+        dlog("AWAKE: App Nap cannot slow the app or its speech engine (the Mac may still sleep when no interview runs)", tag: "APP")
+    }
+
     private func syncWakefulness() {
-        let want = session.isLoggedIn
+        let want = appStep == .interview && interviewStarted && !sessionsOpen && session.isLoggedIn
         if want, sessionActivity == nil {
             sessionActivity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated, .idleSystemSleepDisabled, .latencyCritical],
-                reason: "Replysis is open and signed in, ready for an interview at any moment")
-            dlog("AWAKE: signed in and open; the Mac is kept from idle sleep and the app from App Nap", tag: "APP")
+                reason: "A Replysis interview session is running")
+            dlog("AWAKE: an interview session is running; the Mac is kept from idle sleep and the app from App Nap", tag: "APP")
         } else if !want, let activity = sessionActivity {
             ProcessInfo.processInfo.endActivity(activity)
             sessionActivity = nil
-            dlog("AWAKE: signed out; the Mac may sleep again", tag: "APP")
+            dlog("AWAKE: the session ended; the Mac may sleep again", tag: "APP")
         }
     }
 

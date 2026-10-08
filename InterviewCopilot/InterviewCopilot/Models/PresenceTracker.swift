@@ -76,7 +76,7 @@ final class PresenceTracker {
         req.httpBody = Data(("{\"fields\":{" + fields + "}}").utf8)
 
         do {
-            let (_, response) = try await URLSession.shared.data(for: req)
+            let (_, response) = try await URLSession.shared.data(for: AppIdentity.label(req))
             guard let http = response as? HTTPURLResponse else { return }
             if (200...299).contains(http.statusCode) {
                 if includeLogin { dlog("Presence: first beat sent (lastLogin + lastActive)", tag: "PRESENCE") }
