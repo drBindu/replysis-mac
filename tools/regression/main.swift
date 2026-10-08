@@ -995,5 +995,13 @@ do {
     check(pb.isGreeting("Good morning!") && !pb.isGreeting("Hi, what is dependency injection?"), "greetings stay tight: only a greeting is a greeting")
 }
 
+
+do {
+    let screen = "From your screen: Chrome, Two Sum\n\nSAY THIS\nI would use a hash map.\n\nDETAIL\n```python\nx = 1\n```\n\nTime: O(n)\nSpace: O(n)"
+    check(AnswerLayout.copyText(screen) == "From your screen: Chrome, Two Sum\n\nI would use a hash map.", "copy: the line saying what was read and the part to say, no headings, no code, no complexity line")
+    check(AnswerLayout.copyText("Q: What is a queue?\n\nA queue is first in, first out.") == "Q: What is a queue?\n\nA queue is first in, first out.", "copy: an ordinary spoken answer is copied as it is")
+    check(AnswerLayout.copyText("\u{2501}\u{2501}\u{2501} ANSWER \u{2501}\u{2501}\u{2501}\nB") == "\u{2501}\u{2501}\u{2501} ANSWER \u{2501}\u{2501}\u{2501}\nB", "copy: the older section style is copied as shown")
+}
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

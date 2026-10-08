@@ -230,6 +230,24 @@ enum AnswerLayout {
         AnswerClosers.stripTrailingOffer(cleaned, allowClosingQuestion: allowClosingQuestion)
     }
 
+    // MARK: - What Copy takes
+
+    /// The text a person sees in the answer, for the Copy button: the one quiet line saying what was read, then the part to
+    /// say, without the section headings the model writes (SAY THIS, DETAIL) and without the code, which has its own Copy code
+    /// button. Copying the raw answer put those headings and the fences in whatever they pasted it into.
+    static func copyText(_ answer: String) -> String {
+        if answer.contains("\u{2501}\u{2501}\u{2501}") { return answer }   // the older section style is shown as it is
+        var rest = answer
+        var note = ""
+        let first = rest.prefix(while: { $0 != "\n" })
+        if first.hasPrefix("From your screen") {
+            note = String(first)
+            rest = String(rest.dropFirst(first.count))
+        }
+        let prose = split(rest.trimmingCharacters(in: .whitespacesAndNewlines)).prose
+        return [note, prose].filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
     // MARK: - Small helpers
 
     private static func replace(_ re: NSRegularExpression, in s: String, with template: String) -> String {

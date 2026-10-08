@@ -223,7 +223,7 @@ struct AnswerOverlayView: View {
 
             Button {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(vm.aiAnswer, forType: .string)
+                NSPasteboard.general.setString(AnswerLayout.copyText(vm.aiAnswer), forType: .string)
             } label: {
                 Image(systemName: "doc.on.doc").foregroundColor(Color(hex: "#94a3b8"))
             }

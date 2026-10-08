@@ -1629,7 +1629,7 @@ struct MainView: View {
     }
 
     func copyAnswer() {
-        let text = vm.aiAnswer
+        let text = AnswerLayout.copyText(vm.aiAnswer)
         Task { @MainActor in _ = await Clipboard.copy(text) }   // retries while another program holds the clipboard
     }
 
