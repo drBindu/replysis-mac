@@ -163,24 +163,44 @@ struct MainView: View {
             if vm.inSetup {
                 setupHeaderRow
             } else {
-                ViewThatFits(in: .horizontal) {
-                    headerRow(.full)
-                    headerRow(.noStrapline)
-                    headerRow(.iconBrand)
-                    headerRow(.minimal)
-                    // Last rung: the controls move to a second row instead of the window having
-                    // to be a wide strip. Owner, 2026-10-02: "all windows are too rectangular
-                    // big, not a good fit". One row needs about 1,100pt of width however it is
-                    // trimmed, which is what forced a 1200 by 472 window.
-                    headerTwoRows
-                }
+                #if DEBUG
+                if let forced = Self.debugHeaderTier {
+                    // Developer measurement: one rung at its natural width, no fitting.
+                    headerRow(forced).fixedSize(horizontal: true, vertical: false)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else { fittedHeader }
+                #else
+                fittedHeader
+                #endif
             }
         }
         .padding(.horizontal, 18)
         .frame(minHeight: 64)
     }
 
-    enum HeaderTier { case full, noStrapline, iconBrand, minimal }
+    #if DEBUG
+    static var debugHeaderTier: HeaderTier?
+    #endif
+
+    var fittedHeader: some View {
+        ViewThatFits(in: .horizontal) {
+            headerRow(.full)
+            headerRow(.noStrapline)
+            headerRow(.iconBrand)
+            headerRow(.minimal)
+            // Same row, the toolbar trimmed to what is read at a glance: no F8 chip, Compact
+            // as its icon. Owner, 2026-10-08: with the buttons on a second row "the auto
+            // manual and etc buttons are getting down of mic". Every control stays beside
+            // the mic down to about 1,000pt, which is where the window opens on a 13".
+            headerRow(.tight)
+            // Last rung, for a window dragged narrower than that: the controls move to a
+            // second row instead of the window having to be a wide strip. Owner,
+            // 2026-10-02: "all windows are too rectangular big, not a good fit".
+            headerTwoRows
+        }
+    }
+
+    enum HeaderTier { case full, noStrapline, iconBrand, minimal, tight }
 
     /// The header on two rows: who and how it is going on top, how it listens and what it reads below.
     var headerTwoRows: some View {
@@ -192,16 +212,16 @@ struct MainView: View {
                 micControl(.full)
                     .layoutPriority(1)
                 Spacer(minLength: 12)
-                statusCluster
+                statusCluster()
                     .layoutPriority(3)
                 headerSeparator.padding(.horizontal, 6)
-                accountAndCloseControls
+                accountAndCloseControls()
                     .layoutPriority(3)
             }
             .frame(height: 50)
             HStack(spacing: 13) {
-                listeningModeSwitch
-                watchAndCompactGroup
+                listeningModeSwitch()
+                watchAndCompactGroup(compact: false)
                 toolSegmentGroup
                 Spacer(minLength: 0)
             }
@@ -211,8 +231,8 @@ struct MainView: View {
     }
 
     /// Session time and the answers badge, read as one unit: how the session is going.
-    var statusCluster: some View {
-        HStack(spacing: 8) {
+    func statusCluster(compact: Bool = false) -> some View {
+        HStack(spacing: compact ? 6 : 8) {
             if vm.sessionTimerVisible {
                 HStack(spacing: 5) {
                     Image(systemName: "record.circle").font(.system(size: 10)).foregroundColor(Color(hex: "#ef4444"))
@@ -221,11 +241,11 @@ struct MainView: View {
                         .foregroundColor(Color(hex: "#cbd5e1"))
                         .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                 }
-                .padding(.horizontal, 11).padding(.vertical, 8)
+                .padding(.horizontal, compact ? 8 : 11).padding(.vertical, 8)
                 .background(Capsule().fill(Color.white.opacity(0.04)))
                 .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
             }
-            creditsBadgeView
+            creditsBadge(compact: compact)
         }
     }
 
@@ -233,11 +253,11 @@ struct MainView: View {
         HStack(spacing: 0) {
             brandView(tier)
                 .layoutPriority(2)
-            Spacer(minLength: 12)
+            Spacer(minLength: tier == .tight ? 8 : 12)
             micControl(tier)
                 .layoutPriority(1)
-            Spacer(minLength: 12)
-            rightCluster
+            Spacer(minLength: tier == .tight ? 8 : 12)
+            rightCluster(compact: tier == .tight)
                 .layoutPriority(3)   // the controls are fixed-size now, so give them the
                 // strongest claim: if anything must give up width it should be the mic
                 // pill's hint text, never a button label breaking across three lines.   // PREMIUM FIX: never let the mic pill's growth (its hint
@@ -292,7 +312,7 @@ struct MainView: View {
             Image("ReplysisMark")
                 .resizable().interpolation(.high)
                 .aspectRatio(contentMode: .fit)
-                .frame(width: 34, height: 34)
+                .frame(width: tier == .tight ? 30 : 34, height: tier == .tight ? 30 : 34)
                 .accessibilityLabel("Replysis")
             // The strapline is the first thing to go: it is decoration, and it costs more
             // width than the wordmark it sits under. The wordmark goes next; the mark itself
@@ -314,7 +334,7 @@ struct MainView: View {
     func micControl(_ tier: HeaderTier) -> some View {
         let listening = vm.isListening
         return Button(action: micAction) {
-            HStack(spacing: 11) {
+            HStack(spacing: tier == .tight ? 8 : 11) {
                 ZStack {
                     Circle()
                         .fill(Color(hex: "#0c1220"))
@@ -344,7 +364,7 @@ struct MainView: View {
                     // keep this pill's footprint constant across every state.
                     // Last detail to be dropped, and only at the tightest rung: the status
                     // word above it ("LISTENING" / "MUTED") still says what is happening.
-                    if tier != .minimal {
+                    if tier != .minimal && tier != .tight {
                         Text(micHintText)
                             .font(.system(size: 8.5, weight: .medium))
                             .foregroundColor(micHintColor)
@@ -354,7 +374,7 @@ struct MainView: View {
                     }
                 }
             }
-            .padding(.leading, 8).padding(.trailing, 14).padding(.vertical, 7)
+            .padding(.leading, 8).padding(.trailing, tier == .tight ? 10 : 14).padding(.vertical, 7)
             .background(
                 Capsule().fill(Color.white.opacity(0.035))
                     .overlay(Capsule().stroke(
@@ -390,10 +410,10 @@ struct MainView: View {
     }
 
     // ── Right cluster: interview actions + profile + window ────────
-    var rightCluster: some View {
+    func rightCluster(compact: Bool) -> some View {
         // Wider gaps between groups than inside them: separation is what makes a toolbar
         // read as a few considered clusters instead of one crowded row.
-        HStack(spacing: 13) {
+        HStack(spacing: compact ? 9 : 13) {
             // No Analyze button: it duplicated what F8/F9 already do, and the footer
             // names both. Watch Screen is the control worth toolbar space, because it is
             // the one set once before the call and then never touched — reaching for a
@@ -403,35 +423,37 @@ struct MainView: View {
             // separately-bordered floating buttons, so the header reads as a few clean
             // groups (Analyze / view toggles / status / account) rather than a row of
             // many individual chips.
-            listeningModeSwitch
+            listeningModeSwitch(compact: compact)
 
-            watchAndCompactGroup
+            watchAndCompactGroup(compact: compact)
 
             // Pin joins the view-toggle group visually instead of floating alone.
             toolSegmentGroup
 
-            headerSeparator
+            if !compact { headerSeparator }
 
             // Status cluster: session time and credits read as one unit, because they are
             // both "how the session is going" rather than controls.
-            statusCluster
+            statusCluster(compact: compact)
 
-            headerSeparator
+            if !compact { headerSeparator }
 
-            accountAndCloseControls
+            accountAndCloseControls(compact: compact)
         }
     }
 
     /// The answers badge. Shared by the interview header and the Setup header.
+    var creditsBadgeView: some View { creditsBadge(compact: false) }
+
     @ViewBuilder
-    var creditsBadgeView: some View {
+    func creditsBadge(compact: Bool) -> some View {
         if vm.showCreditsBadge {
                 Button(action: { vm.askAgainNow(); showCreditsPopover.toggle() }) {
                     Text(vm.creditsText)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(vm.creditsColor)
                         .lineLimit(1).fixedSize(horizontal: true, vertical: false)
-                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .padding(.horizontal, compact ? 9 : 12).padding(.vertical, 8)
                         .background(Capsule().fill(Color.white.opacity(0.05)))
                         .overlay(Capsule().stroke(vm.creditsColor.opacity(0.35), lineWidth: 1))
                 }
@@ -448,10 +470,10 @@ struct MainView: View {
 
     /// Profile (or Sign In) and Close. Shared by the interview header and the Setup header.
     @ViewBuilder
-    var accountAndCloseControls: some View {
+    func accountAndCloseControls(compact: Bool = false) -> some View {
             // Profile / account  → opens rich dropdown
             if vm.showProfile {
-                profileButton
+                profileButton(compact: compact)
             } else {
                 Button(action: { showLogin = true }) {
                     HStack(spacing: 5) {
@@ -489,27 +511,27 @@ struct MainView: View {
     // The "Real interview? Mic off in Settings" capsule lived here. It pointed at a
     // Settings switch that is now a segment in this same toolbar, and the two tips that
     // matter are alerts with a button that performs the switch (see interviewTipAlert).
-    var listeningModeSwitch: some View { listeningModeSegments }
+    func listeningModeSwitch(compact: Bool = false) -> some View { listeningModeSegments(compact: compact) }
 
     // Group 1: WHEN the app answers. Group 2, past the hairline: WHAT it hears.
     // The audio choice was a checkbox in Settings called "microphone", and people left it
     // on in real interviews, so the app heard the candidate's own answers and took them as
     // new questions. Named for the situation, beside the mode it belongs with, and read
     // before the call starts. Windows 9294be2.
-    var listeningModeSegments: some View {
+    func listeningModeSegments(compact: Bool) -> some View {
         HStack(spacing: 0) {
-            modeSegment(.auto, label: "AUTO",
+            modeSegment(.auto, label: "AUTO", compact: compact,
                         help: "Auto. Answers as soon as the question ends.")
             Rectangle().fill(Color.white.opacity(0.10)).frame(width: 1, height: 18)
-            modeSegment(.manual, label: "MANUAL",
+            modeSegment(.manual, label: "MANUAL", compact: compact,
                         help: "Manual. Press Space to listen, and again to answer. Most accurate, because you decide when the question ends. In Auto the end is inferred from a pause, so an interviewer who stops mid-sentence to think can be answered half-way.")
 
             Rectangle().fill(Color.white.opacity(0.18))
-                .frame(width: 1, height: 18).padding(.horizontal, 6)
+                .frame(width: 1, height: 18).padding(.horizontal, compact ? 3 : 6)
 
-            audioSegment(practice: false, label: "Interview", icon: "video.fill",
+            audioSegment(practice: false, label: "Interview", icon: "video.fill", compact: compact,
                          help: AudioSourceRules.interviewHelp)
-            audioSegment(practice: true, label: "Practice", icon: "mic.fill",
+            audioSegment(practice: true, label: "Practice", icon: "mic.fill", compact: compact,
                          help: AudioSourceRules.practiceHelp)
         }
         .help(AudioSourceRules.hearingLine(practiceOn: vm.practiceAudioOn))
@@ -518,7 +540,7 @@ struct MainView: View {
         .clipShape(Capsule())
     }
 
-    func modeSegment(_ mode: ListeningMode, label: String, help: String) -> some View {
+    func modeSegment(_ mode: ListeningMode, label: String, compact: Bool = false, help: String) -> some View {
         let selected = vm.listeningMode == mode
         let accent = GlassMaterial.text
         return Button(action: { vm.setListeningMode(mode) }) {
@@ -529,7 +551,7 @@ struct MainView: View {
                     .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                     .foregroundColor(selected ? .white : Color(hex: "#64748b"))
             }
-            .padding(.horizontal, 11).padding(.vertical, 8)
+            .padding(.horizontal, compact ? 8 : 11).padding(.vertical, 8)
             .background(selected ? GlassMaterial.fill(GlassMaterial.selectedSegment, windowOpacity: vm.mainWindowOpacity) : Color.clear)
             .contentShape(Rectangle())
         }
@@ -590,18 +612,20 @@ struct MainView: View {
         .onChange(of: vm.alertTitle) { alertExpanded = false }
     }
 
-    func audioSegment(practice: Bool, label: String, icon: String, help: String) -> some View {
+    func audioSegment(practice: Bool, label: String, icon: String, compact: Bool = false, help: String) -> some View {
         let selected = vm.practiceAudioOn == practice
         return Button(action: { vm.selectAudioSource(practice: practice) }) {
             HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 9, weight: .semibold))
+                if !compact {
+                    Image(systemName: icon)
+                        .font(.system(size: 9, weight: .semibold))
+                }
                 Text(label)
                     .font(.system(size: 10.5, weight: .semibold))
                     .lineLimit(1).fixedSize(horizontal: true, vertical: false)
             }
             .foregroundColor(selected ? GlassMaterial.text : Color(hex: "#92929F"))
-            .padding(.horizontal, 10).padding(.vertical, 5)
+            .padding(.horizontal, compact ? 9 : 10).padding(.vertical, 5)
             .background(RoundedRectangle(cornerRadius: 4).fill(
                 selected ? GlassMaterial.fill(GlassMaterial.selectedSegment, windowOpacity: vm.mainWindowOpacity)
                          : Color.clear))
@@ -612,7 +636,7 @@ struct MainView: View {
     }
 
     // ── WATCH SCREEN | COMPACT — one grouped pill, as on Windows ──
-    var watchAndCompactGroup: some View {
+    func watchAndCompactGroup(compact: Bool) -> some View {
         HStack(spacing: 6) {
             // AN ACTION, NOT A SWITCH. Pressing it reads the screen there and then; the label
             // never changes, because a control whose text changes is read as a switch.
@@ -620,7 +644,7 @@ struct MainView: View {
             // Styled to the Windows 1.0.21 glass spec: neutral silver, fills that follow the
             // opacity slider, text that never fades.
             Button(action: { vm.runScreenAnalysis(wholeScreen: false) }) {
-                ReadScreenButtonLabel(busy: vm.isScreenAnalyzing)
+                ReadScreenButtonLabel(busy: vm.isScreenAnalyzing, showKey: !compact)
             }
             .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
                                           minHeight: 28, horizontalPadding: 9, verticalPadding: 3))
@@ -633,13 +657,16 @@ struct MainView: View {
                 HStack(spacing: 6) {
                     Image(systemName: vm.showCameraOverlay ? "eye.fill" : "eye")
                         .font(.system(size: 11, weight: .semibold))
-                    Text("Compact")
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .lineLimit(1).fixedSize()
+                    if !compact {
+                        Text("Compact")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .lineLimit(1).fixedSize()
+                    }
                 }
             }
             .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
                                           minHeight: 28, horizontalPadding: 9, verticalPadding: 3))
+            .accessibilityLabel("Compact")
             .help("Compact overlay: a small bar instead of the full window")
         }
     }
@@ -695,15 +722,17 @@ struct MainView: View {
     }
 
     // ── Profile button + dropdown popover ──────────────────────────
-    var profileButton: some View {
+    func profileButton(compact: Bool = false) -> some View {
         Button(action: { showProfileMenu.toggle() }) {
             HStack(spacing: 8) {
                 profileAvatar(size: 32, fontSize: 12)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(Color(hex: "#475569"))
+                if !compact {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(Color(hex: "#475569"))
+                }
             }
-            .padding(.leading, 4).padding(.trailing, 8).padding(.vertical, 4)
+            .padding(.leading, 4).padding(.trailing, compact ? 4 : 8).padding(.vertical, 4)
             .background(Capsule().fill(Color.white.opacity(0.04)))
             .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
         }
@@ -2169,6 +2198,8 @@ struct ScanFrameIcon: Shape {
 /// "Read screen", as specified for both windows: 14pt scan frame, label, F8 at 55%.
 struct ReadScreenButtonLabel: View {
     var busy: Bool
+    /// The F8 chip. Dropped when the toolbar is tight; the tooltip still names the key.
+    var showKey = true
     var body: some View {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
@@ -2183,9 +2214,11 @@ struct ReadScreenButtonLabel: View {
                     .font(.system(size: 10.5, weight: .semibold))
                     .lineLimit(1).fixedSize()
             }
-            Text("F8")
-                .font(.system(size: 9, weight: .semibold))
-                .opacity(0.55)
+            if showKey {
+                Text("F8")
+                    .font(.system(size: 9, weight: .semibold))
+                    .opacity(0.55)
+            }
         }
     }
 }
@@ -2240,7 +2273,7 @@ extension MainView {
             .buttonStyle(.plain)
             .help("Replay the quick intro")
             headerSeparator
-            accountAndCloseControls
+            accountAndCloseControls()
         }
     }
 

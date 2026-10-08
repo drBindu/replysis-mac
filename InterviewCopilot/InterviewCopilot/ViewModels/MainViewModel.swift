@@ -1584,6 +1584,20 @@ class MainViewModel {
             let started = Date()
             engine.stopAndWait()
             dlog(String(format: "ENGINE: stopped and waited, %.0f ms", Date().timeIntervalSince(started) * 1000), tag: "FLOW")
+        case "snap-tiers":
+            // Each single-row header rung at its natural width, to read off how much room it needs.
+            let tiers: [(String, MainView.HeaderTier)] = [("full", .full), ("noStrapline", .noStrapline),
+                                                          ("iconBrand", .iconBrand), ("minimal", .minimal), ("tight", .tight)]
+            for (name, tier) in tiers {
+                MainView.debugHeaderTier = tier
+                snapshot(AnyView(MainView().frame(width: 1500, height: 200, alignment: .top)), name: "tier-\(name)")
+            }
+            MainView.debugHeaderTier = nil
+        case "snap-widths":
+            // The header at the widths a window really has, to see where it goes from one row to two.
+            for w in [880, 920, 960, 1000, 1037, 1100] {
+                snapshot(AnyView(MainView().frame(width: CGFloat(w), height: 1000, alignment: .top)), name: "header-\(w)")
+            }
         case "stallstart": StallMonitor.start(); StallMonitor.reset()
         case "stallreport": dlog("STALL: \(StallMonitor.summary)\nSTALL timeline: \(StallMonitor.timeline)", tag: "FLOW")
         #endif
