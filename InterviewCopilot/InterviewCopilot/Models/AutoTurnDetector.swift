@@ -783,6 +783,12 @@ struct AutoTurnDetector {
             .filter { !$0.isEmpty }
         guard let tail = words.last else { return .unclear }
 
+        // "What is a message queue used for?" is a finished question. Unlike "What are you looking for?", which is followed
+        // by the options, nothing follows "used for?" that the answer would need. Measured 2026-10-08 on the live server:
+        // treating it as unclear cost 1.1 s (an extra 974 ms of waiting) on one of the commonest questions in a technical
+        // interview, and the recogniser had already put the question mark there itself.
+        if last == "?", words.count >= 2, words[words.count - 2] == "used", tail == "for" { return .finished }
+
         // Nothing can follow these and still be a finished sentence, so the speaker is
         // mid-air no matter what the recogniser punctuated.
         if neverEndsSentence.contains(tail) { return punctuated ? .unclear : .unfinished }
