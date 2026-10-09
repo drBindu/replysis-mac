@@ -217,10 +217,12 @@ class H(BaseHTTPRequestHandler):
             raw = read_body(self)
             auth = self.headers.get("Authorization") or ""
             query = self.path.split("?", 1)[1] if "?" in self.path else ""
-            print(f"PRESENCE {self.command} listening={'yes' if 'listening=1' in query else 'no'} auth={'bearer' if auth.startswith('Bearer ') and len(auth) > 7 else 'missing'} "
-                  f"body={len(raw or b'')} platform={self.headers.get('X-App-Platform')} version={self.headers.get('X-App-Version')} at={time.time():.3f}", flush=True)
+            kind = "fresh" if auth == FRESH else ("stale" if auth.startswith("Bearer ") and len(auth) > 7 else "missing")
+            print(f"PRESENCE {self.command} listening={'yes' if 'listening=1' in query else 'no'} auth={kind} "
+                  f"status={204 if kind == 'fresh' else 401} body={len(raw or b'')} platform={self.headers.get('X-App-Platform')} version={self.headers.get('X-App-Version')} at={time.time():.3f}", flush=True)
             if self.command == "DELETE" and os.environ.get("MOCK_PRESENCE_DELAY"): time.sleep(float(os.environ["MOCK_PRESENCE_DELAY"]))
-            self.send_response(204)
+            # Like the real server: a token it does not accept is a 401 and changes nothing
+            self.send_response(204 if kind == "fresh" else 401)
             self.end_headers()
             return
         extra = (" auth=" + ("fresh" if self.headers.get("Authorization") == FRESH else "stale/none")) if url == "/api/v1/stt/key" else ""

@@ -83,26 +83,44 @@ final class PresenceTracker {
         pingServer(token: session.idToken)
     }
 
-    /// The app is quitting: tell the server so the panel drops the Mac at once. Waits for the answer for at most
-    /// PresencePing.leaveWaitSeconds and never longer, so a bad connection cannot hold the quit. Nothing is shown if it fails.
+    /// The app is quitting: tell the server so the panel drops the Mac at once. The whole thing, a token refresh included, waits for
+    /// PresencePing.leaveWaitSeconds at most and never longer, so a bad connection cannot hold the quit. Nothing is shown if it fails.
+    ///
+    /// The token is made fresh FIRST when it is old (a long sleep, then a quit): the first version sent the old one and the server
+    /// answered 401, so the panel kept the Mac for another two minutes. A 401 for a token that looked fine is refreshed and tried once more.
     func leave() {
         let session = UserSession.shared
-        guard session.isLoggedIn, !session.userId.isEmpty, !session.idToken.isEmpty,
-              let request = PresencePing.leaveRequest(backendUrl: AppConfig.backendUrl, token: session.idToken) else { return }
-        let done = DispatchSemaphore(value: 0)
+        guard session.isLoggedIn, !session.userId.isEmpty, !session.idToken.isEmpty else { return }
+        let deadline = Date().addingTimeInterval(PresencePing.leaveWaitSeconds)
+        func remaining() -> TimeInterval { max(0, deadline.timeIntervalSinceNow) }
+        var refreshed = false
+        if session.tokenNeedsRefresh {
+            refreshed = session.refreshBlocking(timeout: remaining())
+            dlog("Presence: the token was old, so it was refreshed before the leave message: \(refreshed ? "yes" : "no, sending the old one")", tag: "PRESENCE")
+        }
         let started = Date()
+        var status = send(token: session.idToken, within: remaining())
+        if status == 401, !refreshed, remaining() > 0.3, session.refreshBlocking(timeout: remaining()) {
+            dlog("Presence: the leave message was refused (401); refreshed the token and sending it again", tag: "PRESENCE")
+            status = send(token: session.idToken, within: remaining())
+        }
+        // Said from HERE, on the thread that waited: a line logged from the answer's own thread would queue behind this blocked
+        // main thread and be lost when the app exits a moment later.
+        dlog(status == nil ? "Presence: leave message not answered in \(PresencePing.leaveWaitSeconds) s; quitting anyway"
+                           : "Presence: leave message answered \(status!) in \(Int(Date().timeIntervalSince(started) * 1000)) ms", tag: "PRESENCE")
+    }
+
+    /// One DELETE, answered within `within` seconds or not at all (nil). Blocks the calling thread.
+    private func send(token: String, within seconds: TimeInterval) -> Int? {
+        guard seconds > 0.05, let request = PresencePing.leaveRequest(backendUrl: AppConfig.backendUrl, token: token) else { return nil }
+        let done = DispatchSemaphore(value: 0)
         let answer = LeaveAnswer()
         URLSession.shared.dataTask(with: AppIdentity.label(request)) { _, response, _ in
             answer.status = (response as? HTTPURLResponse)?.statusCode ?? 0
             done.signal()
         }.resume()
-        // Said from HERE, after the wait, on the thread that waited: a line logged from the answer's own thread would queue behind this
-        // blocked main thread and be lost when the app exits a moment later.
-        if done.wait(timeout: .now() + PresencePing.leaveWaitSeconds) == .timedOut {
-            dlog("Presence: leave message not answered in \(PresencePing.leaveWaitSeconds) s; quitting anyway", tag: "PRESENCE")
-        } else {
-            dlog("Presence: leave message answered \(answer.status) in \(Int(Date().timeIntervalSince(started) * 1000)) ms", tag: "PRESENCE")
-        }
+        guard done.wait(timeout: .now() + seconds) == .success else { return nil }
+        return answer.status
     }
 
     private func beat() async {
@@ -114,7 +132,7 @@ final class PresenceTracker {
         guard session.isLoggedIn, !session.userId.isEmpty else { return }
 
         // Firebase ID tokens last an hour; refresh before writing rather than after a 401.
-        if session.idToken.isEmpty { _ = await session.tryRefreshAsync() }
+        if session.idToken.isEmpty || session.tokenNeedsRefresh { _ = await session.tryRefreshAsync() }
         let token = session.idToken
         guard !token.isEmpty else { return }
 

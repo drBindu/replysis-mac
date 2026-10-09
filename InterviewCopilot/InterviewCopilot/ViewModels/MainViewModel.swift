@@ -1587,6 +1587,9 @@ class MainViewModel {
         case "live":     returnToLive()
         #if DEBUG
         case "quitapp":   NSApp.terminate(nil)
+        // The token as it is after a long sleep (old), or one the server refuses (looks fine, is not): for the leave message tests.
+        case "agetoken":  session.debugAgeToken(rejected: false)
+        case "staletoken": session.debugAgeToken(rejected: true)
         // What the app does on its way out: stop the engine and wait until it has ended its speech session.
         case "stopengine":
             let started = Date()

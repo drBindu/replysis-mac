@@ -31,7 +31,7 @@ sleep 22
 [ "$(lines | tail -2 | grep -c 'listening=yes')" -ge 1 ] && ok "while the session runs, the ordinary ping keeps the flag" || no "the ordinary ping dropped the flag during a session"
 cmd back; sleep 3
 lines | tail -1 | grep -q 'POST listening=no' && ok "the session stopped: a plain ping went out at once" || { no "no immediate plain ping when the session stopped"; lines | tail -3 | sed 's/^/        /'; }
-[ "$(count 'auth=bearer')" = "$(total)" ] && ok "every message carried the Bearer token" || no "a message had no token"
+[ "$(count 'auth=\(fresh\|stale\)')" = "$(total)" ] && ok "every message carried the Bearer token" || no "a message had no token"
 [ "$(count 'body=0')" = "$(total)" ] && ok "no message had a body" || no "a message had a body"
 [ "$(count 'platform=mac version=[0-9][0-9.]*')" = "$(total)" ] && ok "every message carried the platform and version" || no "a message lacked the labels"
 # Quit while the server answers the DELETE at once

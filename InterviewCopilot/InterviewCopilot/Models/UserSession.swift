@@ -277,6 +277,44 @@ class UserSession {
         return true
     }
 
+    /// The same refresh as tryRefreshAsync, for the one moment async cannot be used: the app is quitting and the main thread is waiting.
+    /// Answered within `timeout` seconds or not at all, and says so by returning false. Only the leave message uses it.
+    func refreshBlocking(timeout: TimeInterval) -> Bool {
+        guard !refreshToken.isEmpty, timeout > 0.15,
+              let url = URL(string: DeveloperOverrides.tokenURL
+                            ?? "https://securetoken.googleapis.com/v1/token?key=\(AppConfig.firebaseApiKey)") else { return false }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = timeout
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["grant_type": "refresh_token", "refresh_token": refreshToken])
+        let answer = RefreshAnswer()
+        let done = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: AppIdentity.label(req)) { data, response, _ in
+            answer.data = data
+            answer.status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            done.signal()
+        }.resume()
+        guard done.wait(timeout: .now() + timeout) == .success,
+              let data = answer.data,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let newToken = obj["id_token"] as? String,
+              let newRefresh = obj["refresh_token"] as? String else { return false }
+        idToken = newToken
+        refreshToken = newRefresh
+        tokenSavedAt = Date()
+        saveToDisk()
+        return true
+    }
+
+    #if DEBUG
+    /// Developer builds only: make the token look as old as after a long sleep (or as one the server no longer accepts).
+    func debugAgeToken(rejected: Bool) {
+        idToken = "stale-token"
+        if !rejected { tokenSavedAt = Date(timeIntervalSinceNow: -3 * 3600) }
+    }
+    #endif
+
     func tryRefreshAsync() async -> Bool {
         // Coalesce concurrent callers — only one network round-trip per refresh cycle.
         // Without this, two simultaneous Space presses each consume the refresh token,
@@ -686,3 +724,6 @@ enum AppConfig {
         }
     }
 }
+
+/// What the answer to a blocking refresh was, handed from the thread that got it to the one that waited.
+private final class RefreshAnswer: @unchecked Sendable { var data: Data?; var status = 0 }
