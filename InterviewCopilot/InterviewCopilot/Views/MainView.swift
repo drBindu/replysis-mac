@@ -1494,11 +1494,16 @@ struct MainView: View {
     // instead of separately-bordered chips floating with gaps between them. Stealth Mode
     // moved to Settings (default ON) — it's a set-once preference, not a mid-interview
     // toggle, so it no longer needs header real estate.
-    var toolSegmentGroup: some View {
+    @ViewBuilder var toolSegmentGroup: some View {
+        // Pin is an interview control: it is not shown on Setup, where the window is a normal one (as on Windows).
+        if vm.appStep == .interview { pinSegment }
+    }
+
+    private var pinSegment: some View {
         // Only Pin lives here now. The eye icon called vm.toggleCamera() — the exact same
         // action as the COMPACT button — so the toolbar carried two different-looking
-        // controls that did one thing. Pin has no Windows equivalent but is genuinely
-        // needed on macOS, where a normal window falls behind the meeting app.
+        // controls that did one thing. Pin keeps the window above the meeting app during an
+        // interview, where a normal window falls behind it.
         segmentButton(icon: vm.isPinnedOnTop ? "pin.fill" : "pin",
                       active: vm.isPinnedOnTop,
                       activeColor: Color(hex: "#38bdf8"),

@@ -175,7 +175,7 @@ class MainViewModel {
 
     // MARK: - Window / Overlay
     var showCameraOverlay = false
-    /// On by default and remembered, as on Windows (AppConfig.KeepOnTop). Stealth keeps the
+    /// On by default and remembered, as on Windows (AppConfig.KeepOnTop). It only takes effect during an interview. Stealth keeps the
     /// window out of the Dock and ⌘Tab, so once another window covered it an unpinned window
     /// had no way back — ⌃⌥R now brings it back too.
     var isPinnedOnTop = true
@@ -1446,7 +1446,8 @@ class MainViewModel {
     //      transcript writer, then opens Past sessions. It refuses while an answer streams.
     //   5. Starting again from Setup creates a fresh session file.
     enum AppStep { case setup, interview }
-    var appStep: AppStep = .setup
+    /// Changing step also re-applies "pin on top": the window floats during an interview only (see applyKeepOnTop).
+    var appStep: AppStep = .setup { didSet { applyKeepOnTop() } }
     /// Start interview has been pressed at least once this session; the screen-preparation
     /// timer runs only once it has, and never on Setup.
     private(set) var interviewStarted = false
@@ -4952,9 +4953,15 @@ class MainViewModel {
 
     // Pin on top: when ON the window floats above other apps (for the interview);
     // when OFF it's a normal window that goes behind apps you switch to.
+    // Pin is an interview control, not a permanent desktop behaviour (owner, 2026-10-09, as on Windows: Topmost = interview started && pinned):
+    // on the Setup page the window is a normal one, and the pin button is only shown during an interview.
+    func applyKeepOnTop() {
+        mainPanel?.level = (appStep == .interview && isPinnedOnTop) ? .floating : .normal
+    }
+
     func togglePin() {
         isPinnedOnTop.toggle()
-        mainPanel?.level = isPinnedOnTop ? .floating : .normal
+        applyKeepOnTop()
         saveSettings()
         dlog("Pin-on-top \(isPinnedOnTop ? "ON" : "OFF")", tag: "WINDOW")
     }
@@ -5208,7 +5215,7 @@ class MainViewModel {
             stealthModeEnabled = obj["stealthModeEnabled"] as? Bool ?? true
             isPinnedOnTop = obj["keepOnTop"] as? Bool ?? true
             screenKeysEverywhere = obj["screenKeysEverywhere"] as? Bool ?? true
-            mainPanel?.level = isPinnedOnTop ? .floating : .normal
+            applyKeepOnTop()
             hotkey?.setScreenKeysEverywhere(screenKeysEverywhere)
 
             // ONE-TIME migration: the default window opacity changed from 100% to 40%.

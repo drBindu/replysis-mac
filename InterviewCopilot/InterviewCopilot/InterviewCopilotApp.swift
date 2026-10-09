@@ -15,7 +15,7 @@ struct InterviewCopilotApp: App {
 //   • canBecomeKey/Main = true → clicking it brings it forward and lets you type;
 //     clicking ANOTHER app brings that app forward (no domination).
 //   • Default level is .normal so it never sits on top of the app you switch to.
-//     The "Pin on top" button raises it to .floating for an actual interview.
+//     The "Pin on top" button (shown during an interview) keeps it at .floating while one runs.
 final class FloatingPanel: NSPanel {
     override var canBecomeKey: Bool  { true }
     override var canBecomeMain: Bool { true }
@@ -265,8 +265,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.backgroundColor = .clear
         panel.hasShadow = true
 
-        // NORMAL level by default — does not sit on top of other apps. The pin
-        // button (MainViewModel.togglePin) raises it to .floating when wanted.
+        // NORMAL level by default — does not sit on top of other apps. It is raised to
+        // .floating while an interview runs and pinned (MainViewModel.applyKeepOnTop).
         panel.level = .normal
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isMovableByWindowBackground = true
@@ -330,7 +330,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         self.panel = panel
         vm.mainPanel = panel   // give ViewModel a direct reference (needed with .accessory policy)
-        panel.level = vm.isPinnedOnTop ? .floating : .normal   // pinned by default, remembered
+        vm.applyKeepOnTop()   // floats during an interview only (the app opens on Setup, so this is a normal window)
     }
 
     // Keep the app alive when sheets/popovers close (the borderless panel isn't
