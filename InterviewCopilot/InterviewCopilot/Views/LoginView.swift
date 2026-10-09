@@ -11,14 +11,6 @@ struct LoginView: View {
     @State private var isLoading   = false
     @State private var errorMsg    = ""
     @State private var successMsg  = ""
-    // Hidden by default: "Continue with Google" only appears once a real client secret is
-    // confirmed available. Google sign-in was ALWAYS failing with a "temporarily
-    // unavailable" error (no GOOGLE_CLIENT_SECRET configured anywhere) — showing a button
-    // that's guaranteed to fail on every click was the actual bug, not a flaky backend.
-    // This is a permanent safety net: if the secret is ever missing again for any reason
-    // (misconfigured secret, backend down), users see a clean email/password form instead
-    // of a dead-end button and a red error banner.
-    @State private var googleSignInAvailable = false
 
     /// `flat` draws the form without a scroll view, for the debug snapshot (an image renderer
     /// cannot draw a scroll view's content). The real window always scrolls if it has to.
@@ -214,8 +206,6 @@ struct LoginView: View {
     private var formPanel: some View {
         ZStack(alignment: .topTrailing) {
             Color.white
-            LoginCloseButton { dismiss() }
-                .padding(.top, 14).padding(.trailing, 16)
 
             MaybeScroll(flat: flat) {
                 VStack(alignment: .leading, spacing: 0) {
@@ -322,28 +312,24 @@ struct LoginView: View {
                     .keyboardShortcut(.defaultAction)
                     .padding(.bottom, 14)
 
-                    if googleSignInAvailable {
-                        HStack(spacing: 12) {
-                            Rectangle().fill(Palette.hairline).frame(height: 1)
-                            Text("OR").font(.system(size: 9, weight: .bold)).foregroundColor(Palette.faint)
-                            Rectangle().fill(Palette.hairline).frame(height: 1)
-                        }
-                        .padding(.bottom, 14)
-
-                        Button(action: signInWithGoogle) {
-                            HStack(spacing: 10) {
-                                GoogleLogoShape().frame(width: 16, height: 16)
-                                Text(isCreatingAccount ? "Sign up with Google" : "Continue with Google")
-                                    .font(.system(size: 12.5, weight: .semibold))
-                            }
-                            .frame(maxWidth: .infinity).frame(height: 43)
-                        }
-                        .buttonStyle(LoginSecondaryButtonStyle())
-                        .disabled(isLoading)
-                        .padding(.bottom, 16)
-                    } else {
-                        Spacer().frame(height: 4)
+                    HStack(spacing: 12) {
+                        Rectangle().fill(Palette.hairline).frame(height: 1)
+                        Text("OR").font(.system(size: 9, weight: .bold)).foregroundColor(Palette.faint)
+                        Rectangle().fill(Palette.hairline).frame(height: 1)
                     }
+                    .padding(.bottom, 14)
+
+                    Button(action: signInWithGoogle) {
+                        HStack(spacing: 10) {
+                            GoogleLogoShape().frame(width: 16, height: 16)
+                            Text(isCreatingAccount ? "Sign up with Google" : "Continue with Google")
+                                .font(.system(size: 12.5, weight: .semibold))
+                        }
+                        .frame(maxWidth: .infinity).frame(height: 43)
+                    }
+                    .buttonStyle(LoginSecondaryButtonStyle())
+                    .disabled(isLoading)
+                    .padding(.bottom, 16)
 
                     HStack(spacing: 4) {
                         Spacer()
@@ -359,6 +345,11 @@ struct LoginView: View {
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: 580)
             }
+
+            // Last, so it is on top. It used to be drawn first, under the scrolling form, which covers the whole panel: a mouse click
+            // landed on the form and the window could not be closed without signing in (only a key press or a screen reader reached it).
+            LoginCloseButton { dismiss() }
+                .padding(.top, 14).padding(.trailing, 16)
         }
     }
 
@@ -373,12 +364,6 @@ struct LoginView: View {
         // turn its fields and text into something unreadable.
         .preferredColorScheme(.light)
         .task {
-            // Check whether Google sign-in can actually succeed BEFORE showing its button.
-            // Baked-in secret (set via the GOOGLE_CLIENT_SECRET GitHub secret at build time)
-            // is checked first; if that's empty, try the remote-config fetch once as a
-            // fallback. Either way, the button only appears once this resolves true.
-            if AppConfig.googleClientSecret.isEmpty { await AppConfig.fetchRemoteConfig() }
-            googleSignInAvailable = !AppConfig.googleClientSecret.isEmpty
             focus = hasSavedAccount ? nil : .email
         }
     }

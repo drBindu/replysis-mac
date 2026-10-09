@@ -1616,8 +1616,37 @@ class MainViewModel {
         default:
             // "ask What is a queue?" types the question into the Ask bar and sends it.
             if action.hasPrefix("ask ") { askManually(String(action.dropFirst(4))) }
+            #if DEBUG
+            if action.hasPrefix("clickat ") { debugClick(action) }
+            #endif
         }
     }
+
+    #if DEBUG
+    /// "clickat X Y": a mouse click at a screen point (the top-left origin accessibility reports), handed to the top-most window of this app
+    /// there the way the system hands one over: the window finds the view under the point and that view decides. A button drawn under
+    /// something else never sees it. Works on an invisible test copy too, which a real mouse cannot reach.
+    private func debugClick(_ action: String) {
+        let n = action.split(separator: " ").dropFirst().compactMap { Double($0) }
+        guard n.count == 2, let screen = NSScreen.screens.first else { return }
+        let spot = NSPoint(x: n[0], y: screen.frame.height - n[1])
+        let there = NSApp.windows.filter { $0.isVisible && $0.frame.contains(spot) }
+        // A sheet lies inside its parent's frame and is in front of it.
+        let sheet = there.compactMap { $0.attachedSheet }.first(where: { $0.frame.contains(spot) })
+        guard let window = sheet ?? there.first(where: { $0.sheetParent != nil }) ?? there.first else {
+            dlog("FLOWSTATE: click at \(n[0]),\(n[1]): no window there", tag: "FLOW"); return
+        }
+        let local = window.convertPoint(fromScreen: spot)
+        func send(_ type: NSEvent.EventType) {
+            guard let event = NSEvent.mouseEvent(with: type, location: local, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                 windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return }
+            window.sendEvent(event)
+        }
+        send(.leftMouseDown)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { send(.leftMouseUp) }
+        dlog("FLOWSTATE: click at \(n[0]),\(n[1]) sent to a \(Int(window.frame.width)) wide \(sheet == nil ? "window" : "sheet")", tag: "FLOW")
+    }
+    #endif
 
     func showOnboardingIfFirstRun() {
         if !FileManager.default.fileExists(atPath: onboardingSeenURL.path) { showOnboarding = true }

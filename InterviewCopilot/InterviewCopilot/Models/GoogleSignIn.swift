@@ -37,10 +37,6 @@ class GoogleSignIn {
         defer { isSigningIn = false }
         dlog("Google Sign In: starting loopback flow", tag: "GOOGLE")
 
-        // The client secret is loaded from remote config. If it hasn't arrived yet, try
-        // once now so we don't fail the token exchange purely for a missing secret.
-        if AppConfig.googleClientSecret.isEmpty { await AppConfig.fetchRemoteConfig() }
-
         guard let (serverFd, port) = bindListenSocket() else {
             return .failure("Could not bind local port for OAuth redirect.")
         }
@@ -87,22 +83,15 @@ class GoogleSignIn {
         // one anymore. Verified live: decoded a real token from this endpoint and confirmed
         // iss=securetoken.google.com/copilotx-ai (a genuine Firebase token), not
         // accounts.google.com. Fix: the backend path returns a finished Result directly,
-        // no second Firebase call. Gradual rollout via RolloutGate — straight either/or per
-        // device, never try-then-fallback with the same code (Google's auth codes are
-        // single-use, which is what broke the OLD fallback approach).
-        if RolloutGate.isEnabled("backend_google_exchange", percent: 10) {
-            if let result = await exchangeCodeViaBackend(code, redirectUri: redirectUri, verifier: codeVerifier) {
-                return result
-            }
+        // no second Firebase call. One path only, never try-then-fallback with the same code
+        // (Google's auth codes are single-use, which is what broke the OLD fallback approach).
+        // Always the server, as on Windows: it holds the Google client secret, so this app needs no key of its own. (This used to be
+        // a 10 percent rollout, with the old direct path for everyone else. That path needs a secret nobody ships, so the button
+        // was hidden for all users and Google sign-in was missing from the Mac app.)
+        guard let result = await exchangeCodeViaBackend(code, redirectUri: redirectUri, verifier: codeVerifier) else {
             return .failure("Google sign-in is temporarily unavailable. Please sign in with your email and password above.")
         }
-
-        guard let tokens = await exchangeCodeDirect(code, redirectUri: redirectUri, verifier: codeVerifier) else {
-            return .failure("Google sign-in is temporarily unavailable. Please sign in with your email and password above.")
-        }
-
-        dlog("Google: signing into Firebase…", tag: "GOOGLE")
-        return await firebaseSignIn(tokens: tokens)
+        return result
     }
 
     // MARK: — Socket
@@ -134,14 +123,9 @@ class GoogleSignIn {
 
     // MARK: — Token Exchange
 
-    private struct TokenResponse {
-        let idToken: String
-        let accessToken: String
-    }
-
     // Backend does the ENTIRE sign-in server-side and hands back an already-complete
     // Firebase session: { idToken, refreshToken, email, displayName, localId }. This is
-    // NOT raw Google tokens — do not pass idToken to firebaseSignIn() or any further
+    // NOT raw Google tokens — do not pass idToken on to any further
     // Firebase call. Verified live against the real endpoint (2026-07-16): confirmed
     // HTTP 200 with all 5 fields, and confirmed by decoding idToken that its issuer is
     // securetoken.google.com (a genuine Firebase token), not accounts.google.com.
@@ -178,79 +162,6 @@ class GoogleSignIn {
             dlog("Google: backend exchange request failed: \(error.localizedDescription)", tag: "GOOGLE")
             return nil
         }
-    }
-
-    private static func exchangeCodeDirect(_ code: String, redirectUri: String, verifier: String) async -> TokenResponse? {
-        guard let url = URL(string: "https://oauth2.googleapis.com/token") else { return nil }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        let enc = { (s: String) in
-            s.addingPercentEncoding(withAllowedCharacters: .init(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? s
-        }
-        // Include client_secret only when we actually have one. For a "Desktop app" OAuth
-        // client, the PKCE code_verifier alone can satisfy the exchange — so omitting an
-        // empty secret gives sign-in a chance to work even when remote config is down.
-        var bodyStr = "code=\(enc(code))&client_id=\(AppConfig.googleClientId)&redirect_uri=\(enc(redirectUri))&code_verifier=\(verifier)&grant_type=authorization_code"
-        if !AppConfig.googleClientSecret.isEmpty {
-            bodyStr += "&client_secret=\(AppConfig.googleClientSecret)"
-        }
-        req.httpBody = bodyStr.data(using: .utf8)
-
-        do {
-            let (data, _) = try await URLSession.shared.data(for: AppIdentity.label(req))
-            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                dlog("Google: bad JSON: \(String(data:data,encoding:.utf8) ?? "")", tag: "GOOGLE"); return nil
-            }
-            if let err = obj["error"] {
-                dlog("Google token error: \(err) — \(obj["error_description"] ?? "")", tag: "GOOGLE"); return nil
-            }
-            let idToken     = obj["id_token"]      as? String ?? ""
-            let accessToken = obj["access_token"]  as? String ?? ""
-            guard !idToken.isEmpty || !accessToken.isEmpty else {
-                dlog("Google: token exchange returned empty tokens", tag: "GOOGLE"); return nil
-            }
-            dlog("Google: token exchange OK — idToken=\(!idToken.isEmpty) accessToken=\(!accessToken.isEmpty)", tag: "GOOGLE")
-            return TokenResponse(idToken: idToken, accessToken: accessToken)
-        } catch {
-            dlog("Google: token exchange failed: \(error)", tag: "GOOGLE"); return nil
-        }
-    }
-
-    private static func firebaseSignIn(tokens: TokenResponse) async -> Result {
-        let urlStr = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key=\(AppConfig.firebaseApiKey)"
-        guard let url = URL(string: urlStr) else { return .failure("Firebase URL error") }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        // Send access_token (not id_token) so Firebase validates via Google's tokeninfo
-        // endpoint rather than checking the audience — works across GCP projects.
-        var postBody = "access_token=\(tokens.accessToken)&providerId=google.com"
-        if !tokens.idToken.isEmpty { postBody += "&id_token=\(tokens.idToken)" }
-        req.httpBody = try? JSONSerialization.data(withJSONObject: [
-            "postBody": postBody,
-            "requestUri": "http://localhost",
-            "returnIdpCredential": true,
-            "returnSecureToken": true
-        ])
-        guard let (data, _) = try? await URLSession.shared.data(for: AppIdentity.label(req)) else {
-            return .failure("Network error during Firebase sign-in.")
-        }
-        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return .failure("Invalid Firebase response")
-        }
-        if let err = (obj["error"] as? [String: Any])?["message"] as? String {
-            return .failure("Google sign-in failed: \(err)")
-        }
-        let idToken      = obj["idToken"]      as? String ?? ""
-        let refreshToken = obj["refreshToken"] as? String ?? ""
-        let email        = obj["email"]        as? String ?? ""
-        let userId       = obj["localId"]      as? String ?? ""
-        var displayName  = obj["displayName"]  as? String ?? ""
-        if displayName.isEmpty { displayName = email.components(separatedBy: "@").first ?? email }
-        dlog("Google sign-in success: \(UserSession.maskEmail(email))", tag: "GOOGLE")
-        return Result(success: true, idToken: idToken, refreshToken: refreshToken,
-                      email: email, displayName: displayName, userId: userId, error: "")
     }
 
     // MARK: — PKCE
