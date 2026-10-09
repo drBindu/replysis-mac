@@ -91,13 +91,17 @@ final class PresenceTracker {
               let request = PresencePing.leaveRequest(backendUrl: AppConfig.backendUrl, token: session.idToken) else { return }
         let done = DispatchSemaphore(value: 0)
         let started = Date()
+        let answer = LeaveAnswer()
         URLSession.shared.dataTask(with: AppIdentity.label(request)) { _, response, _ in
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            dlog("Presence: leave message answered \(status) in \(Int(Date().timeIntervalSince(started) * 1000)) ms", tag: "PRESENCE")
+            answer.status = (response as? HTTPURLResponse)?.statusCode ?? 0
             done.signal()
         }.resume()
+        // Said from HERE, after the wait, on the thread that waited: a line logged from the answer's own thread would queue behind this
+        // blocked main thread and be lost when the app exits a moment later.
         if done.wait(timeout: .now() + PresencePing.leaveWaitSeconds) == .timedOut {
             dlog("Presence: leave message not answered in \(PresencePing.leaveWaitSeconds) s; quitting anyway", tag: "PRESENCE")
+        } else {
+            dlog("Presence: leave message answered \(answer.status) in \(Int(Date().timeIntervalSince(started) * 1000)) ms", tag: "PRESENCE")
         }
     }
 
@@ -159,3 +163,6 @@ final class PresenceTracker {
         }
     }
 }
+
+/// What the answer to the leave message was, handed from the thread that got it to the one that waited.
+private final class LeaveAnswer: @unchecked Sendable { var status = 0 }
