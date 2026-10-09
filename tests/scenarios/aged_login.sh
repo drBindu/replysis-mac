@@ -21,8 +21,10 @@ for sc in token-down token-refused; do
   if [ $sc = token-down ]; then
     echo "$T" | grep -q "opening with the saved sign-in" && echo "  PASS opened with the saved sign-in" || { echo "  FAIL did not open with the saved sign-in"; fail=1; }
     echo "$T" | grep -q "Guest session" && { echo "  FAIL tried a guest session (the sign-in screen path)"; fail=1; } || echo "  PASS no sign-in screen path"
+    echo "$T" | grep -q "the sign-in refresh was answered HTTP 503: .*(not a refusal" && echo "  PASS the log says the service answered 503, and that this is not a refusal" || { echo "  FAIL the log does not say what the refresh got"; fail=1; }
   else
     echo "$T" | grep -q "opening with the saved sign-in" && { echo "  FAIL opened signed in on a refused sign-in"; fail=1; } || echo "  PASS a refused sign-in is not opened"
+    echo "$T" | grep -q "the sign-in refresh was answered HTTP 400: TOKEN_EXPIRED (refused" && echo "  PASS the log says WHY: the server's reason is TOKEN_EXPIRED (refused)" || { echo "  FAIL the log does not say why the refresh was refused"; fail=1; }
   fi
   pkill -f "Debug/InterviewCopilot.app/Contents/MacOS" 2>/dev/null; kill $MOCK 2>/dev/null; sleep 1
 done

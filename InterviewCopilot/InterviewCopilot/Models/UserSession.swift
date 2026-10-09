@@ -315,6 +315,18 @@ class UserSession {
     }
     #endif
 
+    /// The server's own short reason for refusing a refresh ("TOKEN_EXPIRED", "INVALID_REFRESH_TOKEN", ...), or what the body was shaped like.
+    /// Reason codes only: they are fixed upper-case words, so nothing secret can ride in them.
+    nonisolated static func refreshFailureReason(_ data: Data) -> String {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return "no readable answer" }
+        if let error = obj["error"] as? [String: Any], let message = error["message"] as? String {
+            let code = message.split(separator: " ").first.map(String.init) ?? message
+            let safe = code.allSatisfy { $0.isUppercase || $0 == "_" || $0.isNumber }
+            return safe ? code : "an answer with an error message"
+        }
+        return "an answer without an error message"
+    }
+
     func tryRefreshAsync() async -> Bool {
         // Coalesce concurrent callers — only one network round-trip per refresh cycle.
         // Without this, two simultaneous Space presses each consume the refresh token,
@@ -343,6 +355,9 @@ class UserSession {
                       let newToken = obj["id_token"] as? String,
                       let newRefresh = obj["refresh_token"] as? String else {
                     self.lastRefreshRefused = RecoveryPolicy.sessionRefused(byStatus: status)
+                    // Say WHY, once: the server's own reason (TOKEN_EXPIRED, INVALID_REFRESH_TOKEN, USER_DISABLED, ...), never a token.
+                    // "Your session expired" with nothing in the log left the 01:21 sign-in loss on 2026-10-09 unexplained.
+                    dlog("Session: the sign-in refresh was answered HTTP \(status): \(Self.refreshFailureReason(data))\(self.lastRefreshRefused ? " (refused: the person must sign in again)" : " (not a refusal: the next try may work)")", tag: "AUTH")
                     return false
                 }
                 self.lastRefreshRefused = false
@@ -354,6 +369,7 @@ class UserSession {
                 return true
             } catch {
                 self.lastRefreshRefused = false   // no connection is not a refusal
+                dlog("Session: the sign-in refresh could not be sent (\(error.localizedDescription)); not a refusal", tag: "AUTH")
                 return false
             }
         }
