@@ -179,10 +179,10 @@ class NetworkClient {
 
     /// Times a small throw-away upload to the same server the pictures go to. The server reads the body,
     /// finds no image in it, answers 400 and keeps nothing, so the only thing measured is how fast this
-    /// line carries 160 KB. `reached` is true when the server answered the way it should (400, or 200).
+    /// line carries 160 KB. `reached` is true when the server answered the way it should (400 today; 200 or 204 if the server ever acknowledges the test instead).
     func probeUplink() async -> (reached: Bool, status: Int, elapsed: TimeInterval, droppedForQuestion: Bool) {
         let (result, _) = await sendEarly(Self.probeBody, timeout: UplinkGovernor.probeTimeout)
-        return (result.status == 400 || result.status == 200, result.status, result.elapsed, result.droppedForQuestion)
+        return (result.status == 400 || result.status == 200 || result.status == 204, result.status, result.elapsed, result.droppedForQuestion)
     }
 
     // MARK: - Screen Analysis Stream

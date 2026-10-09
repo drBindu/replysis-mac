@@ -1042,6 +1042,20 @@ do {
     check(PresencePing.everySeconds == 60, "presence ping: once a minute")
     let sent = r.map { AppIdentity.label($0, backendHost: "replysis.com", version: "1.0.248") }
     check(sent?.value(forHTTPHeaderField: "X-App-Platform") == "mac" && sent?.value(forHTTPHeaderField: "X-App-Version") == "1.0.248", "presence ping: it carries the platform and version labels")
+    // While a session runs the ping says so, and the minute ping keeps saying it
+    let live = PresencePing.request(backendUrl: "https://replysis.com", token: "tok123", listening: true)
+    check(live?.url?.absoluteString == "https://replysis.com/api/v1/presence?listening=1" && live?.httpMethod == "POST", "presence ping: ?listening=1 while a session runs")
+    check(r?.url?.query == nil, "presence ping: no flag when no session runs")
+    check(live?.value(forHTTPHeaderField: "Authorization") == "Bearer tok123" && live?.httpBody == nil, "presence ping: the listening ping has the token and still no body")
+    // Quitting
+    let leave = PresencePing.leaveRequest(backendUrl: "https://replysis.com", token: "tok123")
+    check(leave?.httpMethod == "DELETE" && leave?.url?.absoluteString == "https://replysis.com/api/v1/presence", "presence leave: DELETE /api/v1/presence")
+    check(leave?.value(forHTTPHeaderField: "Authorization") == "Bearer tok123" && leave?.httpBody == nil, "presence leave: the same token, no body")
+    check(PresencePing.leaveRequest(backendUrl: "https://replysis.com", token: "") == nil, "presence leave: a signed-out person sends nothing")
+    let leaveSent = leave.map { AppIdentity.label($0, backendHost: "replysis.com", version: "1.0.250") }
+    check(leaveSent?.value(forHTTPHeaderField: "X-App-Platform") == "mac" && leaveSent?.value(forHTTPHeaderField: "X-App-Version") == "1.0.250", "presence leave: the platform and version labels go with it")
+    check(PresencePing.leaveWaitSeconds <= 1.5, "presence leave: the quit waits for it 1.5 s at most")
+    check((leave?.timeoutInterval ?? 99) <= 3, "presence leave: it gives up on its own too")
 }
 
 print("RESULT: \(passed) passed, \(failed) failed")

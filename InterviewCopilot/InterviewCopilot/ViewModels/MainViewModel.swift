@@ -2329,6 +2329,7 @@ class MainViewModel {
 
     private var uplink = UplinkGovernor()
     private var uplinkProbeRunning = false
+    private var lastLineTestOkAt: Date?
 
     /// Whether this line has shown it can carry a picture in good time. When not, the screen's words go instead.
     private func lineCarriesPictures() -> Bool {
@@ -2370,6 +2371,7 @@ class MainViewModel {
                 return
             }
             let quiet = self.uplink.recordProbe(now: Date(), succeeded: result.reached, elapsed: result.elapsed)
+            if result.reached { self.lastLineTestOkAt = Date() }
             self.applyLineSpeedToCaptures()
             let ms = Int(result.elapsed * 1000)
             dlog(quiet == 0
@@ -2390,6 +2392,10 @@ class MainViewModel {
     /// The network changed (another Wi-Fi, a hotspot, a cable): what was learned about the old line no longer holds.
     func networkChanged() {
         NetworkClient.shared.refreshConnections()   // sockets of the old line are dead; the next question must not meet one
+        // A wake or a roam reports the change two or three times within seconds. A line test that has just come back fine is the
+        // answer to the second and third; without this the same 160 KB went up three times in three seconds after a wake, and the
+        // server logged three 400s (the 400 is the expected answer to the test, but three is noise).
+        if let ok = lastLineTestOkAt, Date().timeIntervalSince(ok) < 6, uplink.verified { return }
         uplink.reset()
         applyLineSpeedToCaptures()
         preparedImageId = nil; preparedSignature = []
@@ -2807,6 +2813,8 @@ class MainViewModel {
     }
 
     private func syncWakefulness() {
+        // The admin panel shows Listening the moment a session starts and clears it when it ends (Windows 1.0.31 item 29).
+        PresenceTracker.shared.setListening(appStep == .interview && interviewStarted)
         let want = session.isLoggedIn
         if want, sessionActivity == nil {
             sessionActivity = ProcessInfo.processInfo.beginActivity(

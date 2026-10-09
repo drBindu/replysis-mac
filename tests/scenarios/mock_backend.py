@@ -211,12 +211,15 @@ class H(BaseHTTPRequestHandler):
             body = {"remainingMinutes": s["minutes"], "usedMinutes": 15 - s["minutes"]}
         elif url == "/health":
             body = {"ok": True}
-        elif url == "/api/v1/presence" and self.command == "POST":
-            # The once-a-minute "this app is open" ping (Windows 1.0.31 item 29): a Bearer token, no body, answered 204.
+        elif url == "/api/v1/presence" and self.command in ("POST", "DELETE"):
+            # The "this app is open" ping (POST, once a minute and at once when a session starts or stops, ?listening=1 while one runs) and
+            # the message sent when the app quits (DELETE). A Bearer token, no body, answered 204 (Windows 1.0.31 item 29).
             raw = read_body(self)
             auth = self.headers.get("Authorization") or ""
-            print(f"PRESENCE auth={'bearer' if auth.startswith('Bearer ') and len(auth) > 7 else 'missing'} body={len(raw or b'')} "
-                  f"platform={self.headers.get('X-App-Platform')} version={self.headers.get('X-App-Version')}", flush=True)
+            query = self.path.split("?", 1)[1] if "?" in self.path else ""
+            print(f"PRESENCE {self.command} listening={'yes' if 'listening=1' in query else 'no'} auth={'bearer' if auth.startswith('Bearer ') and len(auth) > 7 else 'missing'} "
+                  f"body={len(raw or b'')} platform={self.headers.get('X-App-Platform')} version={self.headers.get('X-App-Version')} at={time.time():.3f}", flush=True)
+            if self.command == "DELETE" and os.environ.get("MOCK_PRESENCE_DELAY"): time.sleep(float(os.environ["MOCK_PRESENCE_DELAY"]))
             self.send_response(204)
             self.end_headers()
             return
@@ -228,7 +231,7 @@ class H(BaseHTTPRequestHandler):
         for k, v in headers.items(): self.send_header(k, v)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers(); self.wfile.write(data)
-    do_GET = do_POST = do_HEAD = _do
+    do_GET = do_POST = do_HEAD = do_DELETE = _do
 
 if delay > 0:
     time.sleep(delay)   # "network late": nothing is listening for the first N seconds

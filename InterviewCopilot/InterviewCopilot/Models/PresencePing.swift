@@ -14,13 +14,28 @@ nonisolated enum PresencePing {
     static let everySeconds: TimeInterval = 60
 
     /// The request, or nil when there is no token to send (a signed-out person sends nothing).
-    static func request(backendUrl: String, token: String) -> URLRequest? {
+    /// `listening` adds `?listening=1`: a session is running, so the panel shows Listening the moment it starts. Without it a plain
+    /// ping says the app is open and no session is running. The once-a-minute ping carries the same flag as the last one sent.
+    static func request(backendUrl: String, token: String, listening: Bool = false) -> URLRequest? {
+        build(method: "POST", backendUrl: backendUrl, token: token, query: listening ? "?listening=1" : "")
+    }
+
+    /// `DELETE /api/v1/presence`, sent when the app quits so the panel drops the Mac at once instead of after about 2 minutes. A crash or a
+    /// closed laptop sends nothing and ages out by itself. Same token and labels; answered 204.
+    static func leaveRequest(backendUrl: String, token: String) -> URLRequest? {
+        build(method: "DELETE", backendUrl: backendUrl, token: token, query: "")
+    }
+
+    /// The longest the app waits for the leave message before it quits anyway.
+    static let leaveWaitSeconds: TimeInterval = 1.5
+
+    private static func build(method: String, backendUrl: String, token: String, query: String) -> URLRequest? {
         guard !token.isEmpty else { return nil }
         let base = backendUrl.hasSuffix("/") ? String(backendUrl.dropLast()) : backendUrl
-        guard let url = URL(string: base + path) else { return nil }
+        guard let url = URL(string: base + path + query) else { return nil }
         var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 10
+        request.httpMethod = method
+        request.timeoutInterval = leaveWaitSeconds * 2
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return request
     }

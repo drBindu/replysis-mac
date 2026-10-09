@@ -24,6 +24,8 @@ final class PresenceTracker {
     private var beating = false
     /// Whether the first "this app is open" ping of this run has gone out.
     private var pingSent = false
+    /// Whether an interview session is running. Rides on every ping as ?listening=1.
+    private var listening = false
 
     func start() {
         guard timer == nil else { return }
@@ -54,11 +56,11 @@ final class PresenceTracker {
 
     /// `POST /api/v1/presence`, answered 204. The platform and version labels are added on the way out (AppIdentity).
     private func pingServer(token: String) {
-        guard let request = PresencePing.request(backendUrl: AppConfig.backendUrl, token: token) else { return }
+        guard let request = PresencePing.request(backendUrl: AppConfig.backendUrl, token: token, listening: listening) else { return }
         Task { @MainActor in
             do {
                 let (_, response) = try await URLSession.shared.data(for: AppIdentity.label(request))
-                if let http = response as? HTTPURLResponse { dlog("Presence: server ping answered \(http.statusCode)", tag: "PRESENCE") }
+                if let http = response as? HTTPURLResponse { dlog("Presence: server ping answered \(http.statusCode)\(request.url?.query == nil ? "" : " (listening)")", tag: "PRESENCE") }
                 else { dlog("Presence: server ping got no HTTP answer", tag: "PRESENCE") }
                 if let http = response as? HTTPURLResponse, http.statusCode == 401 {
                     // A stale token: refresh so the next ping lands, rather than going quiet.
@@ -68,6 +70,34 @@ final class PresenceTracker {
                 // A dropped ping is not worth a word to anyone; the next one is a minute away. (Said in the log only.)
                 dlog("Presence: server ping failed: \(error.localizedDescription)", tag: "PRESENCE")
             }
+        }
+    }
+
+    /// A session started or stopped: say so now, not at the next minute. Called every tick with the current state; acts only on a change.
+    func setListening(_ running: Bool) {
+        guard running != listening else { return }
+        listening = running
+        guard timer != nil else { return }                        // not started yet: the first ping carries the flag
+        let session = UserSession.shared
+        guard session.isLoggedIn, !session.userId.isEmpty, !session.idToken.isEmpty else { return }
+        pingServer(token: session.idToken)
+    }
+
+    /// The app is quitting: tell the server so the panel drops the Mac at once. Waits for the answer for at most
+    /// PresencePing.leaveWaitSeconds and never longer, so a bad connection cannot hold the quit. Nothing is shown if it fails.
+    func leave() {
+        let session = UserSession.shared
+        guard session.isLoggedIn, !session.userId.isEmpty, !session.idToken.isEmpty,
+              let request = PresencePing.leaveRequest(backendUrl: AppConfig.backendUrl, token: session.idToken) else { return }
+        let done = DispatchSemaphore(value: 0)
+        let started = Date()
+        URLSession.shared.dataTask(with: AppIdentity.label(request)) { _, response, _ in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            dlog("Presence: leave message answered \(status) in \(Int(Date().timeIntervalSince(started) * 1000)) ms", tag: "PRESENCE")
+            done.signal()
+        }.resume()
+        if done.wait(timeout: .now() + PresencePing.leaveWaitSeconds) == .timedOut {
+            dlog("Presence: leave message not answered in \(PresencePing.leaveWaitSeconds) s; quitting anyway", tag: "PRESENCE")
         }
     }
 

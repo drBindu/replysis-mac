@@ -393,6 +393,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // this is the only place it ever is. Blocking, because a Task started during
             // termination dies with the process.
             vm.flushListeningMeterOnExit(synchronously: true)
+            // Tell the server the app is closing, so the admin panel drops the Mac at once. At most 1.5 s, never more.
+            PresenceTracker.shared.leave()
             // And wait: the engine's graceful shutdown now runs off the main thread, and this process must not
             // exit before it has told the speech service the session is over.
             SpeechmaticsEngine.shared.stopAndWait()
