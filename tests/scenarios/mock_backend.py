@@ -152,7 +152,7 @@ class H(BaseHTTPRequestHandler):
                 if i in stash: kinds.append(stash.pop(i)[0])
             if obj.get("image"): kinds.append("inline-picture")
             if obj.get("screenText"): kinds.append("inline-words")
-            ask = dict(question=q, has_question_marker="THE QUESTION:" in prompt, ids=ids, kinds=kinds, missing=missing,
+            ask = dict(question=q, has_question_marker="THE QUESTION:" in prompt, nothing_asked_shape=("NOTHING ASKED" in prompt), ids=ids, kinds=kinds, missing=missing,
                        body_kb=round(len(raw)/1024, 1), words=sum(len(stash_text) for stash_text in [obj.get("screenText") or ""]))
             with lock: asks.append(ask)
             if missing or not kinds:
@@ -172,6 +172,12 @@ class H(BaseHTTPRequestHandler):
                 # The usage chunk some providers send first: no "choices" at all.
                 self.wfile.write(b'data: {"usage":{"prompt_tokens":1}}\n\n'); self.wfile.flush()
                 time.sleep(0.12)
+                if os.environ.get("MOCK_SCREEN_NOTHING"):
+                    # A screen with no question on it: the model writes the two lines of the NOTHING ASKED shape (then the notes, which are never shown).
+                    for w in ["NOTHING ASKED\n", "A chat window about testing the app.", "\n\nSCREEN NOTES\n", "Chat, input box, send button"]:
+                        chunk(w); time.sleep(0.02)
+                    self.wfile.write(b"data: [DONE]\n\n"); self.wfile.flush()
+                    return
                 if os.environ.get("MOCK_SCREEN_NEED"):
                     # The problem runs past the bottom of the screen: one sentence, then NEED and what is missing.
                     for w in ["SAY THIS\n", "Let me scroll down and read the constraints before I answer.", "\n\nNEED\n", "The constraints section."]:

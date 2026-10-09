@@ -1058,5 +1058,27 @@ do {
     check((leave?.timeoutInterval ?? 99) <= 3, "presence leave: it gives up on its own too")
 }
 
+// Windows 1.0.31 item 30: a screen with nothing to answer shows one plain sentence, in the streaming view and in the finished answer.
+do {
+    let chat = AnswerLayout.rewriteNothingAsked("NOTHING ASKED\nA chat with an AI assistant about testing the app.")
+    check(chat.hasPrefix("No question on this screen."), "nothing asked: a screen with nothing asked says so first")
+    check(chat.contains("It shows: A chat with an AI assistant about testing the app."), "nothing asked: and says what is on it, without a doubled full stop")
+    check(chat.contains("Press F8 when a question or code is showing."), "nothing asked: and says what to do next")
+    check(!chat.contains("NOTHING ASKED") && !chat.lowercased().contains("ignore"), "nothing asked: the heading and any telling off are gone")
+    check(AnswerLayout.rewriteNothingAsked("nothing asked").hasPrefix("No question on this screen."), "nothing asked: the heading is matched in any case")
+    check(AnswerLayout.rewriteNothingAsked("NOTHING ASKED\n").contains("Press F8"), "nothing asked: a heading with no line still gives the next step")
+    let coding = "APPROACH\nTwo pointers.\nSAY THIS\nI would use two pointers."
+    check(AnswerLayout.rewriteNothingAsked(coding) == coding, "nothing asked: a real answer is never touched")
+    check(AnswerLayout.rewriteNothingAsked("SAY THIS\nNothing asked of me here.") == "SAY THIS\nNothing asked of me here.", "nothing asked: the words inside an answer do not trigger it")
+    check(AnswerLayout.rewriteNothingAsked("") == "", "nothing asked: empty input is left alone")
+    // The bug that shipped on Windows: the streaming view had the rule and the final step did not. Both come from composeScreenAnswer.
+    let raw = "NOTHING ASKED\nA chat window about the app.\n\nSCREEN NOTES\nChat, input box, send button"
+    let composed = AnswerLayout.composeScreenAnswer(raw)
+    check(composed == "No question on this screen. It shows: A chat window about the app.\n\nPress F8 when a question or code is showing.", "nothing asked: the finished answer is the plain sentence, and the screen notes are dropped")
+    check(AnswerLayout.composeScreenAnswer("NOTHING ASKED\nA chat window about the app.") == AnswerLayout.composeScreenAnswer(raw), "nothing asked: the same text streaming and finished")
+    let answerWithCode = "SAY THIS\nI would use a hash map.\n\nDETAIL\n```python\nx = 1\n```"
+    check(AnswerLayout.composeScreenAnswer(answerWithCode).contains("SAY THIS") && AnswerLayout.composeScreenAnswer(answerWithCode).contains("x = 1"), "nothing asked: a real screen answer keeps its SAY THIS and its code")
+}
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

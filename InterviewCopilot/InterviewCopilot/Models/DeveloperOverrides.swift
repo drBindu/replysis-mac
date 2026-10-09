@@ -55,7 +55,11 @@ enum DeveloperOverrides {
     /// have to wait a minute. Only against a fake server.
     static let presenceSeconds: TimeInterval? =
         backendURL == nil ? nil : ProcessInfo.processInfo.environment["REPLYSIS_PRESENCE_SECONDS"].flatMap(TimeInterval.init)
+    /// REPLYSIS_STAY_LISTENING=1  -> the microphone is not stopped after a quiet stretch, so a listening test can run in an empty
+    /// room for as long as it needs. Debug builds only. Involves no network, so it needs no loopback.
+    static let stayListening: Bool = ProcessInfo.processInfo.environment["REPLYSIS_STAY_LISTENING"] == "1"
     #else
+    static let stayListening = false
     static let presenceSeconds: TimeInterval? = nil
     static let screenImagePath: String? = nil
     static let headless = false

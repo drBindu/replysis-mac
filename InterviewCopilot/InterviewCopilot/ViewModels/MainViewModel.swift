@@ -4282,7 +4282,8 @@ class MainViewModel {
             }
         }
 
-        if now.timeIntervalSince(lastSpeechHeardAt) >= patience {
+        // Developer builds only: a listening test in an empty room must not be ended by the quiet it is there to test.
+        if now.timeIntervalSince(lastSpeechHeardAt) >= patience, !DeveloperOverrides.stayListening {
             // The WORDING follows the same condition as the wait. It used to be chosen by
             // heardAnythingThisSession alone while the wait was chosen by that OR auto mode,
             // so an automatic session that had heard nothing yet waited the full three

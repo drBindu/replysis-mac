@@ -221,8 +221,27 @@ enum AnswerLayout {
 
     /// The finished-or-streaming text of a screen answer: cleaned, then the hand-back filter. A screen
     /// answer may end on a clarifying question (a design answer can), so a closing question stays.
+    ///
+    /// THE ONE PLACE both the streaming view and the finished answer get their text from, so a rule added here cannot be on one and
+    /// missing from the other. (On Windows the "nothing asked" rewrite was in the streaming view and left out of the final step, so the
+    /// plain line showed while the answer arrived and the invented task came back the moment it finished.)
     static func composeScreenAnswer(_ raw: String) -> String {
-        AnswerClosers.stripTrailingOffer(postProcess(raw), allowClosingQuestion: true)
+        rewriteNothingAsked(AnswerClosers.stripTrailingOffer(postProcess(raw), allowClosingQuestion: true))
+    }
+
+    /// A screen with nothing on it to answer (a chat, a document, a desktop) used to get an invented "do this" and a "say this" line
+    /// nobody could say aloud, such as "I am ready for the next prompt". The model now writes NOTHING ASKED and one line about the
+    /// screen; this turns that into a plain sentence and says what to do next. Anything else passes through unchanged. Windows 1.0.31 item 30.
+    static func rewriteNothingAsked(_ text: String) -> String {
+        guard !text.isEmpty,
+              let re = try? NSRegularExpression(pattern: #"^\s*NOTHING ASKED[ \t]*:?[ \t]*\r?\n?([^\r\n]*)"#, options: [.caseInsensitive]),
+              let match = re.firstMatch(in: text, range: NSRange(location: 0, length: (text as NSString).length)) else { return text }
+        var line = (text as NSString).substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespaces)
+        while line.hasSuffix(".") { line.removeLast() }
+        let next = "Press F8 when a question or code is showing."
+        return line.isEmpty
+            ? "No question on this screen. " + next
+            : "No question on this screen. It shows: " + line + ".\n\n" + next
     }
 
     /// What a spoken answer shows while it is still arriving: the part not yet cleaned is never shown.
