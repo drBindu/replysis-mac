@@ -110,7 +110,8 @@ struct MainView: View {
         // MainViewModel.checkAndRequestPermissions. Blocks swipe-to-dismiss only until the
         // microphone prompt has been answered either way; Accessibility can be granted here
         // or skipped for now (the app still works via the local key monitor without it).
-        .sheet(isPresented: Bindable(vm).needsPermissionSetup) {
+        // Only once someone is signed in: the sign-in page is the whole window until then (owner, 2026-10-16), so nothing sits on top of it.
+        .sheet(isPresented: Binding(get: { vm.needsPermissionSetup && vm.showProfile }, set: { vm.needsPermissionSetup = $0 })) {
             PermissionSetupView()
                 .interactiveDismissDisabled(!vm.permMicrophone && !vm.micDenied)
         }
