@@ -11,7 +11,6 @@ private struct MainTranscriptHeightKey: PreferenceKey {
 struct MainView: View {
     /// Height the transcript actually needs; the box grows to it, up to a cap, then scrolls.
     @Environment(MainViewModel.self) var vm
-    @State private var resumeCollapsed = false
     @State private var showSettings    = false
     @State private var showLogin       = false
     @State private var alertExpanded   = false   // the notice under the header, one line until clicked
@@ -27,7 +26,6 @@ struct MainView: View {
     @State private var resumeParseError = ""
     @State private var showResumeError = false
     @State private var dropTargeted = false   // resume drop-zone hover highlight
-    @State private var didAutoSlide = false    // one-shot: auto-collapse the setup panel when the interview starts
 
     /// Setup is drawn SOLID. The glass backdrop exists to make the window hard to see during a
     /// call; Setup is never on screen during one, and the same transparency there only makes
@@ -77,14 +75,6 @@ struct MainView: View {
             if vm.showOnboarding { onboardingOverlay }
         }
         .ignoresSafeArea()
-        .onChange(of: vm.appStep) {
-            // Starting the interview tucks the resume column away, as Windows does. NOT animated:
-            // this is a whole-page swap, and animating the column's width at the same moment
-            // made the hosting view resize the window every frame until AppKit's layout-pass
-            // limit aborted the process (crash on Start interview, 2026-09-30).
-            var t = Transaction(); t.disablesAnimations = true
-            withTransaction(t) { resumeCollapsed = vm.appStep == .interview }
-        }
         .onAppear {
             vm.onAppear()
             vm.showOnboardingIfFirstRun()
@@ -96,18 +86,6 @@ struct MainView: View {
             // Interview started (first answer requested) → tuck the resume away
             // for a clean, focused view. The user can reopen it anytime.
             if vm.resumeLocked { withAnimation { resumeOpen = false } }
-            else { didAutoSlide = false }   // new session → re-arm the auto-slide
-        }
-        .onChange(of: vm.isListening) {
-            // When the interview starts (first Space → listening), slide the whole
-            // setup panel closed automatically for a clean, focused view. One-shot —
-            // the ◀ arrow still reopens it, and it re-arms on a new session.
-            if vm.isListening && !didAutoSlide {
-                didAutoSlide = true
-                if !resumeCollapsed {
-                    withAnimation(.easeInOut(duration: 0.28)) { resumeCollapsed = true }
-                }
-            }
         }
         .onChange(of: focusedField) {
             vm.isEditingText = focusedField != nil
@@ -953,29 +931,8 @@ struct MainView: View {
     // ══════════════════════════════════════════════
     var bodyArea: some View {
         HStack(spacing: 0) {
-            // Resume panel
-            if !resumeCollapsed {
-                resumePanel
-                    .frame(width: 270)
-                    .frame(maxHeight: .infinity)
-            }
-
-            // Toggle arrow — glass pill, matching the mic control's translucent fill +
-            // hairline border instead of the old flat solid-color block.
-            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { resumeCollapsed.toggle() } }) {
-                Image(systemName: resumeCollapsed ? "chevron.right" : "chevron.left")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(Color(hex: "#94A3B8"))
-                    .frame(width: 22)
-                    .frame(maxHeight: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.white.opacity(0.035))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.08), lineWidth: 1))
-                    )
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 3)
+            // No resume column and no arrow here (owner, 2026-10-16): the resume, role and answer style are all set on the Setup
+            // page before the interview starts, so this page is only the answer and the transcript, over the whole width.
 
             // Right panel. In an overlay of a flexible clear view, so the answer and the transcript inside it are
             // sized by the room they are given and never by their own content: a change in there no longer makes
@@ -986,58 +943,6 @@ struct MainView: View {
         }
         .padding(22)
         .padding(.top, 0)
-    }
-
-    // ══════════════════════════════════════════════
-    // MARK: — RESUME PANEL
-    // ══════════════════════════════════════════════
-    // Single-column "Interview Setup" (matches the Windows UI): resume drop zone on top,
-    // then Previous resumes, then the Target Role fields. No tabs, no Ask/Guide box.
-    var resumePanel: some View {
-        VStack(alignment: .leading, spacing: 16) {
-                // ── Section header ──
-                HStack(spacing: 7) {
-                    Image(systemName: "gearshape.fill")
-                        .font(.system(size: 12)).foregroundColor(Color(hex: "#64748b"))
-                    Text("INTERVIEW SETUP")
-                        .font(.system(size: 11, weight: .bold)).tracking(1.2)
-                        .foregroundColor(Color(hex: "#94A3B8"))
-                    Spacer()
-                }
-
-                // ── Resume: drop zone (empty) or loaded card (filled) ──
-                resumeSetupCard
-
-                // ── Previous resumes ──
-                if !vm.savedResumes.isEmpty {
-                    Button(action: { showResumeLibrary.toggle() }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "clock.arrow.circlepath")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text("Previous resumes")
-                                .font(.system(size: 13, weight: .semibold))
-                            Spacer()
-                        }
-                        .foregroundColor(Color(hex: "#7dd3fc"))
-                        .padding(.horizontal, 14).padding(.vertical, 11)
-                        .frame(maxWidth: .infinity)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(Color(hex: "#0c2540")))
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "#1e3a5f"), lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                    .popover(isPresented: $showResumeLibrary, arrowEdge: .bottom) {
-                        resumeLibraryPopover()
-                    }
-                }
-
-                Rectangle().fill(Color.white.opacity(0.07)).frame(height: 1).padding(.vertical, 2)
-
-                // ── Target role (fills the remaining height so there's no bottom gap) ──
-                targetRoleSection
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .padding(.trailing, 14)
-        .padding(.bottom, 6)
     }
 
     // ── Saved-resumes picker popover ──
@@ -1210,100 +1115,6 @@ struct MainView: View {
             }
         }
         return true
-    }
-
-    // ── Target role: company + job description (always visible, matches Windows) ──
-    var targetRoleSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 7) {
-                Image(systemName: "briefcase.fill")
-                    .font(.system(size: 11)).foregroundColor(Color(hex: "#64748b"))
-                Text("TARGET ROLE")
-                    .font(.system(size: 11, weight: .bold)).tracking(1)
-                    .foregroundColor(Color(hex: "#94A3B8"))
-                Text("tailors every answer")
-                    .font(.system(size: 10)).foregroundColor(Color(hex: "#4b5563"))
-                Spacer()
-            }
-
-            TextField("Company  (e.g. Google, Stripe, Amazon…)", text: Bindable(vm).companyName)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .foregroundColor(.white)
-                .padding(.horizontal, 12).padding(.vertical, 10)
-                .background(Color(red: 14/255, green: 18/255, blue: 26/255).opacity(vm.mainWindowOpacity))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.12), lineWidth: 1))
-                .cornerRadius(10)
-                .focused($focusedField, equals: .company)
-                .onChange(of: vm.companyName) { scheduleJobSave() }
-
-            // Screening details. Asked in the first two minutes of nearly every contract
-            // screen, and answerable from no resume ever written — so they are set once
-            // here rather than guessed at, or waffled around, in front of a recruiter.
-            screeningSection
-
-            ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(red: 14/255, green: 18/255, blue: 26/255).opacity(vm.mainWindowOpacity))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.12), lineWidth: 1))
-                if vm.jobDescription.isEmpty {
-                    Text("Paste the role & requirements: title, must-have skills, tech stack, seniority.")
-                        .font(.system(size: 12))
-                        .foregroundColor(Color(hex: "#64748b"))
-                        .padding(14)
-                        .allowsHitTesting(false)
-                }
-                TextEditor(text: Bindable(vm).jobDescription)
-                    .font(.system(size: 12))
-                    .foregroundColor(Color(hex: "#CBD5E1"))
-                    .scrollContentBackground(.hidden)
-                    .background(Color.clear)
-                    .padding(8)
-                    .focused($focusedField, equals: .job)
-                    .onChange(of: vm.jobDescription) { scheduleJobSave() }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    }
-
-    /// The five screening answers, and a free-text rate.
-    ///
-    /// Every one defaults to "Not specified" and an unset field is left out of the prompt
-    /// entirely — a blank must never become a confident answer, because inventing somebody's
-    /// visa status or rate is worse than saying it is open, and a recruiter writes both down.
-    var screeningSection: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 7) {
-                Image(systemName: "person.text.rectangle")
-                    .font(.system(size: 10)).foregroundColor(Color(hex: "#64748b"))
-                Text("SCREENING ANSWERS")
-                    .font(.system(size: 10, weight: .bold)).tracking(0.9)
-                    .foregroundColor(Color(hex: "#94A3B8"))
-                Text("asked at the start of the call")
-                    .font(.system(size: 9)).foregroundColor(Color(hex: "#4b5563"))
-                Spacer()
-            }
-            HStack(spacing: 7) {
-                screeningPicker("Work type", MainViewModel.workTypeOptions, Bindable(vm).workType)
-                screeningPicker("Authorization", MainViewModel.workAuthOptions, Bindable(vm).workAuth)
-            }
-            HStack(spacing: 7) {
-                screeningPicker("Can start", MainViewModel.canStartOptions, Bindable(vm).canStart)
-                screeningPicker("Where", MainViewModel.locationOptions, Bindable(vm).workLocation)
-            }
-            // Free text, because "$65/hr on C2C" and "$140k base" are not the same shape.
-            TextField("Pay  (e.g. $65/hr on C2C, or $140k base)", text: Bindable(vm).payRate)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .foregroundColor(.white)
-                .padding(.horizontal, 10).padding(.vertical, 8)
-                .background(Color(red: 14/255, green: 18/255, blue: 26/255).opacity(vm.mainWindowOpacity))
-                .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.12), lineWidth: 1))
-                .cornerRadius(9)
-                .focused($focusedField, equals: .pay)
-                .onChange(of: vm.payRate) { scheduleJobSave() }
-        }
     }
 
     func screeningPicker(_ label: String, _ options: [String], _ binding: Binding<String>) -> some View {

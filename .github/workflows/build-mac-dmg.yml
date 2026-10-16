@@ -285,7 +285,11 @@ jobs:
       - name: Create .dmg
         run: |
           DMG_CONTENT=$(mktemp -d)
-          cp -R "$RUNNER_TEMP/export/InterviewCopilot.app" "$DMG_CONTENT/"
+          # The app is called Replysis everywhere a person sees it. The Xcode project (and so the exported file) is still
+          # named InterviewCopilot, which showed under the disk's own name "Replysis" in the install window. Only the FILE
+          # name changes: the bundle id, the executable and the signature are untouched, and Sparkle finds the new app in an
+          # update by that bundle id, so installed copies named InterviewCopilot.app update in place as before.
+          ditto "$RUNNER_TEMP/export/InterviewCopilot.app" "$DMG_CONTENT/Replysis.app"
           ln -s /Applications "$DMG_CONTENT/Applications"
           # The mounted disk shows the real Replysis icon, built from the same PNGs as the app
           # icon (one source of truth). A folder holding .VolumeIcon.icns with the custom-icon

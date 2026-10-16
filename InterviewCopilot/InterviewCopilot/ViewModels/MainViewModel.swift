@@ -1610,6 +1610,9 @@ class MainViewModel {
             for w in [880, 920, 960, 1000, 1037, 1100] {
                 snapshot(AnyView(MainView().frame(width: CGFloat(w), height: 1000, alignment: .top)), name: "header-\(w)")
             }
+        case "space":     handleSpacePress(source: "FLOW")   // the Space key: listen, or send what was heard
+        case "practice":  setMicCaptureEnabled(true)      // at once, the way a switch made between questions is applied: the engine restarts now
+        case "interviewaudio": setMicCaptureEnabled(false)
         case "stallstart": StallMonitor.start(); StallMonitor.reset()
         case "stallreport": dlog("STALL: \(StallMonitor.summary)\nSTALL timeline: \(StallMonitor.timeline)", tag: "FLOW")
         #endif
