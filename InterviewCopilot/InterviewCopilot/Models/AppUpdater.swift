@@ -5,8 +5,14 @@ import Sparkle
 // the GitHub release notes claimed "the app updates automatically" but there
 // was no code anywhere that checked for or installed a new version — every
 // user was stuck on whatever build they first downloaded until they manually
-// found a new release on GitHub. Sparkle checks the feed once a day in the
-// background, and lets the user trigger a check manually from Settings.
+// found a new release on GitHub. Sparkle checks the feed in the background and lets
+// the user trigger a check manually from Settings.
+//
+// Updates work the way the big apps do them (Chrome, VS Code, Slack, Discord, Zoom; owner, 2026-10-16):
+// the check starts with the app, before anyone has signed in, and repeats every four hours
+// (SUScheduledCheckInterval 14400, down from a day); a found update is downloaded in the
+// background and installed when the app is next quit (SUAutomaticallyUpdate), with no question
+// asked; and nothing is checked while an interview is running (setInterviewActive below).
 // Updates are verified against SUPublicEDKey before install, so a tampered
 // feed/download can't silently replace the app.
 //
