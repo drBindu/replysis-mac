@@ -285,11 +285,12 @@ jobs:
       - name: Create .dmg
         run: |
           DMG_CONTENT=$(mktemp -d)
-          # The app is called Replysis everywhere a person sees it. The Xcode project (and so the exported file) is still
-          # named InterviewCopilot, which showed under the disk's own name "Replysis" in the install window. Only the FILE
-          # name changes: the bundle id, the executable and the signature are untouched, and Sparkle finds the new app in an
-          # update by that bundle id, so installed copies named InterviewCopilot.app update in place as before.
-          ditto "$RUNNER_TEMP/export/InterviewCopilot.app" "$DMG_CONTENT/Replysis.app"
+          # The product is called "Replysis AI" everywhere a person sees it (Windows, the website, the app's display name). The Xcode
+          # project, and so the exported file, is still named InterviewCopilot, which is what the install window showed. Only the FILE name
+          # changes: bundle id, executable and signature are the same. Sparkle finds the app inside an update by this file name, by the
+          # display name, or failing both by the bundle id, so the update zip carries the same name and installed copies named
+          # InterviewCopilot.app (found by bundle id) keep updating in place.
+          ditto "$RUNNER_TEMP/export/InterviewCopilot.app" "$DMG_CONTENT/Replysis AI.app"
           ln -s /Applications "$DMG_CONTENT/Applications"
           # The mounted disk shows the real Replysis icon, built from the same PNGs as the app
           # icon (one source of truth). A folder holding .VolumeIcon.icns with the custom-icon
@@ -312,7 +313,7 @@ jobs:
           # folder does not carry over (tried, and the disk kept the generic icon). So build a
           # writable image, mount it, set the flag, then compress it.
           hdiutil create \
-            -volname "Replysis" \
+            -volname "Replysis AI" \
             -srcfolder "$DMG_CONTENT" \
             -ov -format UDRW \
             "$RUNNER_TEMP/InterviewCopilot-rw.dmg"
@@ -407,8 +408,11 @@ jobs:
 
       - name: Create update .zip
         run: |
+          # Same file name as in the disk image, so a copy installed from the image finds its update by name.
+          ZIP_STAGE=$(mktemp -d)
+          ditto "$RUNNER_TEMP/export/InterviewCopilot.app" "$ZIP_STAGE/Replysis AI.app"
           ditto -c -k --sequesterRsrc --keepParent \
-            "$RUNNER_TEMP/export/InterviewCopilot.app" \
+            "$ZIP_STAGE/Replysis AI.app" \
             "InterviewCopilot-update.zip"
           echo "Update zip size: $(du -sh InterviewCopilot-update.zip | cut -f1)"
 
