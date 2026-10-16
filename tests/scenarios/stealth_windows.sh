@@ -29,7 +29,6 @@ run() {   # run <label> <extra settings json> <wanted sharingType>
   }
   sleep 10; check "main window"
   cmd sessions; sleep 3; check "Past Sessions open"; cmd closesessions; sleep 2
-  cmd login; sleep 3; check "sign-in sheet open"
   /tmp/axpress $PID "SC" >/dev/null; sleep 2; check "profile popover open"
   kill $PID $MOCK 2>/dev/null; sleep 1
 }

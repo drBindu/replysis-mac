@@ -27,10 +27,11 @@ walk(app, 0, inSheet: false)
 if CommandLine.arguments.count > 2 { for b in buttons { print("BUTTON \(label(b)) at \(point(b).map { "\(Int($0.x)),\(Int($0.y))" } ?? "?") size \(size(b).map { "\(Int($0.width))x\(Int($0.height))" } ?? "?")") } }
 
 func label(_ e: AXUIElement) -> String { [text(e, "AXDescription"), text(e, "AXTitle")].joined(separator: " ") }
-let google = sheetButtons.filter { label($0).contains("Google") }
+let pool = sheets > 0 ? sheetButtons : buttons   // the sign-in page is a sheet, or (nobody signed in) the whole window
+let google = pool.filter { label($0).contains("Google") }
 print("SHEETS \(sheets)")
 print("GOOGLE_BUTTONS \(google.count)")
-guard let close = sheetButtons.first(where: { text($0, "AXDescription") == "Close" }), let p = point(close), let s = size(close) else {
+guard let close = pool.first(where: { text($0, "AXDescription") == "Close" }), let p = point(close), let s = size(close) else {
     print("CLOSE_BUTTON missing"); exit(0)
 }
 print("CLOSE_AT \(Int(p.x + s.width / 2)) \(Int(p.y + s.height / 2))")

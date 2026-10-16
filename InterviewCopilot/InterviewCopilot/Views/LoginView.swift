@@ -15,8 +15,10 @@ struct LoginView: View {
     /// `flat` draws the form without a scroll view, for the debug snapshot (an image renderer
     /// cannot draw a scroll view's content). The real window always scrolls if it has to.
     private let flat: Bool
-    init(creating: Bool = false, flat: Bool = false) {
-        _isCreatingAccount = State(initialValue: creating); self.flat = flat
+    /// The sign-in page as the whole window (nobody signed in), not a sheet: it fills the window, and its close button quits the app.
+    private let embedded: Bool
+    init(creating: Bool = false, flat: Bool = false, embedded: Bool = false) {
+        _isCreatingAccount = State(initialValue: creating); self.flat = flat; self.embedded = embedded
     }
 
     // Saved account for "Continue As" card
@@ -348,7 +350,7 @@ struct LoginView: View {
 
             // Last, so it is on top. It used to be drawn first, under the scrolling form, which covers the whole panel: a mouse click
             // landed on the form and the window could not be closed without signing in (only a key press or a screen reader reached it).
-            LoginCloseButton { dismiss() }
+            LoginCloseButton { if embedded { NSApplication.shared.terminate(nil) } else { dismiss() } }
                 .padding(.top, 14).padding(.trailing, 16)
         }
     }
@@ -358,7 +360,8 @@ struct LoginView: View {
             productPanel
             formPanel
         }
-        .frame(width: 880, height: 580)
+        .frame(minWidth: embedded ? 0 : 880, maxWidth: embedded ? .infinity : 880,
+               minHeight: embedded ? 0 : 580, maxHeight: embedded ? .infinity : 580)
         .background(Palette.page)
         // Light in every system appearance: the page is a light page, and a dark system would
         // turn its fields and text into something unreadable.

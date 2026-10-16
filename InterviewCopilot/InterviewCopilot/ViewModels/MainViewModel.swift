@@ -169,6 +169,9 @@ class MainViewModel {
 
     // MARK: - Profile
     var showProfile = false
+    /// False until the saved sign-in has been read (or found missing). The window shows nothing but the logo until then, so a signed-in
+    /// person never sees the sign-in page flash by, and a signed-out person never sees the Setup page.
+    var sessionRestoreFinished = false
     var profileName = ""
     var profilePlan = ""
     var avatarInitials = ""
@@ -502,39 +505,14 @@ class MainViewModel {
                     restored = session.continueOfflineWithSavedSession()
                 }
             }
+            sessionRestoreFinished = true   // the answer is known: the window now shows the sign-in page or the app
             // BUG-4 FIX: check showProfile BEFORE awaiting to close the TOCTOU window where
             // the user taps "Continue As" while this Task is in flight and both paths reach
             // startNewSession(). showProfile=true is our mutex for "session already active".
             guard restored && !showProfile else {
                 isRestoringSession = false
-                // No real saved account — try the free trial (device-ID based, see
-                // UserSession.startGuestSession()) instead of immediately locking Space
-                // behind a sign-in prompt. Fails harmlessly if offline or this device's
-                // free credits are already used up; Space then falls back to the existing
-                // "not signed in" prompt exactly as before this feature existed.
-                if !showProfile {
-                    showProfile = true   // same mutex, same TOCTOU protection as the real-account path
-                    let guestOk = await session.startGuestSession()
-                    if guestOk {
-                        refreshHotkeyGate()
-                        profileName = "Guest"
-                        profilePlan = "Free trial"
-                        avatarInitials = "GU"
-                        // BUG FIX: this only set showCreditsBadge = true without ever calling
-                        // updateCreditsUI(), so the header badge stayed on its default "—"
-                        // placeholder forever — a guest had no visible way to see how many
-                        // free credits they actually had left. startGuestSession() already
-                        // populated session.credits/plan/isUnlimited; just render them.
-                        updateCreditsUI(credits: session.credits, plan: session.plan, isUnlimited: session.isUnlimited)
-                        let smOk = await session.fetchSpeechmaticsKeyAsync()
-                        startNewSession()
-                        if smOk && !engine.isRunning {
-                            engine.start(smKey: session.speechmaticsKey)
-                        }
-                    } else {
-                        showProfile = false   // release the mutex — no session was actually started
-                    }
-                }
+                // Nobody is signed in: the window shows the sign-in page and nothing else (owner, 2026-10-16). There used to be a
+                // free trial here that started a guest session on its own, which put the Setup page on screen without a sign-in.
                 return
             }
             showProfile = true   // claim the mutex before any await below
@@ -1564,6 +1542,7 @@ class MainViewModel {
         case "snap-main":         snapshot(AnyView(MainView().frame(width: 1040, height: 1000, alignment: .top)), name: "main")
         case "snap-main-narrow":  snapshot(AnyView(MainView().frame(width: 840, height: 1100, alignment: .top)), name: "main-narrow")
         case "snap-login":        snapshot(AnyView(LoginView(flat: true)), name: "login")
+        case "snap-gate":         snapshot(AnyView(LoginView(flat: true, embedded: true).frame(width: 1038, height: 660)), name: "gate")
         case "snap-login-create": snapshot(AnyView(LoginView(creating: true, flat: true)), name: "login-create")
         case "sessions": sessionsOpen = true
         case "screen":    runScreenAnalysis(wholeScreen: true)
@@ -5017,29 +4996,7 @@ class MainViewModel {
             isWatchMode = false
         }
         engine.stop(); session.clear(); setLoggedOutUI()
-
-        // BUG FIX: signOut() previously left the user in a fully logged-out state with
-        // no follow-up — the only way back to the free-trial guest state was quitting and
-        // relaunching the app (restoreSession() starts a guest session on boot, but nothing
-        // did the equivalent here). Mirror that same boot-time guest-session logic so
-        // signing out drops straight back into the guest trial instead of a dead end.
-        Task { @MainActor in
-            let guestOk = await session.startGuestSession()
-            guard guestOk else { return }   // offline, or this device's free trial is used up —
-                                             // falls back to the existing "not signed in" state
-            refreshHotkeyGate()
-            profileName = "Guest"; profilePlan = "Free trial"; avatarInitials = "GU"
-            updateCreditsUI(credits: session.credits, plan: session.plan, isUnlimited: session.isUnlimited)
-            // Same timer-restart fix as onLoginSuccess() — setLoggedOutUI() just stopped
-            // these, and onAppear (the only other place that starts them) runs once per
-            // launch, so without this the guest session would render with dead timers.
-            startTranscriptTimer(); startThinkingTimer(); startCreditsTimer()
-            let smOk = await session.fetchSpeechmaticsKeyAsync()
-            startNewSession()
-            if smOk && !engine.isRunning {
-                engine.start(smKey: session.speechmaticsKey)
-            }
-        }
+        // setLoggedOutUI() puts the window back on the sign-in page. Nothing else starts: no guest trial (owner, 2026-10-16).
     }
 
     /// Remember whose data is on this Mac, and clear it if a DIFFERENT person has signed in. See

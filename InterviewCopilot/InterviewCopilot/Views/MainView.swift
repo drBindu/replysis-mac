@@ -12,7 +12,6 @@ struct MainView: View {
     /// Height the transcript actually needs; the box grows to it, up to a cap, then scrolls.
     @Environment(MainViewModel.self) var vm
     @State private var showSettings    = false
-    @State private var showLogin       = false
     @State private var alertExpanded   = false   // the notice under the header, one line until clicked
     @State private var showSignOutConfirm = false
     @State private var showDebugLog    = false
@@ -52,27 +51,38 @@ struct MainView: View {
             RoundedRectangle(cornerRadius: 14)
                 .stroke(Color.white.opacity(0.18), lineWidth: 1)
 
-            VStack(spacing: 0) {
-                headerBar
-                    // Was an almost-opaque slab across the top, which cut the glass in half.
-                    // A whisper of light over the same material separates it instead.
-                    .background(Color.white.opacity(0.05))
-                    .overlay(alignment: .top) {
-                        LinearGradient(colors: [Color.white.opacity(0.10), .clear],
-                                       startPoint: .top, endPoint: .bottom)
-                            .frame(height: 1)
-                    }
-                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
-                Divider().background(Color.white.opacity(0.08))
-                // TRANSIENT MESSAGES GET THEIR OWN LINE. They used to sit inside the header
-                // row: when one appeared there was no width left, no header tier fitted, and
-                // SwiftUI drew "Read screen" over "Compact" — a broken toolbar for as long as
-                // the message lasted, tidying itself when the message timed out. A separate
-                // row cannot squeeze the controls, and the message is easier to read.
-                transientMessageRow
-                if vm.inSetup { setupPage } else { bodyArea }
+            // SIGN IN FIRST (owner, 2026-10-16). Nobody signed in: the window is the sign-in page and nothing else, no header, no Setup page,
+            // no guest trial. After signing in the Setup page opens, and signing out comes back here. Until the saved sign-in has been read
+            // (a fraction of a second) only the logo shows, so a signed-in person never sees the sign-in page flash by.
+            if !vm.sessionRestoreFinished {
+                Image("ReplysisMark").resizable().aspectRatio(contentMode: .fit).frame(width: 64, height: 64)
+                    .accessibilityLabel("Replysis")
+            } else if !vm.showProfile {
+                LoginView(embedded: true)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+            } else {
+                VStack(spacing: 0) {
+                    headerBar
+                        // Was an almost-opaque slab across the top, which cut the glass in half.
+                        // A whisper of light over the same material separates it instead.
+                        .background(Color.white.opacity(0.05))
+                        .overlay(alignment: .top) {
+                            LinearGradient(colors: [Color.white.opacity(0.10), .clear],
+                                           startPoint: .top, endPoint: .bottom)
+                                .frame(height: 1)
+                        }
+                        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
+                    Divider().background(Color.white.opacity(0.08))
+                    // TRANSIENT MESSAGES GET THEIR OWN LINE. They used to sit inside the header
+                    // row: when one appeared there was no width left, no header tier fitted, and
+                    // SwiftUI drew "Read screen" over "Compact" — a broken toolbar for as long as
+                    // the message lasted, tidying itself when the message timed out. A separate
+                    // row cannot squeeze the controls, and the message is easier to read.
+                    transientMessageRow
+                    if vm.inSetup { setupPage } else { bodyArea }
+                }
             }
-            if vm.showOnboarding { onboardingOverlay }
+            if vm.showOnboarding && vm.showProfile { onboardingOverlay }
         }
         .ignoresSafeArea()
         .onAppear {
@@ -92,11 +102,8 @@ struct MainView: View {
             vm.refreshHotkeyGate()   // so the global Space tap types in text boxes, not toggles
         }
         .onReceive(NotificationCenter.default.publisher(for: .showDebugLog)) { _ in showDebugLog = true }
-        // Pressing Space (or tapping the mic) while signed out routes here → open sign-in.
-        .onReceive(NotificationCenter.default.publisher(for: .showLogin)) { _ in showLogin = true }
         .sheet(isPresented: $showSettings)  { SettingsView() }
         .sheet(isPresented: Bindable(vm).sessionsOpen)  { SessionsView() }
-        .sheet(isPresented: $showLogin)     { LoginView() }
         .sheet(isPresented: $showDebugLog)  { DebugLogView() }
         // First-run permission explainer (fixed-size sheet so it can never stretch the
         // window). Shown only when something is still undecided — see
@@ -449,22 +456,8 @@ struct MainView: View {
     /// Profile (or Sign In) and Close. Shared by the interview header and the Setup header.
     @ViewBuilder
     func accountAndCloseControls(compact: Bool = false) -> some View {
-            // Profile / account  → opens rich dropdown
-            if vm.showProfile {
-                profileButton(compact: compact)
-            } else {
-                Button(action: { showLogin = true }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "bolt.fill").font(.system(size: 11))
-                        Text("Sign In").font(.system(size: 12, weight: .semibold))
-                    }
-                    .foregroundColor(Color(hex: "#38bdf8"))
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(Capsule().fill(Color(hex: "#0c2540")))
-                    .overlay(Capsule().stroke(Color(hex: "#2255AA"), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-            }
+            // Profile / account  → opens rich dropdown. (Nobody signed in never sees this header: the window is the sign-in page.)
+            profileButton(compact: compact)
 
             // Close (quit). No minimize: as an accessory app there's no Dock icon
             // to restore from — use the opacity slider to fade it instead.
@@ -783,16 +776,7 @@ struct MainView: View {
                         subtitle: "Review previous interviews") {
                     showProfileMenu = false; vm.sessionsOpen = true
                 }
-                // A guest (free trial, no account) previously had NO way to reach the
-                // sign-in screen except clicking "Sign Out" — confusing, since they never
-                // signed in to anything. Show a direct "Sign In" entry instead; the real
-                // "Upgrade to Pro" link only makes sense once there's an actual account.
-                if vm.session.isGuestSession {
-                    menuRow(icon: "person.crop.circle.badge.checkmark", title: "Sign In",
-                            subtitle: "Save your sessions across devices", accent: Color(hex: "#38bdf8")) {
-                        showProfileMenu = false; showLogin = true
-                    }
-                } else if !vm.session.isPaidPlan {
+                if !vm.session.isPaidPlan {
                     // Only offered to accounts actually below the paid tiers. Gating this on
                     // isUnlimited offered "Upgrade to Pro" to a Max subscriber, because Max
                     // is paid but still metered — an upsell to a LOWER tier than the one
@@ -876,13 +860,9 @@ struct MainView: View {
                         // standalone credits popover — close whichever one is actually open.
                         showProfileMenu = false
                         showCreditsPopover = false
-                        if vm.session.isGuestSession {
-                            showLogin = true
-                        } else {
-                            NSWorkspace.shared.open(PlanFacts.addAnswersURL)
-                        }
+                        NSWorkspace.shared.open(PlanFacts.addAnswersURL)
                     }) {
-                        Text(vm.session.isGuestSession ? "Sign In" : "Get more")
+                        Text("Get more")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 12).padding(.vertical, 6)
