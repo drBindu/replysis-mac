@@ -1610,6 +1610,7 @@ class MainViewModel {
             for w in [880, 920, 960, 1000, 1037, 1100] {
                 snapshot(AnyView(MainView().frame(width: CGFloat(w), height: 1000, alignment: .top)), name: "header-\(w)")
             }
+        case "capturable": debugReportCapturableWindows()
         case "space":     handleSpacePress(source: "FLOW")   // the Space key: listen, or send what was heard
         case "practice":  setMicCaptureEnabled(true)      // at once, the way a switch made between questions is applied: the engine restarts now
         case "interviewaudio": setMicCaptureEnabled(false)
@@ -1649,6 +1650,24 @@ class MainViewModel {
         send(.leftMouseDown)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { send(.leftMouseUp) }
         dlog("FLOWSTATE: click at \(n[0]),\(n[1]) sent to a \(Int(window.frame.width)) wide \(sheet == nil ? "window" : "sheet")", tag: "FLOW")
+    }
+    #endif
+
+    #if DEBUG
+    /// "capturable": asks ScreenCaptureKit, which Zoom, Meet and Teams use to share a screen, which of THIS app's windows it can see, next to what
+    /// the app itself says about each one. Stealth Mode only works for a window that is missing from the first list.
+    private func debugReportCapturableWindows() {
+        let mine = NSApp.windows.map { "\(type(of: $0)) \(Int($0.frame.width))x\(Int($0.frame.height)) sharingType=\($0.sharingType.rawValue)" }.joined(separator: " | ")
+        dlog("FLOWSTATE: this app's windows: \(mine)", tag: "FLOW")
+        Task {
+            do {
+                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+                let me = ProcessInfo.processInfo.processIdentifier
+                let seen = content.windows.filter { $0.owningApplication?.processID == me }
+                    .map { "\(Int($0.frame.width))x\(Int($0.frame.height)) layer \($0.windowLayer)" }
+                dlog("FLOWSTATE: a screen share can capture \(seen.count) of this app's windows: \(seen.joined(separator: " | "))", tag: "FLOW")
+            } catch { dlog("FLOWSTATE: capturable: ScreenCaptureKit refused: \(error.localizedDescription)", tag: "FLOW") }
+        }
     }
     #endif
 
@@ -5586,21 +5605,13 @@ class MainViewModel {
     /// Called on launch (so the default-ON state takes effect immediately) and whenever a
     /// window is freshly created or the Settings toggle changes.
     private func applyStealthMode() {
-        // TWO WINDOWS IS THE WHOLE LIST, and sheets are covered by the first of them.
-        //
-        // Settings, Past Sessions, Login, the permission setup and the DEBUG LOG — which
-        // shows live transcripts — are all .sheet on the main panel. A sheet is its own
-        // NSWindow and sharingType is per-window, so whether they inherit stealth is a real
-        // question rather than an obvious yes. Measured with CGWindowListCopyWindowInfo
-        // against the running app: every window this process owns reports sharing=0,
-        // including a 480x560 sheet while the 1326x740 panel was open. They inherit.
-        //
-        // Worth keeping measured rather than assumed. A debug window showing transcripts
-        // while visible in a screen share defeats the feature the product is bought for,
-        // and it is invisible to the person it exposes. Windows had exactly that leak.
+        // EVERY window, not two. An earlier version of this note said sheets inherit the main panel's setting because
+        // CGWindowListCopyWindowInfo reported sharing=0 for them. Their own sharingType was 1 (capturable): Past Sessions, sign-in,
+        // Settings, the profile menu and every alert showed in a screen share while Stealth Mode was ON. See StealthWindows.
         let type: NSWindow.SharingType = stealthModeEnabled ? .none : .readOnly
         mainPanel?.sharingType = type
         AnswerOverlayWindow.shared?.sharingType = type
+        StealthWindows.setEnabled(stealthModeEnabled)
     }
 
     /// Called from Settings when the user switches Stealth Mode. Applies immediately —
