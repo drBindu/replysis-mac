@@ -34,8 +34,25 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
     }
 
     lazy var controller: SPUStandardUpdaterController = {
-        SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
+        let controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
+        // Repairs a Mac where the checks were switched off for good by an older build (see setInterviewActive). Sparkle keeps this setting in
+        // the user's defaults, and the old pause wrote false there, so a copy that was quit during an interview never checked again.
+        controller.updater.automaticallyChecksForUpdates = true
+        return controller
     }()
+
+    /// True while an interview is running. Read by updater(_:mayPerformUpdateCheck:error:) to hold back the BACKGROUND check.
+    private var interviewActive = false
+
+    /// Sparkle asks before every check (updater:mayPerformUpdateCheck:error:, which Swift shows as a method that throws). While an interview
+    /// runs the background check is refused (by throwing), so a prompt or a download never lands over a live interview; a check the person asks
+    /// for in Settings is always allowed.
+    func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
+        guard interviewActive && updateCheck == .updatesInBackground else { return }
+        dlog("AppUpdater: a background check was due and is held back until the interview ends", tag: "UPDATE")
+        throw NSError(domain: "com.bindualekhya.InterviewCopilot.updater", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: "An interview is running; the update check waits."])
+    }
 
     func feedURLString(for updater: SPUUpdater) -> String? {
         // THE NEW ACCOUNT. This override replaces SUFeedURL on every single check, so it is
@@ -65,10 +82,16 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
 
     func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
         let code = (error as NSError).code
+        if (error as NSError).domain == "com.bindualekhya.InterviewCopilot.updater" { return }   // our own hold-back during an interview, already logged
         // SUNoUpdateError (1001) is how Sparkle reports "nothing newer"; it is not a failure.
         if code == 1001 { return }
         dlog("AppUpdater: check FAILED — \(error.localizedDescription) (code \(code))", tag: "UPDATE")
     }
+
+    #if DEBUG
+    /// The developer flow's "updatecheck": the check Sparkle's own schedule would make, now (Sparkle will not schedule one sooner than an hour).
+    func checkInBackgroundNow() { controller.updater.checkForUpdatesInBackground() }
+    #endif
 
     var canCheckForUpdates: Bool {
         controller.updater.canCheckForUpdates
@@ -83,7 +106,13 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
     // startNewSession()/endSession() — resumes automatically once the interview ends, so
     // the update is simply found on the next scheduled check rather than lost.
     func setInterviewActive(_ active: Bool) {
-        controller.updater.automaticallyChecksForUpdates = !active
+        // NOT controller.updater.automaticallyChecksForUpdates = !active, which is what this did. Sparkle stores that setting in the user's
+        // defaults (SUEnableAutomaticChecks), so an app quit during an interview, which is how most of them end, left it at false for good:
+        // on the owner's Mac, 2026-10-16, automatic update checks were off and the updates never came. The pause is the flag above,
+        // gone with the app.
+        interviewActive = active
         dlog("AppUpdater: automatic background checks \(active ? "paused (interview active)" : "resumed")", tag: "UPDATE")
+        // What was skipped during the interview is looked for now, as turning the setting back on used to do.
+        if !active { controller.updater.checkForUpdatesInBackground() }
     }
 }
