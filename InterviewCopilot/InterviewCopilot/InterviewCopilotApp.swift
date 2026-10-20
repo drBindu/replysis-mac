@@ -155,13 +155,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func guideToApplicationsFolder() {
         let alert = NSAlert()
-        alert.messageText = "Move Replysis to your Applications folder"
+        alert.messageText = "Move Replysis AI to your Applications folder"
+        alert.icon = NSApp.applicationIconImage
         alert.informativeText = """
-        Replysis is opening from a temporary location, so macOS won't \
+        Replysis AI is opening from a temporary location, so macOS won't \
         remember your microphone and keyboard permissions.
 
         To fix it permanently — no password needed:
-        1. Drag Replysis into the Applications folder.
+        1. Drag Replysis AI into the Applications folder.
         2. Open it from Applications (or Launchpad).
         """
         alert.alertStyle = .informational
@@ -358,9 +359,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let busy = MainActor.assumeIsolated { vm.isListening || vm.isProcessing || vm.isScreenAnalyzing }
         if busy, !MainViewModel.quitWithoutAsking {
             let alert = NSAlert()
-            alert.messageText = "Quit Replysis?"
-            alert.informativeText = "An interview is still running. Quitting stops listening and closes the answers."
-            alert.alertStyle = .warning
+            alert.messageText = "Close Replysis AI?"
+            alert.informativeText = "An interview is still running. Closing stops listening and clears the answers."
+            // Calm, like Windows' restyled dialogs: the real logo with no yellow warning badge.
+            alert.alertStyle = .informational
+            alert.icon = NSApp.applicationIconImage
             alert.addButton(withTitle: "Keep running")
             alert.addButton(withTitle: "Quit")
             // AN ACCESSORY APP DOES NOT GET FOCUS FOR FREE. Without this the alert can come
