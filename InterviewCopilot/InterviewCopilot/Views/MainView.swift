@@ -169,52 +169,20 @@ struct MainView: View {
     #endif
 
     var fittedHeader: some View {
+        // Each rung is a complete layout and ViewThatFits takes the first that fits honestly. When room runs short the "Replysis AI" title goes
+        // first, then the mic hint, then the word on Screen (Windows MAC_CATCHUP, 2026-10-19). There is no second row any more: the bar is small.
         ViewThatFits(in: .horizontal) {
             headerRow(.full)
-            headerRow(.noStrapline)
-            headerRow(.iconBrand)
+            headerRow(.noTitle)
             headerRow(.minimal)
-            // Same row, the toolbar trimmed to what is read at a glance: no F8 chip, Compact
-            // as its icon. Owner, 2026-10-08: with the buttons on a second row "the auto
-            // manual and etc buttons are getting down of mic". Every control stays beside
-            // the mic down to about 1,000pt, which is where the window opens on a 13".
             headerRow(.tight)
-            // Last rung, for a window dragged narrower than that: the controls move to a
-            // second row instead of the window having to be a wide strip. Owner,
-            // 2026-10-02: "all windows are too rectangular big, not a good fit".
-            headerTwoRows
         }
     }
 
-    enum HeaderTier { case full, noStrapline, iconBrand, minimal, tight }
-
-    /// The header on two rows: who and how it is going on top, how it listens and what it reads below.
-    var headerTwoRows: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                brandView(.noStrapline)
-                    .layoutPriority(2)
-                Spacer(minLength: 12)
-                micControl(.full)
-                    .layoutPriority(1)
-                Spacer(minLength: 12)
-                statusCluster()
-                    .layoutPriority(3)
-                headerSeparator.padding(.horizontal, 6)
-                accountAndCloseControls()
-                    .layoutPriority(3)
-            }
-            .frame(height: 50)
-            HStack(spacing: 13) {
-                listeningModeSwitch()
-                watchAndCompactGroup(compact: false)
-                toolSegmentGroup
-                Spacer(minLength: 0)
-            }
-            .frame(height: 36)
-            .padding(.bottom, 2)
-        }
-    }
+    /// THE TOP BAR IS DECIDED AND LOCKED (Windows MAC_CATCHUP, 2026-10-19: the owner tried it there, chose it and asked that it not change
+    /// again): the logo, the mic with its state, ONE pill (what it hears, how it answers) that opens a menu, Screen, the timer, the answers
+    /// badge, the round avatar and close. Mode, window and pin choices live in the pill's menu instead of a row of buttons.
+    enum HeaderTier { case full, noTitle, minimal, tight }
 
     /// Session time and the answers badge, read as one unit: how the session is going.
     func statusCluster(compact: Bool = false) -> some View {
@@ -236,25 +204,118 @@ struct MainView: View {
     }
 
     func headerRow(_ tier: HeaderTier) -> some View {
-        HStack(spacing: 0) {
+        HStack(spacing: tier == .tight ? 8 : 12) {
             brandView(tier)
                 .layoutPriority(2)
-            Spacer(minLength: tier == .tight ? 8 : 12)
             micControl(tier)
                 .layoutPriority(1)
-            Spacer(minLength: tier == .tight ? 8 : 12)
-            rightCluster(compact: tier == .tight)
-                .layoutPriority(3)   // the controls are fixed-size now, so give them the
-                // strongest claim: if anything must give up width it should be the mic
-                // pill's hint text, never a button label breaking across three lines.   // PREMIUM FIX: never let the mic pill's growth (its hint
-                // text is much longer while LISTENING — "Press SPACE again to get answer" vs
-                // "Press SPACE to listen") squeeze rightCluster below its natural size. Without
-                // this, an HStack with only minimum gaps shares the shortfall across ALL
-                // children when content is tight, and rightCluster's own nested icon buttons
-                // would get compressed into overlapping fragments — exactly the broken blob
-                // seen switching MUTED → LISTENING. Giving both edges priority means only the
-                // (already width-capped, see micControl) center pill ever absorbs the squeeze.
+            modePill()
+                .layoutPriority(3)
+            Spacer(minLength: 8)
+            screenButton(compact: tier == .tight)
+                .layoutPriority(3)
+            statusCluster(compact: tier == .tight)
+                .layoutPriority(3)
+            accountAndCloseControls(compact: true)
+                .layoutPriority(3)
         }
+    }
+
+    // ── The one pill and its menu ──────────────────────────────────
+    /// "Interview Auto" or "Practice Manual": what Replysis hears, then how it answers. Opens a menu with both choices and the window
+    /// choices (Compact, Pin on top). A popover, so it is a window of its own (Stealth Mode covers it, see StealthWindows) and it stays
+    /// open until a choice is made, a click lands elsewhere, or Esc.
+    func modePill() -> some View {
+        let hears = vm.practiceAudioOn ? "Practice" : "Interview"
+        let answers = vm.listeningMode == .auto ? "Auto" : "Manual"
+        return Button(action: { showModeMenu.toggle() }) {
+            HStack(spacing: 6) {
+                Image(systemName: vm.practiceAudioOn ? "mic.fill" : "video.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                Text(hears).font(.system(size: 11.5, weight: .semibold))
+                Text(answers).font(.system(size: 11.5)).foregroundColor(Color(hex: "#94a3b8"))
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundColor(Color(hex: "#64748b"))
+            }
+            .foregroundColor(.white)
+            .lineLimit(1).fixedSize()
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(Capsule().fill(Color(hex: "#161b22")))
+            .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Mode menu: \(hears), \(answers)")
+        .help(AudioSourceRules.hearingLine(practiceOn: vm.practiceAudioOn))
+        .popover(isPresented: $showModeMenu, arrowEdge: .bottom) { modeMenu }
+    }
+
+    var modeMenu: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            modeMenuHeading("WHAT REPLYSIS HEARS")
+            modeMenuRow(icon: "video.fill", title: "Interview", subtitle: "The call on this computer", selected: !vm.practiceAudioOn) {
+                vm.selectAudioSource(practice: false)
+            }
+            modeMenuRow(icon: "mic.fill", title: "Practice", subtitle: "Your voice", selected: vm.practiceAudioOn) {
+                vm.selectAudioSource(practice: true)
+            }
+            modeMenuHeading("HOW IT ANSWERS")
+            modeMenuRow(icon: "bolt.fill", title: "Auto", subtitle: "Answers as soon as the question ends", selected: vm.listeningMode == .auto) {
+                vm.setListeningMode(.auto)
+            }
+            modeMenuRow(icon: "hand.tap.fill", title: "Manual", subtitle: "Press Space to listen, and again to answer", selected: vm.listeningMode == .manual) {
+                vm.setListeningMode(.manual)
+            }
+            modeMenuHeading("WINDOW")
+            modeMenuRow(icon: "rectangle.compress.vertical", title: "Compact", subtitle: "A small bar instead of the full window", selected: vm.showCameraOverlay) {
+                vm.toggleCamera()
+            }
+            modeMenuRow(icon: vm.isPinnedOnTop ? "pin.fill" : "pin", title: "Pin on top", subtitle: "Keep the window above other apps", selected: vm.isPinnedOnTop) {
+                vm.togglePin()
+            }
+        }
+        .padding(.vertical, 8)
+        .frame(width: 292)
+        .background(Color(hex: "#0b1018"))
+    }
+
+    func modeMenuHeading(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 9.5, weight: .bold)).tracking(0.6)
+            .foregroundColor(Color(hex: "#64748b"))
+            .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 4)
+    }
+
+    func modeMenuRow(icon: String, title: String, subtitle: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: { action(); showModeMenu = false }) {
+            HStack(spacing: 10) {
+                Image(systemName: icon).font(.system(size: 12)).frame(width: 18)
+                    .foregroundColor(selected ? Color(hex: "#4ade80") : Color(hex: "#94a3b8"))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.system(size: 12.5, weight: .semibold)).foregroundColor(.white)
+                    Text(subtitle).font(.system(size: 10.5)).foregroundColor(Color(hex: "#7c8aa0"))
+                }
+                Spacer(minLength: 6)
+                if selected { Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundColor(Color(hex: "#4ade80")) }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+    }
+
+    /// AN ACTION, NOT A SWITCH. Pressing it reads the screen there and then; the label never changes, because a control whose text
+    /// changes is read as a switch. Whether screen answers are armed is a Settings preference, said in the tooltip. Styled to the
+    /// Windows 1.0.21 glass spec: neutral silver, fills that follow the opacity slider, text that never fades.
+    func screenButton(compact: Bool) -> some View {
+        Button(action: { vm.runScreenAnalysis(wholeScreen: false) }) {
+            ReadScreenButtonLabel(busy: vm.isScreenAnalyzing, showKey: !compact)
+        }
+        .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
+                                      minHeight: 28, horizontalPadding: 9, verticalPadding: 3))
+        .disabled(vm.isScreenAnalyzing)
+        .help(vm.isWatchMode
+              ? "Read the screen now (F8). Screen answers are on, so questions about the screen are answered from it automatically. Change that in Settings."
+              : "Read the screen now (F8). Automatic screen answers are off. Turn them on in Settings.")
     }
 
     /// The mic notice and the Interview / Practice tips, on their own line under the header.
@@ -395,39 +456,6 @@ struct MainView: View {
         else { vm.handleSpacePress(source: "BUTTON") }
     }
 
-    // ── Right cluster: interview actions + profile + window ────────
-    func rightCluster(compact: Bool) -> some View {
-        // Wider gaps between groups than inside them: separation is what makes a toolbar
-        // read as a few considered clusters instead of one crowded row.
-        HStack(spacing: compact ? 9 : 13) {
-            // No Analyze button: it duplicated what F8/F9 already do, and the footer
-            // names both. Watch Screen is the control worth toolbar space, because it is
-            // the one set once before the call and then never touched — reaching for a
-            // menu mid-interview is exactly what this product exists to avoid.
-
-            // Eye Mode · Pin · Stealth — one premium segmented glass pill instead of three
-            // separately-bordered floating buttons, so the header reads as a few clean
-            // groups (Analyze / view toggles / status / account) rather than a row of
-            // many individual chips.
-            listeningModeSwitch(compact: compact)
-
-            watchAndCompactGroup(compact: compact)
-
-            // Pin joins the view-toggle group visually instead of floating alone.
-            toolSegmentGroup
-
-            if !compact { headerSeparator }
-
-            // Status cluster: session time and credits read as one unit, because they are
-            // both "how the session is going" rather than controls.
-            statusCluster(compact: compact)
-
-            if !compact { headerSeparator }
-
-            accountAndCloseControls(compact: compact)
-        }
-    }
-
     /// The answers badge. Shared by the interview header and the Setup header.
     var creditsBadgeView: some View { creditsBadge(compact: false) }
 
@@ -474,173 +502,6 @@ struct MainView: View {
         Rectangle().fill(Color.white.opacity(0.10))
             .frame(width: 1, height: 24)
             .padding(.horizontal, 2)
-    }
-
-    // ── AUTO | MANUAL ──────────────────────────────────────────────
-    // WHEN the app answers, never which audio it hears; that stopped being a choice when the
-    // modes merged. Two visible segments rather than a menu: a dropdown hides the state until
-    // it is opened, and this is state a candidate has to read at a glance mid-interview.
-    // The "Real interview? Mic off in Settings" capsule lived here. It pointed at a
-    // Settings switch that is now a segment in this same toolbar, and the two tips that
-    // matter are alerts with a button that performs the switch (see interviewTipAlert).
-    func listeningModeSwitch(compact: Bool = false) -> some View { listeningModeSegments(compact: compact) }
-
-    // Group 1: WHEN the app answers. Group 2, past the hairline: WHAT it hears.
-    // The audio choice was a checkbox in Settings called "microphone", and people left it
-    // on in real interviews, so the app heard the candidate's own answers and took them as
-    // new questions. Named for the situation, beside the mode it belongs with, and read
-    // before the call starts. Windows 9294be2.
-    func listeningModeSegments(compact: Bool) -> some View {
-        HStack(spacing: 0) {
-            modeSegment(.auto, label: "AUTO", compact: compact,
-                        help: "Auto. Answers as soon as the question ends.")
-            Rectangle().fill(Color.white.opacity(0.10)).frame(width: 1, height: 18)
-            modeSegment(.manual, label: "MANUAL", compact: compact,
-                        help: "Manual. Press Space to listen, and again to answer. Most accurate, because you decide when the question ends. In Auto the end is inferred from a pause, so an interviewer who stops mid-sentence to think can be answered half-way.")
-
-            Rectangle().fill(Color.white.opacity(0.18))
-                .frame(width: 1, height: 18).padding(.horizontal, compact ? 3 : 6)
-
-            audioSegment(practice: false, label: "Interview", icon: "video.fill", compact: compact,
-                         help: AudioSourceRules.interviewHelp)
-            audioSegment(practice: true, label: "Practice", icon: "mic.fill", compact: compact,
-                         help: AudioSourceRules.practiceHelp)
-        }
-        .help(AudioSourceRules.hearingLine(practiceOn: vm.practiceAudioOn))
-        .background(Capsule().fill(Color(hex: "#161b22")))
-        .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
-        .clipShape(Capsule())
-    }
-
-    func modeSegment(_ mode: ListeningMode, label: String, compact: Bool = false, help: String) -> some View {
-        let selected = vm.listeningMode == mode
-        let accent = GlassMaterial.text
-        return Button(action: { vm.setListeningMode(mode) }) {
-            HStack(spacing: 6) {
-                Circle().fill(selected ? accent : Color.clear).frame(width: 6, height: 6)
-                Text(label)
-                    .font(.system(size: 10, weight: .bold)).tracking(0.7)
-                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
-                    .foregroundColor(selected ? .white : Color(hex: "#64748b"))
-            }
-            .padding(.horizontal, compact ? 8 : 11).padding(.vertical, 8)
-            .background(selected ? GlassMaterial.fill(GlassMaterial.selectedSegment, windowOpacity: vm.mainWindowOpacity) : Color.clear)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-    }
-
-    /// An in-app alert that can carry one action, for the Interview / Practice tips.
-    /// One click does the thing it suggests, so nobody has to find a setting mid-call.
-    var audioSourceAlert: some View {
-        HStack(alignment: alertExpanded ? .top : .center, spacing: 10) {
-            Image(systemName: "info.circle.fill")
-                .font(.system(size: 12))
-                .foregroundColor(Color(hex: "#fbbf24"))
-            // One slim line by default: the title, then as much of the message as fits. The whole
-            // message is one click away (and in the tooltip). Two lines across the full width cost
-            // about 70pt of a 660pt window for a notice that is usually a passing "reconnecting"
-            // (owner, 2026-10-02: "that popup message is taking space").
-            Group {
-                if alertExpanded {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(vm.alertTitle).font(.system(size: 11.5, weight: .semibold)).foregroundColor(.white)
-                        Text(vm.alertBody).font(.system(size: 11)).foregroundColor(Color(hex: "#c3ccd8"))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                } else {
-                    (Text(vm.alertTitle).font(.system(size: 11.5, weight: .semibold)).foregroundColor(.white)
-                     + Text("   " + vm.alertBody).font(.system(size: 11)).foregroundColor(Color(hex: "#aab5c4")))
-                        .lineLimit(1).truncationMode(.tail)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { alertExpanded.toggle() } }
-            .help(vm.alertBody)
-            if !vm.alertActionLabel.isEmpty {
-                Button(action: { vm.runAlertAction() }) {
-                    Text(vm.alertActionLabel)
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .lineLimit(1).fixedSize()
-                }
-                .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
-                                              minHeight: 24, horizontalPadding: 10, verticalPadding: 2))
-            }
-            Button(action: { vm.dismissAlert() }) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(Color(hex: "#8b9bb0"))
-            }
-            .buttonStyle(.plain)
-            .help("Dismiss")
-        }
-        .padding(.horizontal, 12).padding(.vertical, alertExpanded ? 8 : 5)
-        .frame(maxWidth: 1000, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 9).fill(Color(hex: "#161b22").opacity(0.96)))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.12), lineWidth: 1))
-        .transition(.opacity)
-        .onChange(of: vm.alertTitle) { alertExpanded = false }
-    }
-
-    func audioSegment(practice: Bool, label: String, icon: String, compact: Bool = false, help: String) -> some View {
-        let selected = vm.practiceAudioOn == practice
-        return Button(action: { vm.selectAudioSource(practice: practice) }) {
-            HStack(spacing: 6) {
-                if !compact {
-                    Image(systemName: icon)
-                        .font(.system(size: 9, weight: .semibold))
-                }
-                Text(label)
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
-            }
-            .foregroundColor(selected ? GlassMaterial.text : Color(hex: "#92929F"))
-            .padding(.horizontal, compact ? 9 : 10).padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 4).fill(
-                selected ? GlassMaterial.fill(GlassMaterial.selectedSegment, windowOpacity: vm.mainWindowOpacity)
-                         : Color.clear))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-    }
-
-    // ── WATCH SCREEN | COMPACT — one grouped pill, as on Windows ──
-    func watchAndCompactGroup(compact: Bool) -> some View {
-        HStack(spacing: 6) {
-            // AN ACTION, NOT A SWITCH. Pressing it reads the screen there and then; the label
-            // never changes, because a control whose text changes is read as a switch.
-            // Whether screen answers are armed is a Settings preference, said in the tooltip.
-            // Styled to the Windows 1.0.21 glass spec: neutral silver, fills that follow the
-            // opacity slider, text that never fades.
-            Button(action: { vm.runScreenAnalysis(wholeScreen: false) }) {
-                ReadScreenButtonLabel(busy: vm.isScreenAnalyzing, showKey: !compact)
-            }
-            .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
-                                          minHeight: 28, horizontalPadding: 9, verticalPadding: 3))
-            .disabled(vm.isScreenAnalyzing)
-            .help(vm.isWatchMode
-                  ? "Read the screen now (F8). Screen answers are on, so questions about the screen are answered from it automatically. Change that in Settings."
-                  : "Read the screen now (F8). Automatic screen answers are off. Turn them on in Settings.")
-
-            Button(action: { vm.toggleCamera() }) {
-                HStack(spacing: 6) {
-                    Image(systemName: vm.showCameraOverlay ? "eye.fill" : "eye")
-                        .font(.system(size: 11, weight: .semibold))
-                    if !compact {
-                        Text("Compact")
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .lineLimit(1).fixedSize()
-                    }
-                }
-            }
-            .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
-                                          minHeight: 28, horizontalPadding: 9, verticalPadding: 3))
-            .accessibilityLabel("Compact")
-            .help("Compact overlay: a small bar instead of the full window")
-        }
     }
 
     /// ◀ ▶ over this session's answers, with where you are and a way back to live.
