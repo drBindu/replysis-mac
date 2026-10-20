@@ -4809,7 +4809,7 @@ class MainViewModel {
         // instant it happened, so a banner about a work network or a VPN appeared over a transcript that
         // was working and a second later reconnected (seen live on Windows: engine back online 1.4 s after
         // being killed, banner on screen anyway).
-        if engine.isReady { lastEngineReadyAt = now }
+        if engine.isReady { lastEngineReadyAt = now; speechDownSince = nil } else if speechDownSince == nil { speechDownSince = now }
         let stalled = !engine.isReady && engine.isRunning &&
             ListeningProblems.connectionStalled(now: now, startedAt: engine.startedAt, lastReadyAt: lastEngineReadyAt, patience: Self.connectPatience)
         let problem = ListeningProblems.detect(
@@ -4817,7 +4817,9 @@ class MainViewModel {
             speechStatusCode: session.speechKeyLastStatus,
             outOfListeningTime: session.speechOutOfListeningTime,
             outOfAnswers: session.speechOutOfAnswers,
-            waitingToRetry: now < session.speechRetryAfter,
+            // No "Reconnecting" flash for a wait that is over in a moment (Windows item 43b): only once speech has
+            // been down for a few seconds.
+            waitingToRetry: (now < session.speechRetryAfter || session.speechKeyRetrying) && now.timeIntervalSince(speechDownSince ?? now) >= Self.reconnectNoticeAfter,
             fatalNoMicrophone: micCaptureEnabled && micStatus == "NO MIC" && AVCaptureDevice.authorizationStatus(for: .audio) == .denied,
             connectionStalled: stalled,
             noNetwork: !network.isUp,
@@ -4836,6 +4838,9 @@ class MainViewModel {
     }
 
     private var lastEngineReadyAt = Date.distantPast
+    /// When speech last went from up (or never up) to down; nil while it is up.
+    private var speechDownSince: Date?
+    static let reconnectNoticeAfter: TimeInterval = 6
     /// The title of the notice a speech problem put on screen, so it can be taken down when the problem ends.
     private var problemAlertTitle: String?
 

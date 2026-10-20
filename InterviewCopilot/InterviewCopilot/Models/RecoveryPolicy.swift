@@ -16,6 +16,18 @@ enum RecoveryPolicy {
         }
     }
 
+    /// After the server answered the key request with a passing fault (a 5xx, or a 200 with no key): 2, 3, then every
+    /// 5 seconds for about a minute, then every 15. The app must be listening within seconds of the server coming back
+    /// (owner, 2026-10-20: "it has to be ready anytime"); one small request every 5 s for a minute costs the server nothing.
+    static func keyRetryAfterServerFault(_ consecutiveFailures: Int) -> TimeInterval {
+        switch consecutiveFailures {
+        case ...1:  return 2
+        case 2:     return 3
+        case 3...13: return 5
+        default:    return 15
+        }
+    }
+
     /// After the speech service REJECTED the credentials: 5, 15, 30 seconds, then every minute.
     ///
     /// Never permanent. Renewing once and then marking the engine failed for good left a

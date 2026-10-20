@@ -435,6 +435,7 @@ check(other.body.contains("Windows PC or another Mac") && other.body.contains("s
 check(detect(status: 429, listening: true) == .noListeningTime, "a listening refusal outlives a later rate limit")
 check(detect(status: 429, answers: true) == .noAnswers, "an answers refusal outlives a later rate limit")
 check(detect(status: 429, waiting: true) == .waitingToReconnect, "a bare rate limit is a passing reconnect")
+check([1, 2, 3, 8, 13, 14, 40].map(RecoveryPolicy.keyRetryAfterServerFault) == [2, 3, 5, 5, 5, 15, 15], "server-fault key retry waits 2, 3, then 5 seconds for a minute, then 15")
 check([1, 2, 3, 4, 5, 9].map(RecoveryPolicy.keyRetryAfterNoConnection) == [2, 4, 8, 15, 30, 30], "no-connection retry waits 2, 4, 8, 15, then 30 seconds")
 check([0, 1, 2, 3, 4, 20].map { RecoveryPolicy.credentialRenewalWait(attempt: $0) } == [5, 15, 30, 60, 60, 60], "rejected credentials renew after 5, 15, 30 seconds, then every minute")
 check(RecoveryPolicy.credentialRenewalWait(attempt: 5, mintsInLastHour: 10) == 600, "past ten tokens an hour the fast retries stop, to protect the twelve-an-hour allowance")

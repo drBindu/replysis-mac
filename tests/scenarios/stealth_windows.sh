@@ -29,7 +29,7 @@ run() {   # run <label> <extra settings json> <wanted sharingType>
   }
   sleep 10; check "main window"
   cmd sessions; sleep 3; check "Past Sessions open"; cmd closesessions; sleep 2
-  /tmp/axpress $PID "SC" >/dev/null; sleep 2; check "profile popover open"
+  /tmp/axpress $PID "Account" | grep -q "press: ok" || no "profile button not found"; sleep 2; check "profile popover open"
   kill $PID $MOCK 2>/dev/null; sleep 1
 }
 run "Stealth on" "" 0

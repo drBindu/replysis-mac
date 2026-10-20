@@ -452,6 +452,11 @@ class UserSession {
     /// Earliest time the AUTOMATIC paths may ask again. A definite refusal is remembered.
     private(set) var speechRetryAfter = Date.distantPast
     private var keyNoConnectionFailures = 0
+    /// Answers in a row that were neither a key nor a definite refusal (a 5xx, an empty 200).
+    private var keyServerFailures = 0
+    /// Still trying to get a key after a passing server fault. Stays true between the quick retries, so the
+    /// "Reconnecting" notice does not go away and come back every few seconds over other notices.
+    var speechKeyRetrying: Bool { keyServerFailures > 0 }
 
     /// How long a definite refusal (402) is remembered. Windows measured why: the server
     /// allows a signed-in account 12 key requests an hour, and retrying every 30 seconds
@@ -646,6 +651,7 @@ class UserSession {
                 let ttl = TimeInterval(min(max(obj["expiresIn"] as? Int ?? 3600, 60), 86_400))
                 self.cacheSpeechKey(key, ttl: ttl)
                 forgetRefusal()
+                keyServerFailures = 0
                 dlog("SM key fetch: SUCCESS — key length=\(key.count)", tag: "AUTH")
                 return true
             }
@@ -663,13 +669,20 @@ class UserSession {
                 } else if statusCode == 429 {
                     let hinted = TimeInterval((resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After") ?? "") ?? 60
                     speechRetryAfter = Date().addingTimeInterval(min(max(hinted, 15), 300))
-                } else {
+                } else if statusCode == 401 {
+                    // Signed out: asking again every few seconds cannot fix that, so keep the old half minute.
                     speechRetryAfter = Date().addingTimeInterval(30)
+                } else {
+                    // A passing server fault: try again within seconds (2, 3, then 5 for a minute, then 15), not a flat half
+                    // minute. The app must be ready the moment the owner needs it (owner, 2026-10-20).
+                    keyServerFailures += 1
+                    speechRetryAfter = Date().addingTimeInterval(RecoveryPolicy.keyRetryAfterServerFault(keyServerFailures))
                 }
                 // Status code only. The body of a refusal can carry account detail.
                 dlog("SM key fetch: refused, HTTP \(statusCode)", tag: "AUTH")
             } else {
-                speechRetryAfter = Date().addingTimeInterval(30)
+                keyServerFailures += 1
+                speechRetryAfter = Date().addingTimeInterval(RecoveryPolicy.keyRetryAfterServerFault(keyServerFailures))
                 dlog("SM key fetch: 200 but no key in the response", tag: "AUTH")
             }
         } catch {

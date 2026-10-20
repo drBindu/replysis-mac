@@ -10,6 +10,7 @@ Loopback only. Logs one line per request:  REQ GET /api/v1/stt/key -> 402 auth=s
 import gzip, json, os, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer as HTTPServer
 
+START = time.time()
 scenario = sys.argv[1] if len(sys.argv) > 1 else "healthy-credits"
 port = int(sys.argv[2]) if len(sys.argv) > 2 else 18081
 delay = float(sys.argv[3]) if len(sys.argv) > 3 else 0.0
@@ -51,6 +52,10 @@ S = {
     # The speech key request answers with a (fake) key, so the real app starts the real speech engine, which
     # then cannot sign in anywhere. Used to watch the engine's life: one at a time, restarted on wake, gone on quit.
     "engine-lab": dict(credits=500, minutes=30, key=lambda h: (200, {"key": "fake-key-for-lifecycle-test", "expiresIn": 3600}, {})),
+    # The speech key service is down for the first 10 seconds, then back. The app must have its key within a few
+    # seconds of the server coming back, not a minute later (owner, 2026-10-20: "it has to be ready anytime").
+    "key-down-then-back": dict(credits=55, minutes=30, key=lambda h: (503, {"error": "down"}, {}) if time.time() - START < 10
+        else (200, {"key": "fake-key-for-lifecycle-test", "expiresIn": 3600}, {})),
     "screen-lab": dict(credits=500, minutes=30, key=lambda h: (200, {"key": "", "expiresIn": 3600}, {})),
 }
 if scenario not in S:

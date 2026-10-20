@@ -1107,7 +1107,10 @@ class SpeechmaticsEngine {
 
     // MARK: - Retry
 
-    func startRetryTimer(interval: TimeInterval = 60.0) {
+    /// Looks every 2 seconds; the key request itself still waits out the server's back-off (UserSession.speechRetryAfter:
+    /// 2, 4, 8, 15, then 30 s, or what a 429/402 asked for). It used to look once a minute, so a key that failed at launch
+    /// left the app deaf for up to a minute after the server was back (owner, 2026-10-20: "it has to be ready anytime").
+    func startRetryTimer(interval: TimeInterval = 2.0) {
         retryTimer?.invalidate()
         retryTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -1122,6 +1125,7 @@ class SpeechmaticsEngine {
                     self.retryTimer = nil
                     return
                 }
+                guard Date() >= UserSession.shared.speechRetryAfter else { return }
                 let ok = await UserSession.shared.fetchSpeechmaticsKeyAsync()
                 if ok {
                     self.retryTimer?.invalidate()
