@@ -411,6 +411,8 @@ class MainViewModel {
         // No audio source is permitted — say so loudly rather than capturing something the
         // active mode promised not to.
         engine.onCaptureUnavailable = { [weak self] in self?.handleCaptureUnavailable() }
+        engine.onNoMicrophone = { [weak self] waiting in self?.handleNoMicrophone(waiting: waiting) }
+        engine.onMicrophoneConnected = { [weak self] in self?.handleMicrophoneConnected() }
         // loadSettings() restored the mode in init(), so the mic veto must be in force before
         // the engine's first start — otherwise a relaunch straight into Interview Auto could
         // open the mic on the very first spawn.
@@ -1094,7 +1096,11 @@ class MainViewModel {
         // coding or coding language? You" went to the model exactly like that. Being told to
         // press more carefully is not a fix. A finished sentence never reaches this branch,
         // so the ordinary case pays nothing.
-        let stableTicksFinished = 5              // 5 x 20ms = 100ms of no growth
+        let stableTicksFinished = 5              // 5 x 20ms = 100ms of no growth, once the service has said the sentence is over
+        // Windows item 48: the speech service sends its words in steps (nova-3 about once a second) and runs behind the voice, so
+        // 100 ms without growth is the gap between two steps, not the end of the words. A real log showed a question sent with 78 of
+        // its 98 characters. With no end-of-speech signal yet, a finished-looking question waits 300 ms.
+        let stableTicksFinishedUnconfirmed = 15  // 15 x 20ms = 300ms
         let stableTicksUnfinished = 40           // 40 x 20ms = 800ms, still inside maxTicks
         // Nothing transcribed yet is not the same as nothing said. The speech service answers a
         // second or two behind the voice, so a short question pressed the instant it ended has
@@ -1133,12 +1139,12 @@ class MainViewModel {
             } else if !question.isEmpty {
                 stable += 1
                 let ending = AutoTurnDetector.classifyTurnEnding(question)
-                let needed = ending == .finished ? stableTicksFinished : stableTicksUnfinished
                 // Text that still stops mid-sentence, with the voice only just over: the rest is
                 // arriving late (on a poor connection the words were seen 8 seconds behind, and the
                 // question was answered as its first 58 characters, the rest thrown away when the
                 // engine paused). Wait for the recogniser to say the sentence is over.
                 let sentenceOver = engine.lastUtteranceEndAt > pressedAt || engine.lastUtteranceEndAt > lastSoundAt
+                let needed = ending == .finished ? (sentenceOver ? stableTicksFinished : stableTicksFinishedUnconfirmed) : stableTicksUnfinished
                 let lateWords = heardAudioJustNow && ending != .finished && !sentenceOver
                 if stable >= needed && !lateWords { break }
             } else {
@@ -1367,6 +1373,7 @@ class MainViewModel {
                     self.aiAnswer = "⏳ " + String(err.dropFirst("SERVER_MSG:".count))
                 }
                 else                         { self.aiAnswer = "⚠ Something went wrong. Please try again." }
+                self.reportProblem("answer." + ClientErrorReporter.slug(String(err.prefix(40))), "An answer failed: \(err)")
                 // DATA-LOSS FIX: previously the error paths saved nothing, so if the AI
                 // failed (out of credits, connection issue) the interviewer's question was
                 // lost from the session record entirely. Preserve it with a clear
@@ -1590,6 +1597,8 @@ class MainViewModel {
                 snapshot(AnyView(MainView().frame(width: CGFloat(w), height: 1000, alignment: .top)), name: "header-\(w)")
             }
         case "capturable": debugReportCapturableWindows()
+        case "nomic":     handleNoMicrophone(waiting: true)      // what the engine line NO_MICROPHONE_WAITING does
+        case "miccame":   handleMicrophoneConnected()            // MICROPHONE CONNECTED
         case "updatecheck": AppUpdater.shared.checkInBackgroundNow()   // a scheduled background check, now
         case "space":     handleSpacePress(source: "FLOW")   // the Space key: listen, or send what was heard
         case "practice":  setMicCaptureEnabled(true)      // at once, the way a switch made between questions is applied: the engine restarts now
@@ -2067,6 +2076,7 @@ class MainViewModel {
                     // also the most expensive request the app makes, so it is the first to be
                     // rate limited and the one most likely to fail.
                     self.aiAnswer = "⚠ Screen analysis error: \(err)"
+                    self.reportProblem("screen.analysis-" + ClientErrorReporter.slug(String(err.prefix(30))), "A screen read failed: \(err)")
                 }
                 self.stopThinkingUI()
             }
@@ -2079,6 +2089,7 @@ class MainViewModel {
     /// fixes it, and turn Watch Mode off so it does not keep failing per question for the rest of the interview.
     private func screenCaptureUnavailable() {
         dlog("Screen capture returned nil — telling the user instead of failing silently", tag: "SCREEN")
+        reportProblem("screen.capture-unavailable", "The screen could not be captured (Screen Recording permission).")
         let wasWatching = isWatchMode
         if wasWatching { isWatchMode = false }
         aiAnswer = """
@@ -2391,6 +2402,20 @@ class MainViewModel {
         }
         #endif
         Self.setSlowLine(slow)
+        writeSlowLineFlag(slow)
+    }
+
+    /// Windows item 41. The speech engine sends the voice in half the bytes (8 bit mu-law, same words) while this file exists and is
+    /// less than 15 minutes old: on a hotspot the voice alone is most of the upload, and a picture or an answer request going up beside
+    /// it made the words late. Written when a test upload or a picture send is slow or fails, removed when one passes, and the engine
+    /// looks each time it connects. A good line never has the file, and without it the engine behaves exactly as before.
+    private func writeSlowLineFlag(_ slow: Bool) {
+        let file = engine.appDataFolder.appendingPathComponent("slowline.flag")
+        if slow {
+            try? Data("1".utf8).write(to: file)           // written again each time, so the engine sees a fresh time while the line stays slow
+        } else if FileManager.default.fileExists(atPath: file.path) {
+            try? FileManager.default.removeItem(at: file)
+        }
     }
 
     /// Run at launch (while Setup is on screen) and again whenever the line is in doubt, never with a picture.
@@ -5329,8 +5354,44 @@ class MainViewModel {
     var alertActionLabel = ""
     private var alertAction: (() -> Void)?
 
+    // ── No microphone (Windows MAC_CATCHUP, 2026-10-18 and 2026-10-19) ──────────────────────────────────────────────────────
+    // The engine says so with three lines: NO_MICROPHONE (Practice asked for a microphone and there is none: it carries on with the
+    // computer's sound only), NO_MICROPHONE_WAITING (microphone only: it waits and looks again every 3 seconds) and MICROPHONE CONNECTED.
+    // A Mac mini, or a Mac with the microphone of a closed display, has no input. Practice then used to listen to silence for minutes with
+    // nothing on screen saying why. Now the alert STAYS until a microphone is there, offers Interview instead, and goes away by itself.
+    private var noMicrophoneAlertTitle: String?
+
+    func handleNoMicrophone(waiting: Bool) {
+        dlog("NO MICROPHONE: the engine found no microphone (\(waiting ? "waiting for one" : "carrying on with the computer's sound"))", tag: "AUDIO")
+        let title = waiting ? "No microphone found" : "No microphone on this Mac"
+        let body = waiting
+            ? "Practice mode needs a microphone. Plug in earphones with a mic and Replysis starts listening by itself."
+            : "Replysis is listening to the computer's sound only. Plug in earphones with a mic if you want to practise out loud."
+        noMicrophoneAlertTitle = title
+        showAlert(title: title, body: body, actionLabel: waiting ? "Use Interview instead" : "", action: waiting ? { [weak self] in
+            guard let self else { return }
+            self.noMicrophoneAlertTitle = nil
+            self.dismissAlert()
+            self.setMicCaptureEnabled(false)      // Interview: the engine restarts hearing the computer's sound
+        } : nil)
+    }
+
+    func handleMicrophoneConnected() {
+        dlog("NO MICROPHONE: a microphone was plugged in; listening", tag: "AUDIO")
+        if let title = noMicrophoneAlertTitle, alertTitle == title { dismissAlert() }
+        noMicrophoneAlertTitle = nil
+    }
+
+    /// Windows MAC_CATCHUP, 2026-10-19: every problem a person hits is reported to admin, once per kind per run, with the situation it
+    /// happened in appended. See ClientErrorReporter for what is and is not sent.
+    func reportProblem(_ kind: String, _ message: String) {
+        let situation = "[\(micCaptureEnabled ? "Practice" : "Interview"), \(autoModeEnabled ? "Auto" : "Manual"), \(appStep == .interview ? "in interview" : "setup")]"
+        ClientErrorReporter.reportProblem(kind: kind, message: "\(message) \(situation)")
+    }
+
     func showAlert(title: String, body: String, actionLabel: String = "", action: (() -> Void)? = nil) {
         dlog("ALERT: \(title) — \(body)", tag: "ALERT")
+        reportProblem("alert." + ClientErrorReporter.slug(title), "\(title). \(body)")
         alertTitle = title; alertBody = body
         alertActionLabel = action == nil ? "" : actionLabel
         alertAction = action

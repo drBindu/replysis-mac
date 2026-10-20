@@ -1080,5 +1080,47 @@ do {
     check(AnswerLayout.composeScreenAnswer(answerWithCode).contains("SAY THIS") && AnswerLayout.composeScreenAnswer(answerWithCode).contains("x = 1"), "nothing asked: a real screen answer keeps its SAY THIS and its code")
 }
 
+// ── Windows MAC_CATCHUP items 34, 44 to 46 (2026-10-20): the same example sentences their tests use ──────────────────────────
+for opener in ["What is?", "Why did you?", "How would you?", "Can you?", "And what are?"] {
+    check(AutoTurnDetector.isBareOpening(opener) && AutoTurnDetector.classifyTurnEnding(opener) == .unfinished, "windows 34: bare question opener waits: \(opener)")
+}
+for complete in ["What is Java?", "Why did you choose Redis?", "How would you scale this?", "Can you introduce yourself?"] {
+    check(!AutoTurnDetector.isBareOpening(complete) && AutoTurnDetector.classifyTurnEnding(complete) == .finished, "windows 34: a finished question stays fast: \(complete)")
+}
+for opener in ["Tell me about a time", "Can you tell me about a time when"] {
+    check(AutoTurnDetector.isBareRequestOpener(opener) && AutoTurnDetector.classifyTurnEnding(opener) == .unfinished, "windows 34: a behavioural opener waits for the rest: \(opener)")
+}
+check(!AutoTurnDetector.isBareRequestOpener("Tell me about a time you failed"), "windows 34: a full behavioural question is not an opener")
+for follow in ["Give me an example of that.", "Why did you choose it?", "Tell me more about that project.", "Can you elaborate?", "Tell me about that language."] {
+    check(AutoTurnDetector.isFollowUpOnPrevious(follow) && AutoTurnDetector.isFollowUpAddition(follow), "windows 46: a follow-up merges into the answer just given: \(follow)")
+}
+for fresh in ["What work have you done before?", "How many years of experience do you have?", "What is it like working in a team?", "What is the difference between a process and a thread?"] {
+    check(!AutoTurnDetector.isFollowUpOnPrevious(fresh) && !AutoTurnDetector.isFollowUpAddition(fresh), "windows 46: a new topic gets its own answer: \(fresh)")
+}
+for joined in ["about your experience. And", "Java or", "You know what language is your preferred? And"] {
+    check(AutoTurnDetector.classifyTurnEnding(joined) != .finished, "windows 44, 45: a question that stops on a joining word is not finished: \(joined)")
+}
+for plain in ["Tell me about Java.", "What is a brand?"] {
+    check(AutoTurnDetector.classifyTurnEnding(plain) == .finished, "windows 44: a plain ending is finished: \(plain)")
+}
+
+// ── Problem reports to admin (Windows MAC_CATCHUP, 2026-10-19) ───────────────────────────────────────────────────────────────
+check(ClientErrorReporter.slug("No microphone found") == "no-microphone-found", "report: a title becomes a stable id")
+check(ClientErrorReporter.slug(String(repeating: "abc ", count: 30)).count <= 48, "report: the id is at most 48 characters")
+check(ClientErrorReporter.sanitize("could not open /Users/jane/Library/Application Support/X/resume.txt now") == "could not open [path] now", "report: a file path is removed")
+check(ClientErrorReporter.sanitize("sign in failed for jane.doe@example.com").contains("[email]") && !ClientErrorReporter.sanitize("sign in failed for jane.doe@example.com").contains("jane"), "report: an email address is removed")
+check(!ClientErrorReporter.sanitize("Authorization: Bearer abc123secret").contains("abc123secret"), "report: a bearer token is removed")
+check(!ClientErrorReporter.sanitize("id eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJl end").contains("eyJhbGci"), "report: a JWT is removed")
+check(ClientErrorReporter.sanitize(String(repeating: "x", count: 500)).count == 200, "report: a message is cut to 200 characters")
+var seenKinds = Set<String>()
+check(ClientErrorReporter.shouldSend(kind: "alert.a", seen: &seenKinds), "report: the first of a kind goes out")
+check(!ClientErrorReporter.shouldSend(kind: "alert.a", seen: &seenKinds), "report: the same kind goes out once a run")
+check(!ClientErrorReporter.shouldSend(kind: "", seen: &seenKinds), "report: nothing without a kind")
+for i in 0..<60 { _ = ClientErrorReporter.shouldSend(kind: "kind\(i)", seen: &seenKinds) }
+check(seenKinds.count == ClientErrorReporter.maxProblemsPerRun, "report: at most 40 kinds a run")
+let problemBody = ClientErrorReporter.payload(kind: "listening.nomic", message: "No microphone [Practice, Auto, in interview]", version: "1.0.254", os: "macOS 26.0.0 arm64")
+check(problemBody["type"] as? String == "Problem.listening.nomic" && problemBody["source"] as? String == "mac" && Set(problemBody.keys) == ["version", "os", "source", "type", "message", "frames"], "report: the body has the same fields and type as Windows")
+check(ClientErrorReporter.request(backendUrl: "https://replysis.com/", payload: problemBody)?.url?.absoluteString == "https://replysis.com/api/v1/diagnostics/client-error", "report: posted to the client-error endpoint")
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

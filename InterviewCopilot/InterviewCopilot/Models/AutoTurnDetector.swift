@@ -392,12 +392,49 @@ struct AutoTurnDetector {
     /// the rest is on its way. Not "Why?" or "How so?": from an interviewer, straight after an
     /// answer, those ARE the question, and are answered from the conversation so far.
     static func isBareOpening(_ text: String) -> Bool {
+        if isBareQuestionOpener(text) { return true }   // "Why did you?", "How would you?" (three words), as on Windows
         let words = text.lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted.subtracting(CharacterSet(charactersIn: "'")))
             .filter { !$0.isEmpty }
         guard (1...2).contains(words.count), isQuestionOpening(text) else { return false }
         let followUps: Set<String> = ["why", "how", "how so", "how come", "why not", "why is that", "who", "where", "when"]
         return !followUps.contains(words.joined(separator: " "))
+    }
+
+    // ── Ported from Windows AutoTurnRules (MAC_CATCHUP items 34, 44 to 46) ─────────────────────────────────
+
+    private static func regexMatches(_ pattern: String, _ text: String) -> Bool {
+        text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    /// The text without the punctuation a recogniser puts on a pause, lower case.
+    private static func bareForm(_ text: String) -> String {
+        var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        while let last = t.last, "?.!,".contains(last) { t.removeLast() }
+        return t.lowercased()
+    }
+
+    /// A recogniser may punctuate an opening clause as a complete question when the interviewer pauses: "What is?" or "Why did you?".
+    /// Neither holds the subject an answer needs. These exact openers wait for the rest, and a finished short question such as
+    /// "What is Java?" is not one of them, so it stays fast.
+    static func isBareQuestionOpener(_ text: String) -> Bool {
+        regexMatches(#"^(?:so |and |okay |ok |now |alright )?(?:what (?:is|are|was|were|do|does|did)|why (?:do|does|did|would|should|can|could) (?:you|we|they)|how (?:do|does|did|would|should|can|could) (?:you|we|they)|(?:can|could|would|will|should|do|did|have|are) you(?: please)?)$"#, bareForm(text))
+    }
+
+    /// "Can you tell me", "Walk me through", "Tell me about a time": the opening of a request with nothing asked yet.
+    static func isBareRequestOpener(_ text: String) -> Bool {
+        regexMatches(#"^(?:so |and |okay |ok |now |alright )?(?:(?:can|could|would|will) (?:you|u) (?:please )?)?(?:tell|walk|describe|explain|talk|share|give|go over|go through|take)(?: (?:me|us))?(?: (?:about|through|a bit about|more about|how|what|why))?(?: a time(?: when| where| that)?)?$"#, bareForm(text))
+    }
+
+    /// A short follow-up about the question just answered, whatever it starts with: "Give me an example of that", "Why did you choose it?",
+    /// "Tell me more about that project", "Can you elaborate?". A new topic ("What work have you done before?") does not match.
+    /// "What is it like working in a team?" points at "it" but is a new question, so it is excluded.
+    static func isFollowUpOnPrevious(_ text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = t.components(separatedBy: CharacterSet.alphanumerics.inverted.subtracting(CharacterSet(charactersIn: "'"))).filter { !$0.isEmpty }.count
+        guard (2...14).contains(words) else { return false }
+        if regexMatches(#"\bwhat(?:'s| is) it like\b"#, t) { return false }
+        return regexMatches(#"\b(?:elaborate|expand on|more about (?:that|this|it|them)|more detail|go deeper|for example|an example|example of|tell me more)\b|\b(?:about|of|with|on|for|in|behind|use|used|using|choose|chose|like|prefer|explain|describe|do|did|does)\s+(?:that|this|it|those|these|them)\b|\b(?:that|this|those|these|the same)\s+(?:language|project|projects|tool|tools|framework|one|role|company|technology|approach|example|experience|part|feature|system|team|problem|code)\b"#, t)
     }
 
     /// A question mark, or a request ("Tell me about yourself."), and nothing hanging off the end.
@@ -776,6 +813,9 @@ struct AutoTurnDetector {
     static func classifyTurnEnding(_ question: String) -> TurnEnding {
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let last = trimmed.last else { return .unclear }
+        // An opening clause a recogniser punctuated on a pause ("Why did you?"), or the start of a request ("Tell me about a time"):
+        // the question is still coming, whatever the punctuation says.
+        if isBareQuestionOpener(trimmed) || isBareRequestOpener(trimmed) { return .unfinished }
         let punctuated = (last == "?" || last == "." || last == "!")
 
         let words = trimmed.lowercased()
@@ -904,6 +944,10 @@ struct AutoTurnDetector {
     static func isFollowUpAddition(_ addition: String) -> Bool {
         let a = addition.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         guard !a.isEmpty else { return false }
+        // "What is it like working in a team?" points at "it" and is still a new question (Windows IsFollowUpOnPrevious).
+        if regexMatches(#"\bwhat(?:'s| is) it like\b"#, a) { return false }
+        // "Can you elaborate?", "Tell me more about that project": one more thing about the same question.
+        if isFollowUpOnPrevious(addition) { return true }
         // A clause still inside the sentence before it, after a long pause in the middle.
         if isEmbeddedClause(a) { return true }
         // Not a standalone question ASKED AS ONE: a tail, a fragment, or a statement such

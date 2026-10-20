@@ -93,6 +93,9 @@ class SpeechmaticsEngine {
     /// Fired when NO audio source is permitted — the system tap could not start and the
     /// microphone is forbidden. The app must say so; it must never quietly capture instead.
     var onCaptureUnavailable: (() -> Void)?
+    /// The engine found no microphone: waiting for one (Practice) or carrying on with the computer's sound only. See MainViewModel.handleNoMicrophone.
+    var onNoMicrophone: ((_ waiting: Bool) -> Void)?
+    var onMicrophoneConnected: (() -> Void)?
 
     /// Fired when Speechmatics rejects the key (not_authorised / invalid key). Lets the
     /// UI show an honest "speech unavailable" message instead of silently doing nothing.
@@ -615,6 +618,16 @@ class SpeechmaticsEngine {
                     self?.engineBuildId = id
                     dlog("Engine build: \(id)", tag: "SM")
                 }
+            }
+            // CONTRACT:RUNTIME — see ENGINE_CONTRACT.md and verify_engine_contract.py
+            if line.contains("NO_MICROPHONE_WAITING") {
+                Task { @MainActor [weak self] in self?.onNoMicrophone?(true) }
+            } else if line.contains("NO_MICROPHONE:") {
+                Task { @MainActor [weak self] in self?.onNoMicrophone?(false) }
+            }
+            // CONTRACT:RUNTIME — see ENGINE_CONTRACT.md and verify_engine_contract.py
+            if line.contains("MICROPHONE CONNECTED") {
+                Task { @MainActor [weak self] in self?.onMicrophoneConnected?() }
             }
             // Audio is reaching the engine (any non-zero amplitude).
             // CONTRACT:RUNTIME — see ENGINE_CONTRACT.md and verify_engine_contract.py

@@ -217,6 +217,16 @@ class H(BaseHTTPRequestHandler):
             body = {"remainingMinutes": s["minutes"], "usedMinutes": 15 - s["minutes"]}
         elif url == "/health":
             body = {"ok": True}
+        elif url == "/api/v1/diagnostics/client-error" and self.command == "POST":
+            # A problem report from the app (Windows MAC_CATCHUP, 2026-10-19): version, os, source, type "Problem.<kind>", a short message.
+            raw = read_body(self) or b""
+            try: report = json.loads(raw.decode() or "{}")
+            except Exception: report = {}
+            print(f"CLIENT-ERROR type={report.get('type')} source={report.get('source')} platform={self.headers.get('X-App-Platform')} "
+                  f"message={str(report.get('message'))[:160]!r} keys={sorted(report.keys())}", flush=True)
+            self.send_response(204)
+            self.end_headers()
+            return
         elif url == "/api/v1/presence" and self.command in ("POST", "DELETE"):
             # The "this app is open" ping (POST, once a minute and at once when a session starts or stops, ?listening=1 while one runs) and
             # the message sent when the app quits (DELETE). A Bearer token, no body, answered 204 (Windows 1.0.31 item 29).
