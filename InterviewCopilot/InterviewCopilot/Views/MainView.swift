@@ -1879,17 +1879,32 @@ extension MainView {
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                setupFieldLabel("WORK AUTHORIZATION")
-                HStack(spacing: 7) {
-                    screeningPicker("Work type", MainViewModel.workTypeOptions, Bindable(vm).workType)
-                    screeningPicker("Authorization", MainViewModel.workAuthOptions, Bindable(vm).workAuth)
+                if vm.isIndia {
+                    // India asks notice period, other offers and pay first, not work authorization (Windows item 56). Detected, never chosen.
+                    setupFieldLabel("NOTICE PERIOD AND OFFERS")
+                    HStack(spacing: 7) {
+                        screeningPicker("Work type", ScreeningOptions.indiaWorkType, Bindable(vm).inWorkType)
+                        screeningPicker("Notice period", ScreeningOptions.indiaNotice, Bindable(vm).inNotice)
+                    }
+                    HStack(spacing: 7) {
+                        screeningPicker("Other offers", ScreeningOptions.indiaOffers, Bindable(vm).inOffers)
+                        screeningPicker("Where", ScreeningOptions.indiaLocation, Bindable(vm).inWorkLocation)
+                    }
+                    setupFieldLabel("What you want")
+                    setupTextField("e.g. current 12 LPA, expecting 18 LPA", text: Bindable(vm).inPay, focus: .pay) { scheduleJobSave() }
+                } else {
+                    setupFieldLabel("WORK AUTHORIZATION")
+                    HStack(spacing: 7) {
+                        screeningPicker("Work type", MainViewModel.workTypeOptions, Bindable(vm).workType)
+                        screeningPicker("Authorization", MainViewModel.workAuthOptions, Bindable(vm).workAuth)
+                    }
+                    HStack(spacing: 7) {
+                        screeningPicker("Can start", MainViewModel.canStartOptions, Bindable(vm).canStart)
+                        screeningPicker("Where", MainViewModel.locationOptions, Bindable(vm).workLocation)
+                    }
+                    setupFieldLabel("What you want")
+                    setupTextField("e.g. $65/hr on C2C, or $140k base", text: Bindable(vm).payRate, focus: .pay) { scheduleJobSave() }
                 }
-                HStack(spacing: 7) {
-                    screeningPicker("Can start", MainViewModel.canStartOptions, Bindable(vm).canStart)
-                    screeningPicker("Where", MainViewModel.locationOptions, Bindable(vm).workLocation)
-                }
-                setupFieldLabel("What you want")
-                setupTextField("e.g. $65/hr on C2C, or $140k base", text: Bindable(vm).payRate, focus: .pay) { scheduleJobSave() }
                 Text("Left blank, the app stays vague instead of guessing a number for you.")
                     .font(.system(size: 10.5)).foregroundColor(setupMuted)
             }

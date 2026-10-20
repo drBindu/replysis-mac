@@ -218,8 +218,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 920 by 600 was then called "too small", so the default sits between the two: about
         // 1040 by 660 on a 13" display (1.6 to 1). And a size the person drags the window to is
         // remembered (below), so the right size is theirs to choose once.
-        var w = min(1040, round(screen.width  * 0.72))
-        var h = min(660, round(screen.height * 0.82))
+        // Windows 1.0.38 opened its window 5 percent smaller (980 by 590 to 930 by 560; owner: "a little smaller"), so this opens 990 by 628.
+        // The top bar is shorter now, so everything still fits. A size someone dragged the window to is still theirs.
+        var w = min(990, round(screen.width  * 0.72))
+        var h = min(628, round(screen.height * 0.82))
         if let saved = Self.savedPanelSize(fitting: screen) { w = saved.width; h = saved.height }
         let origin = NSPoint(x: screen.midX - w / 2, y: screen.midY - h / 2)
 

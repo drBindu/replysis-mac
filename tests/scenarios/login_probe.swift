@@ -20,7 +20,7 @@ func walk(_ e: AXUIElement, _ depth: Int, inSheet: Bool) {
     if depth > 14 { return }
     let role = text(e, "AXRole")
     if role == "AXSheet" { sheets += 1 }
-    if role == "AXButton" { buttons.append(e); if inSheet { sheetButtons.append(e) } }
+    if role == "AXButton" || role == "AXMenuButton" || role == "AXPopUpButton" { buttons.append(e); if inSheet { sheetButtons.append(e) } }
     for c in children(e) { walk(c, depth + 1, inSheet: inSheet || role == "AXSheet") }
 }
 walk(app, 0, inSheet: false)

@@ -1130,5 +1130,20 @@ check(GlobalHotkey.modeShortcut(keyCode: 35, flags: [.maskControl]) == nil && Gl
 check(GlobalHotkey.modeShortcut(keyCode: 35, flags: [.maskControl, .maskShift, .maskCommand]) == nil, "shortcut: an extra modifier is somebody else's")
 check(GlobalHotkey.modeShortcut(keyCode: 1, flags: [.maskControl, .maskShift]) == nil, "shortcut: other letters are not shortcuts")
 
+// ── India screening options (Windows MAC_CATCHUP item 56) ────────────────────────────────────────────────────────────────────
+check(ScreeningOptions.looksLikeIndia(timeZoneId: "Asia/Kolkata", regionCode: nil), "india: the Indian time zone is a first guess")
+check(ScreeningOptions.looksLikeIndia(timeZoneId: "America/Chicago", regionCode: "IN"), "india: the Indian region is a first guess")
+check(!ScreeningOptions.looksLikeIndia(timeZoneId: "America/Chicago", regionCode: "US"), "india: elsewhere is not India")
+check(ScreeningOptions.isIndia(geoJSON: Data(#"{"country":"IN"}"#.utf8)) == true, "india: the website says IN")
+check(ScreeningOptions.isIndia(geoJSON: Data(#"{"country":"US"}"#.utf8)) == false, "india: the website says US")
+check(ScreeningOptions.isIndia(geoJSON: Data(#"{"country":"India"}"#.utf8)) == nil && ScreeningOptions.isIndia(geoJSON: Data("nope".utf8)) == nil, "india: an unusable answer changes nothing")
+check(ScreeningOptions.indiaNotice.first == "Not specified" && ScreeningOptions.indiaNotice.contains("Serving notice") && ScreeningOptions.indiaNotice.contains("90 days"), "india: the notice period list")
+check(ScreeningOptions.indiaLocation.contains("Work from office") && !ScreeningOptions.indiaWorkType.contains("C2C (corp to corp)"), "india: no C2C, work from office offered")
+let indiaNone = ScreeningOptions.indiaContext(workType: "Not specified", notice: "Not specified", offers: "Not specified", location: "Not specified", pay: "  ")
+check(indiaNone == "", "india: nothing set, nothing in the prompt")
+let indiaSet = ScreeningOptions.indiaContext(workType: "Full time / permanent", notice: "30 days", offers: "Have an offer in hand", location: "Hybrid", pay: "current 12 LPA, expecting 18 LPA")
+check(indiaSet.contains("Notice period: 30 days") && indiaSet.contains("Other offers: Have an offer in hand") && indiaSet.contains("Pay expectation: current 12 LPA, expecting 18 LPA"), "india: the prompt gets notice period, other offers and pay")
+check(!indiaSet.contains("Work authorization") && !indiaSet.contains("Can start"), "india: no work authorization and no can start")
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

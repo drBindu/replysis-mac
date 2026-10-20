@@ -152,7 +152,7 @@ class H(BaseHTTPRequestHandler):
                 if i in stash: kinds.append(stash.pop(i)[0])
             if obj.get("image"): kinds.append("inline-picture")
             if obj.get("screenText"): kinds.append("inline-words")
-            ask = dict(question=q, has_question_marker="THE QUESTION:" in prompt, nothing_asked_shape=("NOTHING ASKED" in prompt), ids=ids, kinds=kinds, missing=missing,
+            ask = dict(question=q, has_question_marker="THE QUESTION:" in prompt, nothing_asked_shape=("NOTHING ASKED" in prompt), notice_line=("Notice period: 30 days" in prompt), offers_line=("Other offers: Have an offer in hand" in prompt), work_auth_line=("Work authorization" in prompt), ids=ids, kinds=kinds, missing=missing,
                        body_kb=round(len(raw)/1024, 1), words=sum(len(stash_text) for stash_text in [obj.get("screenText") or ""]))
             with lock: asks.append(ask)
             if missing or not kinds:
@@ -194,7 +194,15 @@ class H(BaseHTTPRequestHandler):
             body = asks
         elif url == "/api/v1/interview/ask" and self.command == "POST":
             n = int(self.headers.get("Content-Length") or 0)
-            if n: self.rfile.read(n)             # the question; compressed or not, it is not needed here
+            raw_ask = self.rfile.read(n) if n else b""
+            try:
+                import gzip
+                text_ask = (gzip.decompress(raw_ask) if raw_ask[:2] == b"\x1f\x8b" else raw_ask).decode("utf-8", "replace")
+            except Exception:
+                text_ask = raw_ask.decode("utf-8", "replace")
+            # what the screening answers did to the prompt (Windows MAC_CATCHUP item 56): India's notice period and offers stand where work authorization stands
+            print(f"ASK-PROMPT notice={'Notice period: 30 days' in text_ask} offers={'Other offers: Have an offer in hand' in text_ask} "
+                  f"auth={'Work authorization' in text_ask}", flush=True)
             if live_credits < 5:
                 status, body = 402, {"error": "No credits remaining"}
             else:
@@ -217,6 +225,8 @@ class H(BaseHTTPRequestHandler):
             body = {"remainingMinutes": s["minutes"], "usedMinutes": 15 - s["minutes"]}
         elif url == "/health":
             body = {"ok": True}
+        elif url == "/api/geo":
+            body = {"country": os.environ.get("MOCK_COUNTRY") or "US"}
         elif url == "/api/v1/diagnostics/client-error" and self.command == "POST":
             # A problem report from the app (Windows MAC_CATCHUP, 2026-10-19): version, os, source, type "Problem.<kind>", a short message.
             raw = read_body(self) or b""

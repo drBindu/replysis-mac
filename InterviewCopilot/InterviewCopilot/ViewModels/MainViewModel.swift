@@ -125,12 +125,21 @@ class MainViewModel {
     var workLocation = MainViewModel.notSpecified
     var payRate     = ""
 
+    // India (Windows item 56): its own four answers and pay, stored apart from the ones above. The country is detected, never chosen.
+    var isIndia = ScreeningOptions.looksLikeIndia(timeZoneId: TimeZone.current.identifier, regionCode: Locale.current.region?.identifier)
+    var inWorkType     = MainViewModel.notSpecified
+    var inNotice       = MainViewModel.notSpecified
+    var inOffers       = MainViewModel.notSpecified
+    var inWorkLocation = MainViewModel.notSpecified
+    var inPay          = ""
+
     /// Only what was actually set.
     ///
     /// ANYTHING LEFT UNSET IS LEFT OUT ENTIRELY. A blank must never become a confident
     /// answer: inventing a visa status or a rate on somebody's behalf is worse than saying
     /// it is open, and both are things a recruiter writes down verbatim and checks later.
     var screeningContext: String {
+        if isIndia { return ScreeningOptions.indiaContext(workType: inWorkType, notice: inNotice, offers: inOffers, location: inWorkLocation, pay: inPay) }
         var lines: [String] = []
         let ns = Self.notSpecified
         if workType != ns    { lines.append("Work type wanted: \(workType)") }
@@ -440,6 +449,7 @@ class MainViewModel {
         setupLocalKeyMonitor()
         loadResume()
         loadJob()
+        detectCountryFromServer()
         checkAndRequestPermissions()
         startTranscriptTimer()
         startThinkingTimer()
@@ -5062,6 +5072,7 @@ class MainViewModel {
         resumeText = ""; companyName = ""; jobDescription = ""; liveHints = ""
         workType = Self.notSpecified; workAuth = Self.notSpecified
         canStart = Self.notSpecified; workLocation = Self.notSpecified; payRate = ""
+        inWorkType = Self.notSpecified; inNotice = Self.notSpecified; inOffers = Self.notSpecified; inWorkLocation = Self.notSpecified; inPay = ""
         savedResumes = []
         clearTransientDisplay()
         endSession()
@@ -5170,6 +5181,23 @@ class MainViewModel {
         refreshSavedResumes()
     }
 
+    // MARK: - Country (Windows item 56)
+    /// Asks the website which country this is, the same answer its checkout uses for rupee prices. Falls back to the time zone guess made at
+    /// launch when the site cannot be reached. A change of answer takes effect at once and is saved with the rest of the job context.
+    func detectCountryFromServer() {
+        guard let url = URL(string: AppConfig.backendUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/api/geo") else { return }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 6
+        URLSession.shared.dataTask(with: AppIdentity.label(request)) { [weak self] data, _, _ in
+            guard let data, let india = ScreeningOptions.isIndia(geoJSON: data) else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                dlog("SETUP: screening options for \(india ? "India" : "outside India")", tag: "SETUP")
+                if india != self.isIndia { self.isIndia = india; self.saveJob() }
+            }
+        }.resume()
+    }
+
     // MARK: - Job context
     func loadJob() {
         let path = engine.appDataFolder.appendingPathComponent("job.json")
@@ -5188,6 +5216,11 @@ class MainViewModel {
             canStart     = obj["canStart"]     ?? Self.notSpecified
             workLocation = obj["workLocation"] ?? Self.notSpecified
             payRate      = obj["payRate"]      ?? ""
+            inWorkType     = obj["inWorkType"]     ?? Self.notSpecified
+            inNotice       = obj["inNotice"]       ?? Self.notSpecified
+            inOffers       = obj["inOffers"]       ?? Self.notSpecified
+            inWorkLocation = obj["inWorkLocation"] ?? Self.notSpecified
+            inPay          = obj["inPay"]          ?? ""
         }
     }
 
@@ -5195,7 +5228,8 @@ class MainViewModel {
         let path = engine.appDataFolder.appendingPathComponent("job.json")
         let obj = ["company": companyName, "description": jobDescription,
                    "workType": workType, "workAuth": workAuth, "canStart": canStart,
-                   "workLocation": workLocation, "payRate": payRate]
+                   "workLocation": workLocation, "payRate": payRate,
+                   "inWorkType": inWorkType, "inNotice": inNotice, "inOffers": inOffers, "inWorkLocation": inWorkLocation, "inPay": inPay]
         try? JSONSerialization.data(withJSONObject: obj).write(to: path)
         // 0600, like the transcripts and the debug log. This file holds work authorization,
         // pay expectations, availability and the job description — and it was landing
