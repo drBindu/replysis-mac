@@ -118,6 +118,7 @@ class H(BaseHTTPRequestHandler):
                 status, body = 503, {"error": "temporarily unavailable"}
             else:
                 body = {"credits": live_credits, "plan": "free", "isUnlimited": False}
+                if os.environ.get("MOCK_MINUTES"): body["minutesBalance"] = int(os.environ["MOCK_MINUTES"])   # India, pay by the minute (item 57)
         elif url == "/api/v1/interview/screen-cache" and self.command == "POST":
             raw = read_body(self)
             try: obj = json.loads(raw or b"{}")
@@ -223,6 +224,17 @@ class H(BaseHTTPRequestHandler):
                 return
         elif url == "/api/v1/usage/listening":
             body = {"remainingMinutes": s["minutes"], "usedMinutes": 15 - s["minutes"]}
+            if os.environ.get("MOCK_MINUTES"): body["minutesBalance"] = int(os.environ["MOCK_MINUTES"])
+        elif url == "/api/minutes" and self.command == "POST":
+            # the website's auto add (Windows item 57): MOCK_MINUTES_ADD=approval answers like a bank that wants the person to approve
+            raw = read_body(self) or b""
+            print(f"MINUTES-ADD {raw.decode('utf-8', 'replace')[:60]} auth={'yes' if (self.headers.get('Authorization') or '').startswith('Bearer ') else 'no'}", flush=True)
+            if os.environ.get("MOCK_MINUTES_ADD") == "approval":
+                body = {"added": 0, "needsApproval": True, "url": "https://checkout.stripe.com/c/pay/test_session"}
+            elif os.environ.get("MOCK_MINUTES_ADD") == "added":
+                body = {"added": 15}
+            else:
+                body = {"added": 0, "reason": "auto add is off"}
         elif url == "/health":
             body = {"ok": True}
         elif url == "/api/geo":

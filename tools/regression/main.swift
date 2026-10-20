@@ -1145,5 +1145,21 @@ let indiaSet = ScreeningOptions.indiaContext(workType: "Full time / permanent", 
 check(indiaSet.contains("Notice period: 30 days") && indiaSet.contains("Other offers: Have an offer in hand") && indiaSet.contains("Pay expectation: current 12 LPA, expecting 18 LPA"), "india: the prompt gets notice period, other offers and pay")
 check(!indiaSet.contains("Work authorization") && !indiaSet.contains("Can start"), "india: no work authorization and no can start")
 
+// ── India pays by the minute (Windows MAC_CATCHUP item 57) ───────────────────────────────────────────────────────────────────
+check(MinutesBalance.badgeText(minutes: 14, fallback: "5 answers") == "14 min left", "minutes: the badge says the minutes while there are any")
+check(MinutesBalance.badgeText(minutes: 0, fallback: "5 answers") == "5 answers", "minutes: no minutes, the badge says what it did before")
+check(MinutesBalance.shouldAskForMore(hadMinutes: true, balance: 2) && MinutesBalance.shouldAskForMore(hadMinutes: false, balance: 1), "minutes: at 2 or fewer, for someone with minutes, it asks")
+check(MinutesBalance.shouldAskForMore(hadMinutes: true, balance: 0), "minutes: just run out, it asks")
+check(!MinutesBalance.shouldAskForMore(hadMinutes: true, balance: 3) && !MinutesBalance.shouldAskForMore(hadMinutes: false, balance: 0), "minutes: above 2, or never bought any, it does not ask")
+let askedAt = Date(timeIntervalSince1970: 1_000_000)
+check(MinutesBalance.mayAsk(now: askedAt, lastAskedAt: nil) && !MinutesBalance.mayAsk(now: askedAt.addingTimeInterval(170), lastAskedAt: askedAt) && MinutesBalance.mayAsk(now: askedAt.addingTimeInterval(181), lastAskedAt: askedAt), "minutes: at most once every three minutes")
+check(MinutesBalance.outcome(fromAddResponse: Data(#"{"added":15}"#.utf8)) == .added(15), "minutes: the saved card was charged")
+let approval = MinutesBalance.outcome(fromAddResponse: Data(#"{"added":0,"needsApproval":true,"url":"https://checkout.stripe.com/c/pay/x"}"#.utf8))
+check(approval == .needsApproval(URL(string: "https://checkout.stripe.com/c/pay/x")!), "minutes: the bank wants approval, a checkout address is offered")
+let evil = MinutesBalance.outcome(fromAddResponse: Data(#"{"needsApproval":true,"url":"https://evil.example/pay"}"#.utf8))
+check(evil == .notUsed("no reason given"), "minutes: an address that is not Stripe's checkout is never offered")
+check(MinutesBalance.outcome(fromAddResponse: Data(#"{"added":0,"reason":"auto add is off"}"#.utf8)) == .notUsed("auto add is off"), "minutes: auto add off, the reason is kept for the log")
+check(MinutesBalance.balance(from: ["minutesBalance": -3]) == 0 && MinutesBalance.balance(from: ["minutesBalance": 12]) == 12 && MinutesBalance.balance(from: [:]) == nil, "minutes: the balance is read, never below zero")
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

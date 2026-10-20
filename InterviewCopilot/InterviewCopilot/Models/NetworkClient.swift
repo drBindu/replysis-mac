@@ -488,7 +488,7 @@ class NetworkClient {
 
     // MARK: - Credits
 
-    func fetchCredits() async -> (credits: Int, plan: String, isUnlimited: Bool)? {
+    func fetchCredits() async -> (credits: Int, plan: String, isUnlimited: Bool, minutesBalance: Int)? {
         guard let url = URL(string: "\(AppConfig.backendUrl)/api/v1/interview/credits") else { return nil }
         var req = URLRequest(url: url)
         req.setValue("Bearer \(UserSession.shared.idToken)", forHTTPHeaderField: "Authorization")
@@ -511,7 +511,7 @@ class NetworkClient {
             }
             let plan = obj["plan"] as? String ?? "free"
             let isUnlimited = obj["isUnlimited"] as? Bool ?? false
-            return (credits, plan, isUnlimited)
+            return (credits, plan, isUnlimited, MinutesBalance.balance(from: obj) ?? 0)
         } catch { return nil }
     }
 
@@ -530,7 +530,7 @@ class NetworkClient {
     /// Report `minutes` of listening. Returns minutes remaining this month, or nil if the
     /// report did not land. `-1` means the plan is unlimited.
     @discardableResult
-    func reportListeningMinutes(_ minutes: Int) async -> Int? {
+    func reportListeningMinutes(_ minutes: Int) async -> (remaining: Int, minutesBalance: Int?)? {
         guard minutes > 0,
               let url = URL(string: "\(AppConfig.backendUrl)/api/v1/usage/listening") else { return nil }
         var req = URLRequest(url: url)
@@ -545,8 +545,27 @@ class NetworkClient {
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                 return nil
             }
-            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-            return obj["remainingMinutes"] as? Int
+            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let remaining = obj["remainingMinutes"] as? Int else { return nil }
+            return (remaining, MinutesBalance.balance(from: obj))
+        } catch { return nil }
+    }
+
+    /// Asks the website to auto add 15 minutes on the saved card (India, pay by the minute). See MinutesBalance.
+    func askToAddMinutes() async -> MinutesBalance.Outcome? {
+        guard let url = URL(string: "\(AppConfig.backendUrl)/api/minutes") else { return nil }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(UserSession.shared.idToken)", forHTTPHeaderField: "Authorization")
+        req.httpBody = Data("{\"action\":\"add\"}".utf8)
+        do {
+            let (data, response) = try await shortSession.data(for: AppIdentity.label(req))
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                dlog("MINUTES: auto add: HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)", tag: "MINUTES")
+                return nil
+            }
+            return MinutesBalance.outcome(fromAddResponse: data)
         } catch { return nil }
     }
 

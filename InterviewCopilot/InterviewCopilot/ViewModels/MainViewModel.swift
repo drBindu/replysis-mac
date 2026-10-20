@@ -171,6 +171,9 @@ class MainViewModel {
 
     // MARK: - Credits
     var creditsText = "—"
+    /// India, pay by the minute: the bought minutes left. While above 0 the badge says so and an answer costs no credits (MinutesBalance).
+    var minutesBalance = 0
+    private var lastMinutesAskAt: Date?
     var creditsColor: Color = .green
     var creditsPlanText = ""
     var creditsIcon = ""
@@ -1621,6 +1624,7 @@ class MainViewModel {
         case "capturable": debugReportCapturableWindows()
         case "nomic":     handleNoMicrophone(waiting: true)      // what the engine line NO_MICROPHONE_WAITING does
         case "miccame":   handleMicrophoneConnected()            // MICROPHONE CONNECTED
+        case "reportminutes": reportListeningMinutes(1)      // what a minute of listening reports
         case "updatecheck": AppUpdater.shared.checkInBackgroundNow()   // a scheduled background check, now
         case "key-p":     handleModeShortcut(.audioSource)    // what ⌃⇧P does
         case "key-a":     handleModeShortcut(.answerMode)     // ⌃⇧A
@@ -4458,14 +4462,43 @@ class MainViewModel {
         guard minutes > 0, session.isLoggedIn else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
-            if let remaining = await NetworkClient.shared.reportListeningMinutes(minutes) {
+            if let report = await NetworkClient.shared.reportListeningMinutes(minutes) {
+                let remaining = report.remaining
                 self.audioMinutesRemaining = remaining
+                if let balance = report.minutesBalance {
+                    let hadMinutes = self.minutesBalance > 0
+                    self.minutesBalance = balance
+                    if MinutesBalance.shouldAskForMore(hadMinutes: hadMinutes, balance: balance) { self.askForMoreMinutes() }
+                }
                 dlog("METER: reported \(minutes) min; \(remaining) left this month", tag: "METER")
                 self.updateCreditsUI(credits: self.session.credits, plan: self.session.plan,
                                      isUnlimited: self.session.isUnlimited)
                 self.warnIfListeningTimeLow()
             } else {
                 dlog("METER: report of \(minutes) min did not land — carrying on", tag: "METER")
+            }
+        }
+    }
+
+    /// Bought minutes are nearly gone (Windows item 57). Asks the website to auto add 15 on the saved card, when the person switched auto add
+    /// on. Most Indian banks want the person to approve such a charge, so when the website says so a notice offers the one tap payment:
+    /// nothing opens on screen by itself during an interview. At most once every three minutes; the website also refuses a second charge.
+    func askForMoreMinutes() {
+        guard session.isLoggedIn, !session.idToken.isEmpty, MinutesBalance.mayAsk(now: Date(), lastAskedAt: lastMinutesAskAt) else { return }
+        lastMinutesAskAt = Date()
+        Task { @MainActor [weak self] in
+            guard let self, let outcome = await NetworkClient.shared.askToAddMinutes() else { return }
+            switch outcome {
+            case .added(let minutes):
+                dlog("MINUTES: auto add: +\(minutes) minutes on the saved card", tag: "MINUTES")
+                await self.fetchCredits()
+            case .needsApproval(let url):
+                dlog("MINUTES: auto add: the bank wants approval; offering the one tap payment", tag: "MINUTES")
+                self.showAlert(title: "Your minutes are almost over",
+                               body: "Your bank asks you to approve the 15 minutes. Tap to pay, and the interview keeps going meanwhile.",
+                               actionLabel: "Add 15 minutes") { NSWorkspace.shared.open(url) }
+            case .notUsed(let reason):
+                dlog("MINUTES: auto add not used (\(reason))", tag: "MINUTES")
             }
         }
     }
@@ -4701,7 +4734,8 @@ class MainViewModel {
             creditsRetryAttempt = 0
             session.plan = result.plan
             session.isUnlimited = result.isUnlimited
-            dlog("Credits: \(result.credits), plan=\(result.plan), unlimited=\(result.isUnlimited)", tag: "CREDITS")
+            minutesBalance = result.minutesBalance
+            dlog("Credits: \(result.credits), plan=\(result.plan), unlimited=\(result.isUnlimited)\(result.minutesBalance > 0 ? ", \(result.minutesBalance) bought minutes" : "")", tag: "CREDITS")
             updateCreditsUI(credits: result.credits, plan: result.plan, isUnlimited: result.isUnlimited)
             await fetchListeningTime()
         } else {
@@ -4895,7 +4929,7 @@ class MainViewModel {
             creditsPlanText = "Unlimited"
             return
         }
-        creditsText = PlanFacts.badgeText(credits)
+        creditsText = MinutesBalance.badgeText(minutes: minutesBalance, fallback: PlanFacts.badgeText(credits))
         let free = PlanFacts.isFreeTrial(plan: plan, signedIn: session.isLoggedIn && !session.isGuestSession)
         creditsPlanText = free ? "Free trial" : "\(plan.capitalized) plan"
         if PlanFacts.isEmpty(credits) {
