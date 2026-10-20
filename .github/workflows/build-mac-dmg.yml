@@ -67,7 +67,8 @@ jobs:
           # sed errors out, LATEST comes back empty, and the comparison below waves every
           # version through while looking like it checked. Caught by running it, not by
           # reading it; a guard is only worth what its last real execution proved.
-          if curl -fsSL -o /tmp/feed.xml "https://raw.githubusercontent.com/${{ github.repository }}/main/appcast.xml"; then
+          # The committed feed (this checkout), not raw.githubusercontent.com, which is cached for five minutes.
+          if git fetch -q origin main && git show origin/main:appcast.xml > /tmp/feed.xml 2>/dev/null; then
             LATEST=$(sed -n 's#.*<sparkle:version>\([0-9][0-9]*\)</sparkle:version>.*#\1#p' /tmp/feed.xml | sort -n | tail -1)
             [ -n "$LATEST" ] || {
               echo "::error::Fetched appcast.xml but parsed no <sparkle:version> from it."
@@ -478,7 +479,8 @@ jobs:
           # Seed from THIS repo's own feed, not a hardcoded one. The account moved once
           # already and these two URLs did not move with it, which is how every published
           # download URL ended up pointing at a repo the project no longer releases from.
-          curl -sL -o "$APPCAST_DIR/appcast.xml" "https://raw.githubusercontent.com/${{ github.repository }}/main/appcast.xml" || true
+          # From main as committed, not the five-minute-cached raw address.
+          git fetch -q origin main && git show origin/main:appcast.xml > "$APPCAST_DIR/appcast.xml" 2>/dev/null || true
           grep -q "<rss" "$APPCAST_DIR/appcast.xml" 2>/dev/null || rm -f "$APPCAST_DIR/appcast.xml"
 
           echo "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle-tools/bin/generate_appcast" \

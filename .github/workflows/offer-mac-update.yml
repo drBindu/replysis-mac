@@ -57,7 +57,9 @@ jobs:
           # Never hand out something Apple has not approved: the app in the zip must carry its ticket.
           xcrun stapler validate "$APP"
           codesign --verify --deep --strict "$APP"
-          curl -fsSL -o "$RUNNER_TEMP/appcast_dir/appcast.xml" "https://raw.githubusercontent.com/${{ github.repository }}/main/appcast.xml" || rm -f "$RUNNER_TEMP/appcast_dir/appcast.xml"
+          # The feed as committed on main (this checkout), NOT raw.githubusercontent.com: that address is cached for five
+          # minutes, and a test run right after a release read the previous feed and offered the same build a second time.
+          [ -f appcast.xml ] && cp appcast.xml "$RUNNER_TEMP/appcast_dir/appcast.xml"
           LATEST=""
           if [ -f "$RUNNER_TEMP/appcast_dir/appcast.xml" ]; then
             grep -q "<rss" "$RUNNER_TEMP/appcast_dir/appcast.xml" || { echo "::error::appcast.xml is not a feed"; exit 1; }
