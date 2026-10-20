@@ -3,6 +3,12 @@ name: Build macOS .dmg (Signed + Notarized)
 on:
   push:
     branches: [main]
+    # Editing only the workflows must not build and publish a whole release.
+    paths-ignore:
+      - '.github/workflows/offer-mac-update.yml'
+      - '.github/workflows/build-mac-dmg.yml'
+  # Full rebuild with the feed on. Normally not needed any more: after a [no-feed] build has been checked,
+  # offer-mac-update.yml offers that same checked zip in about a minute.
   workflow_dispatch:
 
 permissions:

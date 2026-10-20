@@ -1,0 +1,90 @@
+name: Offer a released build to users (about 1 minute)
+
+# The second half of a release. A push to main with [no-feed] builds, signs, notarizes and publishes
+# the DMG and the update zip WITHOUT telling installed copies. Someone downloads that build and checks it.
+# This then offers THAT SAME zip to every installed copy, by adding its signed entry to appcast.xml.
+#
+# It used to be done by running the whole build again (workflow_dispatch of build-mac-dmg.yml): about
+# 15 minutes, and users were handed a freshly rebuilt app, not the one that had been checked. Nothing is
+# built here: the zip is downloaded from the release, signed for Sparkle, and the feed is committed.
+#
+# Run: gh workflow run offer-mac-update.yml -R drBindu/replysis-mac            (the version in the project file)
+#      gh workflow run offer-mac-update.yml -R drBindu/replysis-mac -f version=1.0.254
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to offer, e.g. 1.0.254 (default: MARKETING_VERSION in the project file on main)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: appcast
+  cancel-in-progress: false
+
+jobs:
+  offer:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Find the release and refuse anything Sparkle would never offer
+        id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WANT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          PBX=InterviewCopilot/InterviewCopilot.xcodeproj/project.pbxproj
+          VERSION="${WANT:-$(sed -n 's/.*MARKETING_VERSION = \([0-9][0-9.]*\);.*/\1/p' "$PBX" | head -1)}"
+          [ -n "$VERSION" ] || { echo "::error::no version given and none in $PBX"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/appcast_dir"
+          gh release download "v$VERSION" -R "${{ github.repository }}" -p InterviewCopilot-update.zip -D "$RUNNER_TEMP/appcast_dir" || {
+            echo "::error::Release v$VERSION has no InterviewCopilot-update.zip. Push the build with [no-feed] first."; exit 1; }
+          # The build number Sparkle compares comes from the app inside the zip itself, not from a guess.
+          mkdir -p "$RUNNER_TEMP/peek"
+          ditto -x -k "$RUNNER_TEMP/appcast_dir/InterviewCopilot-update.zip" "$RUNNER_TEMP/peek"
+          APP=$(ls -d "$RUNNER_TEMP/peek/"*.app | head -1)
+          BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP/Contents/Info.plist")
+          SHORT=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")
+          [ "$SHORT" = "$VERSION" ] || { echo "::error::the zip in v$VERSION holds app version $SHORT"; exit 1; }
+          # Never hand out something Apple has not approved: the app in the zip must carry its ticket.
+          xcrun stapler validate "$APP"
+          codesign --verify --deep --strict "$APP"
+          curl -fsSL -o "$RUNNER_TEMP/appcast_dir/appcast.xml" "https://raw.githubusercontent.com/${{ github.repository }}/main/appcast.xml" || rm -f "$RUNNER_TEMP/appcast_dir/appcast.xml"
+          LATEST=""
+          if [ -f "$RUNNER_TEMP/appcast_dir/appcast.xml" ]; then
+            grep -q "<rss" "$RUNNER_TEMP/appcast_dir/appcast.xml" || { echo "::error::appcast.xml is not a feed"; exit 1; }
+            LATEST=$(sed -n 's#.*<sparkle:version>\([0-9][0-9]*\)</sparkle:version>.*#\1#p' "$RUNNER_TEMP/appcast_dir/appcast.xml" | sort -n | tail -1)
+          fi
+          if [ -n "$LATEST" ] && [ "$BUILD" -le "$LATEST" ]; then
+            echo "::error::The feed already offers build $LATEST; build $BUILD ($VERSION) would be offered to nobody."; exit 1
+          fi
+          echo "offering $VERSION (build $BUILD); feed was at ${LATEST:-none}"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Sign the entry and publish the feed
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "$SPARKLE_PRIVATE_KEY" ] || { echo "::error::SPARKLE_PRIVATE_KEY is not set"; exit 1; }
+          curl -fsSL -o "$RUNNER_TEMP/sparkle.tar.xz" "https://github.com/sparkle-project/Sparkle/releases/download/2.9.4/Sparkle-2.9.4.tar.xz"
+          mkdir -p "$RUNNER_TEMP/sparkle" && tar -xf "$RUNNER_TEMP/sparkle.tar.xz" -C "$RUNNER_TEMP/sparkle"
+          echo "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle/bin/generate_appcast" --ed-key-file - \
+            --download-url-prefix "https://github.com/${{ github.repository }}/releases/download/v${{ steps.v.outputs.VERSION }}/" \
+            "$RUNNER_TEMP/appcast_dir"
+          cp "$RUNNER_TEMP/appcast_dir/appcast.xml" appcast.xml
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          git diff --cached --quiet && { echo "::error::the feed did not change"; exit 1; }
+          git commit -m "Update appcast for v${{ steps.v.outputs.VERSION }}"
+          git pull --rebase origin main
+          git push origin HEAD:main
