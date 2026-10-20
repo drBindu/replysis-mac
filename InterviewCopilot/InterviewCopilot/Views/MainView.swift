@@ -209,7 +209,7 @@ struct MainView: View {
                 .layoutPriority(2)
             micControl(tier)
                 .layoutPriority(1)
-            modePill()
+            ModePill(inCompact: false)
                 .layoutPriority(3)
             Spacer(minLength: 8)
             screenButton(compact: tier == .tight)
@@ -219,88 +219,6 @@ struct MainView: View {
             accountAndCloseControls(compact: true)
                 .layoutPriority(3)
         }
-    }
-
-    // ── The one pill and its menu ──────────────────────────────────
-    /// "Interview Auto" or "Practice Manual": what Replysis hears, then how it answers. Opens a menu with both choices and the window
-    /// choices (Compact, Pin on top). A popover, so it is a window of its own (Stealth Mode covers it, see StealthWindows) and it stays
-    /// open until a choice is made, a click lands elsewhere, or Esc.
-    func modePill() -> some View {
-        let hears = vm.practiceAudioOn ? "Practice" : "Interview"
-        let answers = vm.listeningMode == .auto ? "Auto" : "Manual"
-        return Button(action: { showModeMenu.toggle() }) {
-            HStack(spacing: 6) {
-                Image(systemName: vm.practiceAudioOn ? "mic.fill" : "video.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                Text(hears).font(.system(size: 11.5, weight: .semibold))
-                Text(answers).font(.system(size: 11.5)).foregroundColor(Color(hex: "#94a3b8"))
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundColor(Color(hex: "#64748b"))
-            }
-            .foregroundColor(.white)
-            .lineLimit(1).fixedSize()
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(Capsule().fill(Color(hex: "#161b22")))
-            .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Mode menu: \(hears), \(answers)")
-        .help(AudioSourceRules.hearingLine(practiceOn: vm.practiceAudioOn))
-        .popover(isPresented: $showModeMenu, arrowEdge: .bottom) { modeMenu }
-    }
-
-    var modeMenu: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            modeMenuHeading("WHAT REPLYSIS HEARS")
-            modeMenuRow(icon: "video.fill", title: "Interview", subtitle: "The call on this computer", selected: !vm.practiceAudioOn) {
-                vm.selectAudioSource(practice: false)
-            }
-            modeMenuRow(icon: "mic.fill", title: "Practice", subtitle: "Your voice", selected: vm.practiceAudioOn) {
-                vm.selectAudioSource(practice: true)
-            }
-            modeMenuHeading("HOW IT ANSWERS")
-            modeMenuRow(icon: "bolt.fill", title: "Auto", subtitle: "Answers as soon as the question ends", selected: vm.listeningMode == .auto) {
-                vm.setListeningMode(.auto)
-            }
-            modeMenuRow(icon: "hand.tap.fill", title: "Manual", subtitle: "Press Space to listen, and again to answer", selected: vm.listeningMode == .manual) {
-                vm.setListeningMode(.manual)
-            }
-            modeMenuHeading("WINDOW")
-            modeMenuRow(icon: "rectangle.compress.vertical", title: "Compact", subtitle: "A small bar instead of the full window", selected: vm.showCameraOverlay) {
-                vm.toggleCamera()
-            }
-            modeMenuRow(icon: vm.isPinnedOnTop ? "pin.fill" : "pin", title: "Pin on top", subtitle: "Keep the window above other apps", selected: vm.isPinnedOnTop) {
-                vm.togglePin()
-            }
-        }
-        .padding(.vertical, 8)
-        .frame(width: 292)
-        .background(Color(hex: "#0b1018"))
-    }
-
-    func modeMenuHeading(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 9.5, weight: .bold)).tracking(0.6)
-            .foregroundColor(Color(hex: "#64748b"))
-            .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 4)
-    }
-
-    func modeMenuRow(icon: String, title: String, subtitle: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: { action(); showModeMenu = false }) {
-            HStack(spacing: 10) {
-                Image(systemName: icon).font(.system(size: 12)).frame(width: 18)
-                    .foregroundColor(selected ? Color(hex: "#4ade80") : Color(hex: "#94a3b8"))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.system(size: 12.5, weight: .semibold)).foregroundColor(.white)
-                    Text(subtitle).font(.system(size: 10.5)).foregroundColor(Color(hex: "#7c8aa0"))
-                }
-                Spacer(minLength: 6)
-                if selected { Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundColor(Color(hex: "#4ade80")) }
-            }
-            .padding(.horizontal, 14).padding(.vertical, 6)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(title)
     }
 
     /// AN ACTION, NOT A SWITCH. Pressing it reads the screen there and then; the label never changes, because a control whose text
@@ -364,7 +282,7 @@ struct MainView: View {
             // The strapline is the first thing to go: it is decoration, and it costs more
             // width than the wordmark it sits under. The wordmark goes next; the mark itself
             // always stays, so the window is still identifiably the app.
-            if tier == .full || tier == .noStrapline {
+            if tier == .full {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Replysis AI")
                         .font(.system(size: 13, weight: .bold))
@@ -504,6 +422,59 @@ struct MainView: View {
             .padding(.horizontal, 2)
     }
 
+    /// An in-app alert that can carry one action, for the Interview / Practice tips.
+    /// One click does the thing it suggests, so nobody has to find a setting mid-call.
+    var audioSourceAlert: some View {
+        HStack(alignment: alertExpanded ? .top : .center, spacing: 10) {
+            Image(systemName: "info.circle.fill")
+                .font(.system(size: 12))
+                .foregroundColor(Color(hex: "#fbbf24"))
+            // One slim line by default: the title, then as much of the message as fits. The whole
+            // message is one click away (and in the tooltip). Two lines across the full width cost
+            // about 70pt of a 660pt window for a notice that is usually a passing "reconnecting"
+            // (owner, 2026-10-02: "that popup message is taking space").
+            Group {
+                if alertExpanded {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(vm.alertTitle).font(.system(size: 11.5, weight: .semibold)).foregroundColor(.white)
+                        Text(vm.alertBody).font(.system(size: 11)).foregroundColor(Color(hex: "#c3ccd8"))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    (Text(vm.alertTitle).font(.system(size: 11.5, weight: .semibold)).foregroundColor(.white)
+                     + Text("   " + vm.alertBody).font(.system(size: 11)).foregroundColor(Color(hex: "#aab5c4")))
+                        .lineLimit(1).truncationMode(.tail)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { alertExpanded.toggle() } }
+            .help(vm.alertBody)
+            if !vm.alertActionLabel.isEmpty {
+                Button(action: { vm.runAlertAction() }) {
+                    Text(vm.alertActionLabel)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .lineLimit(1).fixedSize()
+                }
+                .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
+                                              minHeight: 24, horizontalPadding: 10, verticalPadding: 2))
+            }
+            Button(action: { vm.dismissAlert() }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(Color(hex: "#8b9bb0"))
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss")
+        }
+        .padding(.horizontal, 12).padding(.vertical, alertExpanded ? 8 : 5)
+        .frame(maxWidth: 1000, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 9).fill(Color(hex: "#161b22").opacity(0.96)))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.12), lineWidth: 1))
+        .transition(.opacity)
+        .onChange(of: vm.alertTitle) { alertExpanded = false }
+    }
+
     /// ◀ ▶ over this session's answers, with where you are and a way back to live.
     @ViewBuilder
     var answerHistoryControls: some View {
@@ -556,20 +527,12 @@ struct MainView: View {
 
     // ── Profile button + dropdown popover ──────────────────────────
     func profileButton(compact: Bool = false) -> some View {
+        // Just the round initials (Windows MAC_CATCHUP, 2026-10-19): the name is inside the menu it opens.
         Button(action: { showProfileMenu.toggle() }) {
-            HStack(spacing: 8) {
-                profileAvatar(size: 32, fontSize: 12)
-                if !compact {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(Color(hex: "#475569"))
-                }
-            }
-            .padding(.leading, 4).padding(.trailing, compact ? 4 : 8).padding(.vertical, 4)
-            .background(Capsule().fill(Color.white.opacity(0.04)))
-            .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
+            profileAvatar(size: 32, fontSize: 12)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Account")
         .help("Account")
         .popover(isPresented: $showProfileMenu, arrowEdge: .bottom) {
             profileDropdown
@@ -1137,49 +1100,6 @@ struct MainView: View {
                 .overlay(Capsule().stroke(
                     active ? Color(hex: "#38bdf8").opacity(0.5) : Color.white.opacity(0.08),
                     lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .help(help)
-    }
-
-    // ── Eye Mode · Pin — one segmented glass pill ──
-    // Groups the view-toggle buttons into a single premium capsule with a hairline divider,
-    // instead of separately-bordered chips floating with gaps between them. Stealth Mode
-    // moved to Settings (default ON) — it's a set-once preference, not a mid-interview
-    // toggle, so it no longer needs header real estate.
-    @ViewBuilder var toolSegmentGroup: some View {
-        // Pin is an interview control: it is not shown on Setup, where the window is a normal one (as on Windows).
-        if vm.appStep == .interview { pinSegment }
-    }
-
-    private var pinSegment: some View {
-        // Only Pin lives here now. The eye icon called vm.toggleCamera() — the exact same
-        // action as the COMPACT button — so the toolbar carried two different-looking
-        // controls that did one thing. Pin keeps the window above the meeting app during an
-        // interview, where a normal window falls behind it.
-        segmentButton(icon: vm.isPinnedOnTop ? "pin.fill" : "pin",
-                      active: vm.isPinnedOnTop,
-                      activeColor: Color(hex: "#38bdf8"),
-                      help: "Pin on top: keep the window above other apps") {
-            vm.togglePin()
-        }
-        .background(Capsule().fill(Color.white.opacity(0.035)))
-        .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
-        .clipShape(Capsule())
-    }
-
-    private var segmentDivider: some View {
-        Rectangle().fill(Color.white.opacity(0.08)).frame(width: 1, height: 20)
-    }
-
-    private func segmentButton(icon: String, active: Bool, activeColor: Color,
-                                help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(active ? activeColor : Color(hex: "#94A3B8"))
-                .frame(width: 34, height: 32)
-                .background(active ? activeColor.opacity(0.16) : Color.clear)
         }
         .buttonStyle(.plain)
         .help(help)

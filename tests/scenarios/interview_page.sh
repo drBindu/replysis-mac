@@ -21,7 +21,7 @@ cmd start; sleep 4
 I=$(/tmp/login_probe $PID all)
 echo "$I" | grep -q "^BUTTON Forward " && no "the interview page still has the strip with the arrow" || ok "the interview page has no side strip with an arrow"
 echo "$I" | grep -q "Drop your resume here\|^BUTTON Auto \|^BUTTON Manual \|Start interview" && no "the interview page still carries setup controls" || ok "the interview page carries no resume or setup controls"
-echo "$I" | grep -q "^BUTTON Pin " && ok "the interview page still has its own controls (the pin, from the toolbar)" || no "the interview page lost its toolbar"
+echo "$I" | grep -q "^BUTTON Mode menu" && ok "the interview page still has its own controls (the mode pill, from the top bar)" || no "the interview page lost its top bar"
 kill $PID $MOCK 2>/dev/null
 [ $fail -eq 0 ] && echo "INTERVIEW PAGE: all checks passed" || echo "INTERVIEW PAGE: FAILED"
 exit $fail

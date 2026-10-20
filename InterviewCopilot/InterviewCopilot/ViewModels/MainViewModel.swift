@@ -891,11 +891,24 @@ class MainViewModel {
             }
         )
         hotkey?.onBringToFront = { [weak self] in self?.bringToFront() }
+        hotkey?.onModeShortcut = { [weak self] shortcut in self?.handleModeShortcut(shortcut) }
         hotkey?.onRegionAnalysisPressed = { [weak self] in self?.runRegionAnalysis() }
         hotkey?.onPreviousAnswer = { [weak self] in self?.showPreviousAnswer() }
         hotkey?.onNextAnswer = { [weak self] in self?.showNextAnswer() }
         hotkey?.setScreenKeysEverywhere(screenKeysEverywhere)
         refreshHotkeyGate()   // seed the tap's consume/pass-through state
+    }
+
+    /// Control Shift P, A and C (Windows Ctrl+Shift+P, A, C): switch Interview and Practice, Auto and Manual, Compact. Only in an interview,
+    /// where the top bar's pill exists; anywhere else the keys belong to whatever app has them.
+    func handleModeShortcut(_ shortcut: GlobalHotkey.ModeShortcut) {
+        guard appStep == .interview, session.isLoggedIn else { return }
+        switch shortcut {
+        case .audioSource: selectAudioSource(practice: !practiceAudioOn)
+        case .answerMode:  setListeningMode(listeningMode == .auto ? .manual : .auto)
+        case .compact:     toggleCamera()
+        }
+        dlog("Shortcut \(shortcut) used", tag: "HOTKEY")
     }
 
     /// Push the current sign-in + text-editing state to the global hotkey tap so it knows
@@ -1584,8 +1597,7 @@ class MainViewModel {
             dlog(String(format: "ENGINE: stopped and waited, %.0f ms", Date().timeIntervalSince(started) * 1000), tag: "FLOW")
         case "snap-tiers":
             // Each single-row header rung at its natural width, to read off how much room it needs.
-            let tiers: [(String, MainView.HeaderTier)] = [("full", .full), ("noStrapline", .noStrapline),
-                                                          ("iconBrand", .iconBrand), ("minimal", .minimal), ("tight", .tight)]
+            let tiers: [(String, MainView.HeaderTier)] = [("full", .full), ("noTitle", .noTitle), ("minimal", .minimal), ("tight", .tight)]
             for (name, tier) in tiers {
                 MainView.debugHeaderTier = tier
                 snapshot(AnyView(MainView().frame(width: 1500, height: 200, alignment: .top)), name: "tier-\(name)")
@@ -1600,6 +1612,8 @@ class MainViewModel {
         case "nomic":     handleNoMicrophone(waiting: true)      // what the engine line NO_MICROPHONE_WAITING does
         case "miccame":   handleMicrophoneConnected()            // MICROPHONE CONNECTED
         case "updatecheck": AppUpdater.shared.checkInBackgroundNow()   // a scheduled background check, now
+        case "key-p":     handleModeShortcut(.audioSource)    // what ⌃⇧P does
+        case "key-a":     handleModeShortcut(.answerMode)     // ⌃⇧A
         case "space":     handleSpacePress(source: "FLOW")   // the Space key: listen, or send what was heard
         case "practice":  setMicCaptureEnabled(true)      // at once, the way a switch made between questions is applied: the engine restarts now
         case "interviewaudio": setMicCaptureEnabled(false)

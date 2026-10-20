@@ -1122,5 +1122,13 @@ let problemBody = ClientErrorReporter.payload(kind: "listening.nomic", message: 
 check(problemBody["type"] as? String == "Problem.listening.nomic" && problemBody["source"] as? String == "mac" && Set(problemBody.keys) == ["version", "os", "source", "type", "message", "frames"], "report: the body has the same fields and type as Windows")
 check(ClientErrorReporter.request(backendUrl: "https://replysis.com/", payload: problemBody)?.url?.absoluteString == "https://replysis.com/api/v1/diagnostics/client-error", "report: posted to the client-error endpoint")
 
+// ── The top bar's shortcuts (Windows MAC_CATCHUP, 2026-10-19) ───────────────────────────────────────────────────────────────
+check(GlobalHotkey.modeShortcut(keyCode: 35, flags: [.maskControl, .maskShift]) == .audioSource, "shortcut: Control Shift P switches Interview and Practice")
+check(GlobalHotkey.modeShortcut(keyCode: 0, flags: [.maskControl, .maskShift]) == .answerMode, "shortcut: Control Shift A switches Auto and Manual")
+check(GlobalHotkey.modeShortcut(keyCode: 8, flags: [.maskControl, .maskShift]) == .compact, "shortcut: Control Shift C switches Compact")
+check(GlobalHotkey.modeShortcut(keyCode: 35, flags: [.maskControl]) == nil && GlobalHotkey.modeShortcut(keyCode: 35, flags: [.maskShift]) == nil, "shortcut: P with only Control or only Shift is somebody else's")
+check(GlobalHotkey.modeShortcut(keyCode: 35, flags: [.maskControl, .maskShift, .maskCommand]) == nil, "shortcut: an extra modifier is somebody else's")
+check(GlobalHotkey.modeShortcut(keyCode: 1, flags: [.maskControl, .maskShift]) == nil, "shortcut: other letters are not shortcuts")
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

@@ -19,6 +19,7 @@ class GlobalHotkey {
     /// ⌃⌥R from any app: bring the window back. Stealth keeps it out of the Dock and ⌘Tab,
     /// so once it was covered or hidden there was no way back to it (Windows: Ctrl+Alt+R).
     var onBringToFront: (() -> Void)?
+    var onModeShortcut: ((ModeShortcut) -> Void)?
 
     // The app mirrors two pieces of state here so the CGEvent tap thread can decide
     // whether to CONSUME a key WITHOUT touching @MainActor state (which would be a data
@@ -54,6 +55,20 @@ class GlobalHotkey {
     /// ⌃⌥R. Never swallowed: the front app still receives it.
     static func isBringToFront(keyCode: Int64, flags: CGEventFlags) -> Bool {
         keyCode == 15 && isControlOption(flags)
+    }
+
+    /// The top bar's three shortcuts (Windows MAC_CATCHUP, 2026-10-19: Ctrl+Shift+P, A and C): Interview or Practice, Auto or Manual, Compact.
+    /// Exactly Control and Shift. Never swallowed, and only acted on during an interview (see MainViewModel.handleModeShortcut).
+    enum ModeShortcut { case audioSource, answerMode, compact }
+
+    static func modeShortcut(keyCode: Int64, flags: CGEventFlags) -> ModeShortcut? {
+        guard flags.intersection(chordModifiers) == [.maskControl, .maskShift] else { return nil }
+        switch keyCode {
+        case 35: return .audioSource     // P
+        case 0:  return .answerMode      // A
+        case 8:  return .compact         // C
+        default: return nil
+        }
     }
 
     /// Called on the main thread whenever sign-in state or text-field focus changes.
@@ -287,6 +302,10 @@ class GlobalHotkey {
             return false   // debug toggle — harmless to let through
 
         default:
+            if let shortcut = Self.modeShortcut(keyCode: keyCode, flags: flags) {
+                DispatchQueue.main.async { [weak self] in self?.onModeShortcut?(shortcut) }
+                return false
+            }
             if Self.isBringToFront(keyCode: keyCode, flags: flags) {
                 DispatchQueue.main.async { [weak self] in self?.onBringToFront?() }
             }

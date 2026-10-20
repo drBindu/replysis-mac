@@ -23,7 +23,7 @@ run() {   # run <label> <extra settings json> <wanted sharingType>
   cmd(){ echo "$1" >> "$DATA/flow.cmd"; }
   check() {   # check <state>
     local L; L=$(wc -l < "$LOG"); cmd capturable; sleep 2
-    local line; line=$(sed -n "$((L+1)),\$p" "$LOG" | grep "this app's windows" | tail -1 | sed 's/^.*this app.s windows: //')
+    local line; line=$(sed -n "$((L+1)),\$p" "$LOG" | grep "FLOWSTATE: this app's windows" | tail -1 | sed 's/^.*this app.s windows: //')
     local total wrong; total=$(echo "$line" | tr '|' '\n' | grep -c sharingType); wrong=$(echo "$line" | tr '|' '\n' | grep sharingType | grep -vc "sharingType=$want")
     [ "$total" -ge 1 ] && [ "$wrong" -eq 0 ] && ok "$label, $1: all $total windows say sharingType=$want" || { no "$label, $1: $wrong of $total windows are not $want"; echo "        $line" | cut -c1-260; }
   }

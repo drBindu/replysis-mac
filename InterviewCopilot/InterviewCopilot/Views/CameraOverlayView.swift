@@ -178,6 +178,8 @@ struct AnswerOverlayView: View {
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(.white.opacity(0.4))
             }
+            // The same pill as the top bar (Windows MAC_CATCHUP, 2026-10-19), with Full window in its menu in place of Compact.
+            ModePill(inCompact: true)
             Spacer()
             // Manual screen-analysis trigger — eye mode had no way to fire F9 other than
             // the physical key, unlike the main window's visible Analyze button.

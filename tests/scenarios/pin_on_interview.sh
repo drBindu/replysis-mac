@@ -17,13 +17,15 @@ env REPLYSIS_BACKEND_URL=http://127.0.0.1:$PORT REPLYSIS_TOKEN_URL=http://127.0.
 cmd(){ echo "$1" >> "$DATA/flow.cmd"; }
 # the layer of the main window: the widest window of the app that is not the 500x500 helper
 layer(){ /tmp/windows_of $PID | grep "^window" | grep -v "w=500.0 h=500.0" | sed 's/.*layer=\([0-9-]*\).*w=\([0-9.]*\) h=.*/\2 \1/' | sort -rn | head -1 | cut -d' ' -f2; }
-pins(){ /tmp/login_probe $PID all | grep -c "^BUTTON Pin "; }
+# Pin on top lives in the top bar's mode menu now (Windows MAC_CATCHUP, 2026-10-19), so open the menu, look, and close it again
+swiftc -O -o /tmp/axpress "$HERE/axpress.swift" 2>/dev/null
+pins(){ if /tmp/axpress $PID "Mode menu" | grep -q "press: ok"; then sleep 1; local n; n=$(/tmp/login_probe $PID all | grep -c "^BUTTON Pin on top"); /tmp/axpress $PID "Mode menu" >/dev/null; sleep 1; echo "$n"; else echo 0; fi; }
 sleep 10
 [ "$(layer)" = "0" ] && ok "on Setup the window is an ordinary one (layer 0)" || no "on Setup the window floats (layer $(layer))"
-[ "$(pins)" = "0" ] && ok "on Setup there is no pin button" || no "the pin button shows on Setup"
+[ "$(pins)" = "0" ] && ok "on Setup there is no pin (the top bar and its menu are for the interview)" || no "the pin button shows on Setup"
 cmd start; sleep 4
 [ "$(layer)" = "3" ] && ok "during an interview, pinned: the window floats (layer 3)" || no "during an interview the window does not float (layer $(layer))"
-[ "$(pins)" -ge 1 ] && ok "during an interview the pin button is there" || no "no pin button during an interview"
+[ "$(pins)" -ge 1 ] && ok "during an interview Pin on top is in the mode menu" || no "no pin button during an interview"
 cmd back; sleep 3
 [ "$(layer)" = "0" ] && ok "back on Setup the window is ordinary again" || no "back on Setup the window still floats (layer $(layer))"
 cmd start; sleep 3
