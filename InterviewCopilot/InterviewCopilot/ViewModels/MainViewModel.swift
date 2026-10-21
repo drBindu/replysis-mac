@@ -476,8 +476,10 @@ class MainViewModel {
     // lid met a deaf app. The network adapter needs a moment to come back, so wait 2.5 s and reconnect.
     private var wakeObserver: NSObjectProtocol?
     static let wakeReconnectDelay: TimeInterval = 2.5
+    private var lastWakeAt = Date.distantPast
 
     func reconnectAfterWake() {
+        lastWakeAt = Date()
         dlog("WAKE: the Mac woke up; reconnecting speech in \(Self.wakeReconnectDelay)s instead of waiting for the old connection to time out", tag: "SM")
         // The answer connection that was open when the lid closed is dead too. Drop it now and open a fresh one
         // (again below, once the adapter is back), so the first question meets a warm connection, not a dead socket.
@@ -488,12 +490,28 @@ class MainViewModel {
             // Whatever was learned about the line before the lid closed no longer holds.
             self.networkChanged()
             NetworkClient.shared.warmUp()
-            guard self.engine.isRunning else { return }   // not running: the engine's own check starts it
-            // A long sleep outlives the speech key.
-            if let expiry = self.session.speechKeyExpiresAt, expiry.timeIntervalSinceNow < 120 {
-                _ = await self.session.fetchSpeechmaticsKeyAsync(forceRefresh: true)
+            // A long sleep outlives the speech key, and the Wi-Fi is often not back yet. Keep asking, about once a second, until
+            // a fresh key arrives (up to a minute). It used to ask once: on 2026-10-21 the owner's Mac woke at 04:30 with an expired
+            // key and no Wi-Fi yet, the one request failed, the key was gone, and this returned without a word, so speech came back
+            // only half a minute later on the engine's own rejection path.
+            if RecoveryPolicy.wakeNeedsFreshKey(key: self.session.speechmaticsKey, expiry: self.session.speechKeyExpiresAt, now: Date()) {
+                var ok = await self.session.fetchSpeechmaticsKeyAsync(forceRefresh: true)
+                let deadline = Date().addingTimeInterval(60)
+                while !ok && Date() < deadline && self.session.isLoggedIn {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    if self.session.speechKeyOutOfReach { break }   // a definite refusal: the problem notice explains it
+                    // While the request cannot even be sent (Wi-Fi still joining) nothing reaches the server, so ask every second.
+                    // Once the server has answered, keep to its back-off.
+                    let unsent = self.session.speechKeyLastStatus == 0
+                    if unsent || Date() >= self.session.speechRetryAfter {
+                        ok = await self.session.fetchSpeechmaticsKeyAsync(userInitiated: unsent)
+                    }
+                }
+                dlog(ok ? "WAKE: fresh speech key ready" : "WAKE: no fresh speech key within a minute; the engine's own retry carries on", tag: "SM")
             }
-            guard !self.session.speechmaticsKey.isEmpty else { return }
+            // Fetched even when the engine is not running: its own restart then finds a fresh key waiting.
+            guard self.engine.isRunning else { return }   // not running: the engine's own check starts it
+            guard !self.session.speechmaticsKey.isEmpty else { self.engine.startRetryTimer(); return }
             dlog("WAKE: reconnecting speech now", tag: "SM")
             self.engine.stop()
             self.engine.start(smKey: self.session.speechmaticsKey)
@@ -1587,6 +1605,7 @@ class MainViewModel {
         // The system's own wake announcement, so the observer wired to it is the thing under test.
         case "wakenote":  NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
         #if DEBUG
+        case "dropkey":   session.discardCachedSpeechKey()   // what a renewal that failed offline left behind
         case "busy":   engine.debugSimulateConcurrencyRefusal()
         case "weak":   engine.debugSimulateConnectionTrouble()
         #endif
@@ -3788,6 +3807,9 @@ class MainViewModel {
         guard session.isLoggedIn, engine.isRunning, !isProcessing, !autoTurnSubmitting,
               now.timeIntervalSince(lastSpeechHeardAt) > 3,
               now.timeIntervalSince(lastTokenRenewalAt) > 5 * 60,
+              // Just after a wake the wake reconnect renews the key itself, once the Wi-Fi is back. Renewing here as well, in the
+              // first second, threw the old key away on a request that could not be sent yet.
+              now.timeIntervalSince(lastWakeAt) > 90,
               let expiry = session.speechKeyExpiresAt,
               expiry.timeIntervalSince(now) < 8 * 60 else { return }
         lastTokenRenewalAt = now

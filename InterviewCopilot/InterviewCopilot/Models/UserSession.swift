@@ -457,6 +457,8 @@ class UserSession {
     /// Still trying to get a key after a passing server fault. Stays true between the quick retries, so the
     /// "Reconnecting" notice does not go away and come back every few seconds over other notices.
     var speechKeyRetrying: Bool { keyServerFailures > 0 }
+    /// The server said no for a reason asking again cannot fix soon (signed out, out of time or answers, rate limited).
+    var speechKeyOutOfReach: Bool { [401, 402, 429].contains(speechKeyLastStatus) }
 
     /// How long a definite refusal (402) is remembered. Windows measured why: the server
     /// allows a signed-in account 12 key requests an hour, and retrying every 30 seconds

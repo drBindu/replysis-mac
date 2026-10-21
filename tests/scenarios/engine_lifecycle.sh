@@ -16,19 +16,23 @@ cmd(){ echo "$1" >> "$DATA/flow.cmd"; }
 engines(){ ps -axo pid=,ppid=,command= | awk -v p=$PID '$2==p && /speechmatics_engine/ {print $1}' | tr '\n' ' '; }
 count(){ engines | wc -w | tr -d ' '; }
 fail=0; ok(){ echo "  PASS  $1"; }; no(){ echo "  FAIL  $1"; fail=1; }
-sleep 14
-echo "engines after launch: [$(engines)]"
-[ "$(count)" = "1" ] && ok "exactly one engine after launch" || no "expected one engine after launch, found $(count)"
-FIRST=$(engines)
+# The fake key is refused by the real speech service within a second, and the app renews it every ~6 s, so an engine lives
+# about a second at a time. Watch for 7 s instead of looking once: one engine must appear, never two.
+sleep 8
+seen(){ local p=0 all=""; for i in $(seq 1 28); do c=$(count); [ "$c" -gt "$p" ] && p=$c; all="$all $(engines)"; sleep 0.25; done; echo "$p|$(echo $all | tr ' ' '\n' | sort -u | tr '\n' ' ')"; }
+R=$(seen); P=${R%%|*}; FIRST=${R#*|}
+echo "engines after launch: [$FIRST]"
+[ "$P" = "1" ] && ok "one engine after launch (never two)" || no "expected one engine after launch, peak was $P"
 peak=0
 for i in 1 2 3 4 5 6; do sleep 1; c=$(count); [ "$c" -gt "$peak" ] && peak=$c; done
 [ "$peak" -le 1 ] && ok "never more than one engine while it ran" || no "saw $peak engines at once"
 cmd wakenote; sleep 1
 for i in $(seq 1 14); do sleep 1; c=$(count); [ "$c" -gt "$peak" ] && peak=$c; done
-echo "engines after the wake: [$(engines)]  (first was [$FIRST])"
-[ "$(count)" = "1" ] && ok "exactly one engine after the wake" || no "expected one engine after the wake, found $(count)"
+R=$(seen); P2=${R%%|*}; AFTER=${R#*|}
+echo "engines after the wake: [$AFTER]  (first was [$FIRST])"
+[ "$P2" = "1" ] && ok "one engine after the wake (never two)" || no "expected one engine after the wake, peak was $P2"
 [ "$peak" -le 1 ] && ok "a wake never ran two engines at once (peak $peak)" || no "a wake ran $peak engines at once"
-[ "$(engines)" != "$FIRST" ] && ok "the wake gave a fresh engine" || echo "  note  same engine pid after the wake (engine may have been restarted earlier by its own check)"
+[ "$AFTER" != "$FIRST" ] && ok "the wake gave a fresh engine" || echo "  note  same engine pid after the wake (engine may have been restarted earlier by its own check)"
 sed -n "$((L+1)),\$p" "$LOG" | grep -q "WAKE: the Mac woke up" && ok "the wake was noticed" || no "the wake was not noticed"
 # On its way out the app stops the engine and waits for it to end its speech session.
 S=$(date +%s)

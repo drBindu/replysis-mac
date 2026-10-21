@@ -56,6 +56,9 @@ S = {
     # seconds of the server coming back, not a minute later (owner, 2026-10-20: "it has to be ready anytime").
     "key-down-then-back": dict(credits=55, minutes=30, key=lambda h: (503, {"error": "down"}, {}) if time.time() - START < 10
         else (200, {"key": "fake-key-for-lifecycle-test", "expiresIn": 3600}, {})),
+    # Speech key works, except while the file named by MOCK_KEYDOWN_FILE exists (no Wi-Fi just after a wake).
+    "wake-lab": dict(credits=55, minutes=30, key=lambda h: (503, {"error": "down"}, {}) if os.path.exists(os.environ.get("MOCK_KEYDOWN_FILE", "/nonexistent"))
+        else (200, {"key": "fake-key-for-lifecycle-test", "expiresIn": 3600}, {})),
     "screen-lab": dict(credits=500, minutes=30, key=lambda h: (200, {"key": "", "expiresIn": 3600}, {})),
 }
 if scenario not in S:
@@ -116,7 +119,14 @@ class H(BaseHTTPRequestHandler):
             elif scenario == "token-refused": status, body = 400, {"error": {"message": "TOKEN_EXPIRED"}}
             else: body = {"id_token": "fresh-token", "refresh_token": "refresh-2", "expires_in": "3600"}
         elif url == "/api/v1/stt/key":
-            key_requests += 1; status, body, headers = s["key"](self)
+            key_requests += 1
+            if scenario == "wake-lab" and os.environ.get("MOCK_KEYDOWN_MODE") == "offline" and os.path.exists(os.environ.get("MOCK_KEYDOWN_FILE", "/nonexistent")):
+                # No Wi-Fi yet: the request never gets an answer. Drop the connection, as a dead network does.
+                print("REQ GET /api/v1/stt/key -> dropped (offline)", flush=True); self.close_connection = True
+                try: self.connection.shutdown(2)
+                except Exception: pass
+                return
+            status, body, headers = s["key"](self)
         elif url == "/api/v1/interview/credits":
             credit_requests += 1
             if scenario == "credits-flaky" and credit_requests <= 2:

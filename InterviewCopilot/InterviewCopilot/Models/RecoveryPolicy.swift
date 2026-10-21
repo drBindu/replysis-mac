@@ -16,6 +16,12 @@ enum RecoveryPolicy {
         }
     }
 
+    /// After a wake: is the speech key missing, of unknown age, or about to run out (under two minutes)?
+    static func wakeNeedsFreshKey(key: String, expiry: Date?, now: Date) -> Bool {
+        guard !key.isEmpty, let expiry else { return true }
+        return expiry.timeIntervalSince(now) < 120
+    }
+
     /// After the server answered the key request with a passing fault (a 5xx, or a 200 with no key): 2, 3, then every
     /// 5 seconds for about a minute, then every 15. The app must be listening within seconds of the server coming back
     /// (owner, 2026-10-20: "it has to be ready anytime"); one small request every 5 s for a minute costs the server nothing.

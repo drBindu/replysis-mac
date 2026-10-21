@@ -435,6 +435,14 @@ check(other.body.contains("Windows PC or another Mac") && other.body.contains("s
 check(detect(status: 429, listening: true) == .noListeningTime, "a listening refusal outlives a later rate limit")
 check(detect(status: 429, answers: true) == .noAnswers, "an answers refusal outlives a later rate limit")
 check(detect(status: 429, waiting: true) == .waitingToReconnect, "a bare rate limit is a passing reconnect")
+do {   // waking with an expired key and no Wi-Fi yet (owner's Mac, 2026-10-21 04:30): the wake reconnect must fetch a fresh key
+    let now = Date()
+    check(RecoveryPolicy.wakeNeedsFreshKey(key: "", expiry: nil, now: now), "after a wake, a key thrown away by a failed renewal is fetched again")
+    check(RecoveryPolicy.wakeNeedsFreshKey(key: "k", expiry: nil, now: now), "after a wake, a key of unknown age is renewed")
+    check(RecoveryPolicy.wakeNeedsFreshKey(key: "k", expiry: now.addingTimeInterval(-60), now: now), "after a wake, an expired key is renewed")
+    check(RecoveryPolicy.wakeNeedsFreshKey(key: "k", expiry: now.addingTimeInterval(90), now: now), "after a wake, a key with 90 s left is renewed")
+    check(!RecoveryPolicy.wakeNeedsFreshKey(key: "k", expiry: now.addingTimeInterval(1800), now: now), "after a wake, a key with half an hour left is kept")
+}
 check([1, 2, 3, 8, 13, 14, 40].map(RecoveryPolicy.keyRetryAfterServerFault) == [2, 3, 5, 5, 5, 15, 15], "server-fault key retry waits 2, 3, then 5 seconds for a minute, then 15")
 check([1, 2, 3, 4, 5, 9].map(RecoveryPolicy.keyRetryAfterNoConnection) == [2, 4, 8, 15, 30, 30], "no-connection retry waits 2, 4, 8, 15, then 30 seconds")
 check([0, 1, 2, 3, 4, 20].map { RecoveryPolicy.credentialRenewalWait(attempt: $0) } == [5, 15, 30, 60, 60, 60], "rejected credentials renew after 5, 15, 30 seconds, then every minute")
