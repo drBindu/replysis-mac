@@ -119,8 +119,10 @@ enum PlanFacts {
     /// and refused until the next refresh (found by testing, 2026-10-01). Only a balance that is
     /// KNOWN to be empty stops a question here. Otherwise the server decides, and it is the one
     /// that has the real number.
-    static func mayAsk(balanceKnown: Bool, credits: Int, isUnlimited: Bool) -> Bool {
-        isUnlimited || !balanceKnown || !isEmpty(credits)
+    /// Bought minutes count too: while minutesBalance is above 0 the server charges minutes, not answers. A customer who
+    /// bought 45 minutes was told "You have 0 answers left" on Windows (2026-10-21).
+    static func mayAsk(balanceKnown: Bool, credits: Int, isUnlimited: Bool, minutes: Int = 0) -> Bool {
+        isUnlimited || !balanceKnown || !isEmpty(credits) || minutes > 0
     }
 
     /// What someone reads when an answer is refused for having none left. A free trial is

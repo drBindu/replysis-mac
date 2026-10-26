@@ -67,7 +67,7 @@ class GoogleSignIn {
         NSWorkspace.shared.open(authURL)
 
         guard let cb = await waitForCallback(serverFd: serverFd, expectedState: state) else {
-            return .failure("Sign-in timed out (2 min). Please try again.")
+            return .failure("Google sign-in was not finished in the browser. Please try again.")
         }
         guard cb.stateValid else { return .failure("Security check failed. Please try again.") }
         guard let code = cb.code  else { return .failure(cb.error ?? "Google sign-in was cancelled.") }
@@ -115,7 +115,7 @@ class GoogleSignIn {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 continuation.resume(returning: OAuthLoopback.waitForCallback(
-                    serverFd: serverFd, expectedState: expectedState, timeout: 120,
+                    serverFd: serverFd, expectedState: expectedState, timeout: 300,   // 5 min, as Windows (2026-10-22): 2 min cut people off mid sign-in
                     successHTML: successHTML, failHTML: failHTML))
             }
         }

@@ -17,13 +17,15 @@ enum MinutesBalance {
     static let askEvery: TimeInterval = 3 * 60
 
     /// What the badge says: the minutes while there are any, otherwise whatever it said before.
-    static func badgeText(minutes: Int, fallback: String) -> String {
-        minutes > 0 ? "\(minutes) min left" : fallback
+    /// A paid plan with answers left shows its answers: those are what it pays for (Windows bug sweep, 2026-10-22).
+    static func badgeText(minutes: Int, fallback: String, paidWithAnswers: Bool = false) -> String {
+        minutes > 0 && !paidWithAnswers ? "\(minutes) min left" : fallback
     }
 
-    /// A balance that is dropping to nothing, for someone who has (or just had) bought minutes. A person who never bought any is not asked.
-    static func shouldAskForMore(hadMinutes: Bool, balance: Int) -> Bool {
-        (hadMinutes || balance > 0) && balance <= autoAddWhenLeft
+    /// A balance that is dropping to nothing, for someone who has (or just had) bought minutes. A person who never bought any is not asked,
+    /// and neither is a paid plan with answers left: it would be charged for minutes it does not need.
+    static func shouldAskForMore(hadMinutes: Bool, balance: Int, paidWithAnswers: Bool = false) -> Bool {
+        !paidWithAnswers && (hadMinutes || balance > 0) && balance <= autoAddWhenLeft
     }
 
     static func mayAsk(now: Date, lastAskedAt: Date?) -> Bool {

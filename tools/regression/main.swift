@@ -301,6 +301,7 @@ check(!PlanFacts.mayAsk(balanceKnown: true, credits: 0, isUnlimited: false), "ba
 check(!PlanFacts.mayAsk(balanceKnown: true, credits: 4, isUnlimited: false), "under one answer: no question")
 check(PlanFacts.mayAsk(balanceKnown: true, credits: 5, isUnlimited: false), "one answer left: asks")
 check(PlanFacts.mayAsk(balanceKnown: true, credits: 0, isUnlimited: true), "unlimited asks")
+check(PlanFacts.mayAsk(balanceKnown: true, credits: 0, isUnlimited: false, minutes: 45), "bought minutes let a question through with 0 answers (Windows customer, 2026-10-21)")
 check(PlanFacts.answerCost == 5, "one answer costs 5 credits, in one place")
 check(PlanFacts.answers(12) == 2, "12 credits is 2 answers, rounded down")
 check(PlanFacts.answers(4) == 0, "under 5 credits buys nothing")
@@ -442,6 +443,17 @@ do {   // waking with an expired key and no Wi-Fi yet (owner's Mac, 2026-10-21 0
     check(RecoveryPolicy.wakeNeedsFreshKey(key: "k", expiry: now.addingTimeInterval(-60), now: now), "after a wake, an expired key is renewed")
     check(RecoveryPolicy.wakeNeedsFreshKey(key: "k", expiry: now.addingTimeInterval(90), now: now), "after a wake, a key with 90 s left is renewed")
     check(!RecoveryPolicy.wakeNeedsFreshKey(key: "k", expiry: now.addingTimeInterval(1800), now: now), "after a wake, a key with half an hour left is kept")
+}
+do {   // problem reports: stealth first, engine technical lines only, the signed-in email (Windows 2026-10-21/22)
+    let p = ClientErrorReporter.payload(kind: "x", message: "m", version: "1", os: "o", stealth: "STEALTH: on",
+                                        engineTail: [">>> MIC stream opened OK"], user: "a@b.c")
+    check((p["detail"] as? String) == ">>> STEALTH: on | >>> MIC stream opened OK", "report detail: stealth first, then the engine lines")
+    check((p["user"] as? String) == "a@b.c", "report carries the signed-in email")
+    check(ClientErrorReporter.technicalLine(">>> MIC stream opened OK (16kHz mono)") != nil, "engine tail keeps a microphone line")
+    check(ClientErrorReporter.technicalLine(">>> FINAL received (62 chars)") == nil, "engine tail never keeps a FINAL line")
+    check(ClientErrorReporter.technicalLine(">>> PARTIAL received (19 chars)") == nil, "engine tail never keeps a PARTIAL line")
+    check(ClientErrorReporter.technicalLine("MIC opened") == nil, "engine tail keeps only >>> lines")
+    check(ClientErrorReporter.technicalLine(">>> SYSTEM AUDIO (FIFO): /Users/pk/Library/x.pcm 16000Hz")?.contains("/Users") == false, "engine tail removes paths")
 }
 check([1, 2, 3, 8, 13, 14, 40].map(RecoveryPolicy.keyRetryAfterServerFault) == [2, 3, 5, 5, 5, 15, 15], "server-fault key retry waits 2, 3, then 5 seconds for a minute, then 15")
 check([1, 2, 3, 4, 5, 9].map(RecoveryPolicy.keyRetryAfterNoConnection) == [2, 4, 8, 15, 30, 30], "no-connection retry waits 2, 4, 8, 15, then 30 seconds")
@@ -1128,7 +1140,7 @@ check(!ClientErrorReporter.shouldSend(kind: "", seen: &seenKinds), "report: noth
 for i in 0..<60 { _ = ClientErrorReporter.shouldSend(kind: "kind\(i)", seen: &seenKinds) }
 check(seenKinds.count == ClientErrorReporter.maxProblemsPerRun, "report: at most 40 kinds a run")
 let problemBody = ClientErrorReporter.payload(kind: "listening.nomic", message: "No microphone [Practice, Auto, in interview]", version: "1.0.254", os: "macOS 26.0.0 arm64")
-check(problemBody["type"] as? String == "Problem.listening.nomic" && problemBody["source"] as? String == "mac" && Set(problemBody.keys) == ["version", "os", "source", "type", "message", "frames"], "report: the body has the same fields and type as Windows")
+check(problemBody["type"] as? String == "Problem.listening.nomic" && problemBody["source"] as? String == "mac" && Set(problemBody.keys) == ["version", "os", "source", "type", "message", "frames", "detail", "user"], "report: the body has the same fields and type as Windows")
 check(ClientErrorReporter.request(backendUrl: "https://replysis.com/", payload: problemBody)?.url?.absoluteString == "https://replysis.com/api/v1/diagnostics/client-error", "report: posted to the client-error endpoint")
 
 // ── The top bar's shortcuts (Windows MAC_CATCHUP, 2026-10-19) ───────────────────────────────────────────────────────────────
@@ -1157,6 +1169,8 @@ check(!indiaSet.contains("Work authorization") && !indiaSet.contains("Can start"
 // ── India pays by the minute (Windows MAC_CATCHUP item 57) ───────────────────────────────────────────────────────────────────
 check(MinutesBalance.badgeText(minutes: 14, fallback: "5 answers") == "14 min left", "minutes: the badge says the minutes while there are any")
 check(MinutesBalance.badgeText(minutes: 0, fallback: "5 answers") == "5 answers", "minutes: no minutes, the badge says what it did before")
+check(MinutesBalance.badgeText(minutes: 14, fallback: "300 answers", paidWithAnswers: true) == "300 answers", "minutes: a paid plan with answers left shows its answers")
+check(!MinutesBalance.shouldAskForMore(hadMinutes: true, balance: 1, paidWithAnswers: true), "minutes: a paid plan with answers left is never auto-charged for minutes")
 check(MinutesBalance.shouldAskForMore(hadMinutes: true, balance: 2) && MinutesBalance.shouldAskForMore(hadMinutes: false, balance: 1), "minutes: at 2 or fewer, for someone with minutes, it asks")
 check(MinutesBalance.shouldAskForMore(hadMinutes: true, balance: 0), "minutes: just run out, it asks")
 check(!MinutesBalance.shouldAskForMore(hadMinutes: true, balance: 3) && !MinutesBalance.shouldAskForMore(hadMinutes: false, balance: 0), "minutes: above 2, or never bought any, it does not ask")

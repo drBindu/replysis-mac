@@ -23,7 +23,46 @@ enum ClientErrorReporter {
 
     /// The message with emails, tokens, JWTs and file paths taken out, cut to 200 characters.
     static func sanitize(_ message: String) -> String {
-        var s = message
+        let s = sanitizeLong(message)
+        return s.count > maxMessageLength ? String(s.prefix(maxMessageLength)) : s
+    }
+
+    /// Whether this kind goes out now: once per run, at most 40 kinds. Pure, so a test can drive it with its own set.
+    static func shouldSend(kind: String, seen: inout Set<String>) -> Bool {
+        guard seen.count < maxProblemsPerRun, !kind.isEmpty else { return false }
+        return seen.insert(kind).inserted
+    }
+
+    /// The body posted to /api/v1/diagnostics/client-error. "detail" starts with the stealth state and then carries the engine's
+    /// recent technical lines (what it found, what failed), and "user" is the signed-in email, so admin can tell whose problem it is
+    /// and why (Windows, 2026-10-21 and 2026-10-22).
+    static func payload(kind: String, message: String, version: String, os: String,
+                        stealth: String = "", engineTail: [String] = [], user: String = "") -> [String: Any] {
+        let detail = ((stealth.isEmpty ? [] : [">>> " + stealth]) + engineTail).joined(separator: " | ")
+        return ["version": version, "os": os, "source": "mac", "type": "Problem." + kind, "message": sanitize(message), "frames": "",
+                "detail": String(detail.prefix(6000)), "user": user]
+    }
+
+    // ── The engine's technical lines, for "detail" ───────────────────────────────────────────────
+    // Allowlist only: a line must start with ">>>", name something technical, and carry nothing that can hold speech or an answer,
+    // so nothing a person said leaves the computer. The last 40 are kept.
+    static let techWords = ["MIC", "SYSTEM AUDIO", "loopback", "tap", "FATAL", "WARNING", "failed", "error", "device", "MODE",
+                            "Deepgram", "connection", "NO_MICROPHONE", "ENGINE", "PROVIDER", "STEALTH", "STATUS"]
+    static let speechWords = ["words were", "DEBUG", "FINAL", "PARTIAL", "segment", "said", "transcript", "text="]
+    static let engineTailLength = 40
+
+    /// The line as it may be kept, or nil when it must not leave the computer.
+    static func technicalLine(_ line: String) -> String? {
+        guard line.hasPrefix(">>>") else { return nil }
+        guard techWords.contains(where: { line.range(of: $0, options: .caseInsensitive) != nil }) else { return nil }
+        guard !speechWords.contains(where: { line.range(of: $0, options: .caseInsensitive) != nil }) else { return nil }
+        let cut = line.count > 240 ? String(line.prefix(240)) : line
+        return sanitizeLong(cut)
+    }
+
+    /// Emails, tokens, JWTs and file paths taken out, at any length.
+    static func sanitizeLong(_ text: String) -> String {
+        var s = text
         let rules: [(String, String)] = [
             // a path, and the "Application Support" kind of folder name that has a space and a capital in it
             (#"(?:/Users|/Volumes|/private|/var|/Applications|/Library)/[^\s"'<>|]+(?: (?-i:[A-Z])[^\s"'<>|]*)*"#, "[path]"),
@@ -34,18 +73,7 @@ enum ClientErrorReporter {
         for (pattern, replacement) in rules {
             s = s.replacingOccurrences(of: pattern, with: replacement, options: [.regularExpression, .caseInsensitive])
         }
-        return s.count > maxMessageLength ? String(s.prefix(maxMessageLength)) : s
-    }
-
-    /// Whether this kind goes out now: once per run, at most 40 kinds. Pure, so a test can drive it with its own set.
-    static func shouldSend(kind: String, seen: inout Set<String>) -> Bool {
-        guard seen.count < maxProblemsPerRun, !kind.isEmpty else { return false }
-        return seen.insert(kind).inserted
-    }
-
-    /// The body posted to /api/v1/diagnostics/client-error.
-    static func payload(kind: String, message: String, version: String, os: String) -> [String: Any] {
-        ["version": version, "os": os, "source": "mac", "type": "Problem." + kind, "message": sanitize(message), "frames": ""]
+        return s
     }
 
     static func request(backendUrl: String, payload: [String: Any]) -> URLRequest? {

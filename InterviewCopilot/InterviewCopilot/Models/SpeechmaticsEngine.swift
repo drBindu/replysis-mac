@@ -25,6 +25,9 @@ class SpeechmaticsEngine {
     /// second before UTTERANCE END). Only a newer engine prints it; with an older one this never
     /// fires and everything works from UTTERANCE END as before.
     var onSpeechFinal: (() -> Void)?
+    /// The engine could not get the voice out for a few seconds ("audio upload stalled"): whatever else uses the line
+    /// (screenshots sent ahead) must give way (Windows, 2026-10-22).
+    var onUploadStalled: (() -> Void)?
     /// When the recogniser last said a sentence was over, in any mode. Manual reads it to know the
     /// tail of a question has arrived.
     private(set) var lastUtteranceEndAt = Date.distantPast
@@ -600,6 +603,7 @@ class SpeechmaticsEngine {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 Task { @MainActor in dlog("SM \(source): \(trimmed)", tag: "SM") }
+                for part in trimmed.split(separator: "\n") { ClientErrorReporter.noteEngineLine(String(part).trimmingCharacters(in: .whitespaces)) }
             }
             if ListeningProblems.isConnectionTrouble(line) {
                 Task { @MainActor [weak self] in self?.noteConnectionTrouble() }
@@ -667,6 +671,9 @@ class SpeechmaticsEngine {
             // only one leaves the app believing transcription still works. This is the
             // drop; watchForExit() below is the crash.
             // CONTRACT:RUNTIME — see ENGINE_CONTRACT.md and verify_engine_contract.py
+            if line.contains("audio upload stalled") {
+                Task { @MainActor [weak self] in self?.onUploadStalled?() }
+            }
             if line.contains(">>> SPEECH FINAL") {
                 Task { @MainActor [weak self] in self?.onSpeechFinal?() }
             }
@@ -718,15 +725,18 @@ class SpeechmaticsEngine {
     private var connectionTroubleTimes: [Date] = []
     private func noteConnectionTrouble() {
         let now = Date()
-        connectionTroubleTimes = connectionTroubleTimes.filter { now.timeIntervalSince($0) < 90 } + [now]
+        connectionTroubleTimes = connectionTroubleTimes.filter { now.timeIntervalSince($0) < Self.troubleWindow } + [now]
     }
-    /// Two or more of those in the last 90 seconds: not a hiccup, a weak connection.
+    /// Three or more of those in four minutes: not a hiccup, a weak connection. Two in 90 s told people with a working line
+    /// that their connection keeps dropping (Windows false-alarm hunt, 2026-10-22).
+    static let troubleWindow: TimeInterval = 240
+    static let troubleCount = 3
     var connectionIsPoor: Bool {
         let now = Date()
-        return connectionTroubleTimes.filter { now.timeIntervalSince($0) < 90 }.count >= 2
+        return connectionTroubleTimes.filter { now.timeIntervalSince($0) < Self.troubleWindow }.count >= Self.troubleCount
     }
     #if DEBUG
-    func debugSimulateConnectionTrouble() { noteConnectionTrouble(); noteConnectionTrouble() }
+    func debugSimulateConnectionTrouble() { for _ in 0..<Self.troubleCount { noteConnectionTrouble() } }
     #endif
 
     /// Speechmatics refusing because the ACCOUNT already has its allowed number of live

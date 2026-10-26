@@ -435,6 +435,11 @@ class MainViewModel {
         // actually stopped; we no longer infer it from how the text is punctuated.
         engine.onUtteranceEnd = { [weak self] in self?.speechFinalTask?.cancel(); self?.handleUtteranceEnd() }
         engine.onSpeechFinal = { [weak self] in self?.handleSpeechFinal() }
+        engine.onUploadStalled = { [weak self] in
+            // Voice always comes first: on a slow line the screenshot sent ahead filled the upload and the voice stalled.
+            dlog("SCREEN: the voice upload stalled; pausing screenshots sent ahead so speech keeps the line", tag: "SCREEN")
+            self?.noteUplinkOutcome(succeeded: false, elapsed: UplinkGovernor.uploadTimeout, imageBytes: 0)
+        }
         // Sweep any transcript left behind by a crash or a Force Quit. Deleting on quit
         // covers the graceful path; a process that is killed never runs that handler, and
         // the file it leaves is the last thing an interviewer said. It has no value across
@@ -1307,7 +1312,7 @@ class MainViewModel {
         // Blocked below ONE answer, not below one credit: 1 to 4 credits buys nothing, and
         // letting it through only earns a refusal from the server mid-question.
         guard PlanFacts.mayAsk(balanceKnown: session.creditsKnown, credits: session.credits,
-                               isUnlimited: session.isUnlimited) else {
+                               isUnlimited: session.isUnlimited, minutes: minutesBalance) else {
             showOutOfAnswers(); return
         }
         // Not known yet: ask the server (it has the real number) and look again in the background.
@@ -1763,16 +1768,20 @@ class MainViewModel {
     /// always in it. Returns a reason when it refuses, for the caller to show.
     func finishInterview() async -> String? {
         guard !finishing else { return nil }
-        if isProcessing || isScreenAnalyzing {
-            showAlert(title: "Answer still finishing",
-                      body: "Wait for the current answer to finish, then choose Finish again so the complete turn is saved.")
-            return "busy"
-        }
-        finishing = true
+        finishing = true                     // the button says "Saving..." from here
         defer { finishing = false }
         // Finishing is not the same action as submitting a question. If the microphone is
         // open, stop capture WITHOUT sending the partial sentence to the model.
         stopListeningForSetup()
+        // Pressed while an answer is still being written: wait for it (up to 30 s), then finish, so the whole turn is
+        // saved. It used to refuse with "Answer still finishing, choose Finish again" (Windows customer report, 1.0.51).
+        if isProcessing || isScreenAnalyzing {
+            dlog("INTERVIEW: Finish pressed while an answer is being written; saving once it is done", tag: "FLOW")
+            let deadline = Date().addingTimeInterval(30)
+            while (isProcessing || isScreenAnalyzing) && Date() < deadline {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+        }
         let hadSession = isRecording
         let number = sessionNumber
         endSession()
@@ -4490,7 +4499,8 @@ class MainViewModel {
                 if let balance = report.minutesBalance {
                     let hadMinutes = self.minutesBalance > 0
                     self.minutesBalance = balance
-                    if MinutesBalance.shouldAskForMore(hadMinutes: hadMinutes, balance: balance) { self.askForMoreMinutes() }
+                    if MinutesBalance.shouldAskForMore(hadMinutes: hadMinutes, balance: balance,
+                                                       paidWithAnswers: self.paidPlanWithAnswers) { self.askForMoreMinutes() }
                 }
                 dlog("METER: reported \(minutes) min; \(remaining) left this month", tag: "METER")
                 self.updateCreditsUI(credits: self.session.credits, plan: self.session.plan,
@@ -4930,6 +4940,12 @@ class MainViewModel {
     /// A free trial reads as the end of a trial (what Pro gives), a paid plan as answers
     /// that renew. The button opens the account page, where answers can be added without
     /// a subscription, and the plans are offered too.
+    /// A paid plan (not the free trial) that still has answers: no "N min left" badge, no auto-add of minutes.
+    var paidPlanWithAnswers: Bool {
+        !PlanFacts.isFreeTrial(plan: session.plan, signedIn: session.isLoggedIn && !session.isGuestSession)
+            && session.creditsKnown && !PlanFacts.isEmpty(session.credits)
+    }
+
     func showOutOfAnswers() {
         let m = PlanFacts.outOfAnswers(freeTrial: onFreeTrial)
         aiAnswer = "\(m.title)\n\n\(m.body)"
@@ -4956,8 +4972,9 @@ class MainViewModel {
             creditsPlanText = "Unlimited"
             return
         }
-        creditsText = MinutesBalance.badgeText(minutes: minutesBalance, fallback: PlanFacts.badgeText(credits))
         let free = PlanFacts.isFreeTrial(plan: plan, signedIn: session.isLoggedIn && !session.isGuestSession)
+        creditsText = MinutesBalance.badgeText(minutes: minutesBalance, fallback: PlanFacts.badgeText(credits),
+                                               paidWithAnswers: !free && !PlanFacts.isEmpty(credits))
         creditsPlanText = free ? "Free trial" : "\(plan.capitalized) plan"
         if PlanFacts.isEmpty(credits) {
             creditsColor = Color(red: 239/255, green: 68/255, blue: 68/255)
@@ -5740,6 +5757,8 @@ class MainViewModel {
         mainPanel?.sharingType = type
         AnswerOverlayWindow.shared?.sharingType = type
         StealthWindows.setEnabled(stealthModeEnabled)
+        // First in every problem report: a copy with stealth off was invisible from admin (Windows, 2026-10-22).
+        ClientErrorReporter.stealthState = stealthModeEnabled ? "STEALTH: on" : "STEALTH: OFF in Settings"
     }
 
     /// Called from Settings when the user switches Stealth Mode. Applies immediately —

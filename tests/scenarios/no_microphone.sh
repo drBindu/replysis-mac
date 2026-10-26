@@ -32,7 +32,7 @@ echo "$S" | grep -q "alert=''" && ok "a microphone plugged in takes the alert do
 sleep 2
 N=$(grep -c "^CLIENT-ERROR type=Problem.alert.no-microphone-found" "$OUT")
 [ "$N" = "1" ] && ok "the problem reached admin once (two alerts, one report)" || no "the problem was reported $N times"
-grep "^CLIENT-ERROR type=Problem.alert.no-microphone-found" "$OUT" | head -1 | grep -q "platform=mac" && grep "^CLIENT-ERROR" "$OUT" | head -1 | grep -q "keys=\['frames', 'message', 'os', 'source', 'type', 'version'\]" && ok "with the same fields as Windows and the Mac platform label" || { grep "^CLIENT-ERROR" "$OUT" | head -2 | cut -c1-240 | sed 's/^/        /'; no "the report is not shaped like Windows'"; }
+grep "^CLIENT-ERROR type=Problem.alert.no-microphone-found" "$OUT" | head -1 | grep -q "platform=mac" && grep "^CLIENT-ERROR" "$OUT" | head -1 | grep -q "keys=\['detail', 'frames', 'message', 'os', 'source', 'type', 'user', 'version'\]" && ok "with the same fields as Windows and the Mac platform label" || { grep "^CLIENT-ERROR" "$OUT" | head -2 | cut -c1-240 | sed 's/^/        /'; no "the report is not shaped like Windows'"; }
 grep "^CLIENT-ERROR" "$OUT" | grep -qi "example.test\|@\|/Users/" && no "the report carries an account, an email or a path" || ok "and carries no account, email or path"
 kill $PID $MOCK 2>/dev/null
 [ $fail -eq 0 ] && echo "NO MICROPHONE: all checks passed" || echo "NO MICROPHONE: FAILED"
