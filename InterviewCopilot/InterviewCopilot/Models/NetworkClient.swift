@@ -552,6 +552,25 @@ class NetworkClient {
     }
 
     /// Asks the website to auto add 15 minutes on the saved card (India, pay by the minute). See MinutesBalance.
+    /// The phone Companion report (Windows 2026-10-25). The reply's {phones, command}, or nil (an older server without Companion: nothing to do).
+    func reportToCompanion(_ body: [String: Any]) async -> [String: Any]? {
+        guard let url = URL(string: "\(AppConfig.backendUrl)/api/v1/companion/laptop"),
+              let data = try? JSONSerialization.data(withJSONObject: body) else { return nil }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 8
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(UserSession.shared.idToken)", forHTTPHeaderField: "Authorization")
+        req.httpBody = data
+        do {
+            let (reply, response) = try await shortSession.data(for: AppIdentity.label(req))
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return nil }
+            return (try? JSONSerialization.jsonObject(with: reply) as? [String: Any]) ?? [:]
+        } catch {
+            return nil
+        }
+    }
+
     /// This person's invite link (owner, 2026-10-21): GET /api/referral with the sign-in token answers {"link": ...}. When a friend
     /// signs up through it, both get five free answers; the website makes the code and pays the reward.
     func fetchReferralLink() async -> String? {

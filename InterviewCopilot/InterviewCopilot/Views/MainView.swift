@@ -2035,21 +2035,37 @@ extension MainView {
         }
     }
 
+    /// "Screen share" row (Windows, 2026-10-23): the self-test's answer, quietly, instead of a warning popup.
     var captureProtectionCard: some View {
-        let state = CaptureProtection.current()
+        let state = vm.screenShareState
+        let color: Color = {
+            switch state {
+            case .hidden: return Color(hex: "#5FC98E")
+            case .visible, .off: return Color(hex: "#E0A458")
+            case .checking, .notChecked: return Color(hex: "#93A1B5")
+            }
+        }()
         return HStack(alignment: .top, spacing: 11) {
             setupChip("lock.shield")
             VStack(alignment: .leading, spacing: 3) {
-                Text("Check capture protection before the call")
-                    .font(.system(size: 12.5, weight: .semibold)).foregroundColor(Color(hex: "#E9EFF7"))
-                Text("Hides the app from screen sharing. Support varies, so check it in your meeting app first.")
+                HStack(spacing: 8) {
+                    Text("Screen share")
+                        .font(.system(size: 12.5, weight: .semibold)).foregroundColor(Color(hex: "#E9EFF7"))
+                    HStack(spacing: 5) {
+                        Circle().fill(color).frame(width: 7, height: 7)
+                        Text(state.label).font(.system(size: 11.5, weight: .semibold)).foregroundColor(color)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Screen share: \(state.label)")
+                }
+                Text(state.detail)
                     .font(.system(size: 11)).foregroundColor(setupBody).fixedSize(horizontal: false, vertical: true)
-                Text(CaptureProtection.summary(state))
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundColor(state == .hidden ? Color(hex: "#5FC98E") : Color(hex: "#D99B7C"))
-                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
+            if state == .visible || state == .notChecked {
+                Button("Test again") { vm.runStealthSelfTest() }
+                    .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity, minHeight: 24, horizontalPadding: 10, verticalPadding: 2))
+            }
         }
         .padding(13)
         .background(RoundedRectangle(cornerRadius: 11).fill(Color.white.opacity(0.04)))

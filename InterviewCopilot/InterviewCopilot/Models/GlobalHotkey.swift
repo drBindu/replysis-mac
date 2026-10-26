@@ -20,6 +20,9 @@ class GlobalHotkey {
     /// so once it was covered or hidden there was no way back to it (Windows: Ctrl+Alt+R).
     var onBringToFront: (() -> Void)?
     var onModeShortcut: ((ModeShortcut) -> Void)?
+    /// ⌃⌥H from any app: phone only. Hides every Replysis window on this Mac while listening and answering carry on, or shows it
+    /// again (Windows Ctrl+Alt+H, 2026-10-24).
+    var onTogglePhoneOnly: (() -> Void)?
 
     // The app mirrors two pieces of state here so the CGEvent tap thread can decide
     // whether to CONSUME a key WITHOUT touching @MainActor state (which would be a data
@@ -55,6 +58,11 @@ class GlobalHotkey {
     /// ⌃⌥R. Never swallowed: the front app still receives it.
     static func isBringToFront(keyCode: Int64, flags: CGEventFlags) -> Bool {
         keyCode == 15 && isControlOption(flags)
+    }
+
+    /// ⌃⌥H. Never swallowed.
+    static func isPhoneOnlyToggle(keyCode: Int64, flags: CGEventFlags) -> Bool {
+        keyCode == 4 && isControlOption(flags)
     }
 
     /// The top bar's three shortcuts (Windows MAC_CATCHUP, 2026-10-19: Ctrl+Shift+P, A and C): Interview or Practice, Auto or Manual, Compact.
@@ -308,6 +316,9 @@ class GlobalHotkey {
             }
             if Self.isBringToFront(keyCode: keyCode, flags: flags) {
                 DispatchQueue.main.async { [weak self] in self?.onBringToFront?() }
+            }
+            if Self.isPhoneOnlyToggle(keyCode: keyCode, flags: flags) {
+                DispatchQueue.main.async { [weak self] in self?.onTogglePhoneOnly?() }
             }
             return false
         }

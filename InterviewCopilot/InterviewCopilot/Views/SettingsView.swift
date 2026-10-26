@@ -136,6 +136,23 @@ struct SettingsView: View {
                             }
                         }
 
+                        settingsSection("PHONE") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Toggle(isOn: Binding(get: { vm.phoneOnly }, set: { vm.setPhoneOnly($0) })) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Answers on my phone only")
+                                            .font(.system(size: 13, weight: .medium))
+                                            .foregroundColor(.white)
+                                        Text("Start hides Replysis on this Mac and answers appear in the Replysis phone app. It answers by itself. ⌃⌥H hides or shows it at any time.")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(Color(hex: "#8b9bb0"))
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                .toggleStyle(.switch)
+                            }
+                        }
+
                         // Screen answers — the standing preference the toolbar used to hold.
                         settingsSection("SCREEN ANSWERS") {
                             VStack(alignment: .leading, spacing: 8) {

@@ -242,6 +242,16 @@ class H(BaseHTTPRequestHandler):
         elif url == "/api/v1/usage/listening":
             body = {"remainingMinutes": s["minutes"], "usedMinutes": 15 - s["minutes"]}
             if os.environ.get("MOCK_MINUTES"): body["minutesBalance"] = int(os.environ["MOCK_MINUTES"])
+        elif url == "/api/v1/companion/laptop" and self.command == "POST":
+            # The phone Companion (Windows 2026-10-25): log what the laptop reports; MOCK_PHONES phones watch; a command waits in
+            # MOCK_COMMAND_FILE ("stop" or "answer") and is handed out once.
+            raw = read_body(self) or b""
+            print(f"COMPANION {raw.decode('utf-8', 'replace')[:120]} auth={'yes' if (self.headers.get('Authorization') or '').startswith('Bearer ') else 'no'}", flush=True)
+            command = ""
+            cf = os.environ.get("MOCK_COMMAND_FILE")
+            if cf and os.path.exists(cf):
+                command = open(cf).read().strip(); os.remove(cf)
+            body = {"phones": int(os.environ.get("MOCK_PHONES") or 0), "command": command}
         elif url == "/api/referral":
             # Invite a friend (Windows 2026-10-21): the website answers this person's link.
             print(f"REFERRAL auth={'yes' if (self.headers.get('Authorization') or '').startswith('Bearer ') else 'no'}", flush=True)

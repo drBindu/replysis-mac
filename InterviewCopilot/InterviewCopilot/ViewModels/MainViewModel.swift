@@ -436,6 +436,9 @@ class MainViewModel {
         engine.onUtteranceEnd = { [weak self] in self?.speechFinalTask?.cancel(); self?.handleUtteranceEnd() }
         engine.onSpeechFinal = { [weak self] in self?.handleSpeechFinal() }
         AppUpdater.shared.onStateChange = { [weak self] state in self?.updateState = state }
+        CompanionLink.shared.onStopRequested = { [weak self] in self?.stopFromPhone() }
+        CompanionLink.shared.onAnswerRequested = { [weak self] in self?.handleSpacePress(source: "PHONE") }
+        CompanionLink.shared.start()
         updateState = AppUpdater.shared.state
         engine.onUploadStalled = { [weak self] in
             // Voice always comes first: on a slow line the screenshot sent ahead filled the upload and the voice stalled.
@@ -474,6 +477,11 @@ class MainViewModel {
             Task { @MainActor [weak self] in self?.reconnectAfterWake() }
         }
         restoreSession()
+        // Proven, not trusted: test the hiding 4 s after start, before any interview (Windows, 2026-10-22).
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            self?.runStealthSelfTest()
+        }
     }
 
     // ── Ready the moment the Mac wakes ────────────────────────────────────────────────
@@ -929,6 +937,10 @@ class MainViewModel {
             }
         )
         hotkey?.onBringToFront = { [weak self] in self?.bringToFront() }
+        hotkey?.onTogglePhoneOnly = { [weak self] in
+            guard let self else { return }
+            self.setPhoneOnlyHidden(!self.phoneOnlyHidden, why: "⌃⌥H")
+        }
         hotkey?.onModeShortcut = { [weak self] shortcut in self?.handleModeShortcut(shortcut) }
         hotkey?.onRegionAnalysisPressed = { [weak self] in self?.runRegionAnalysis() }
         hotkey?.onPreviousAnswer = { [weak self] in self?.showPreviousAnswer() }
@@ -971,7 +983,7 @@ class MainViewModel {
     // MARK: - Space Logic
     func handleSpacePress(source: String = "KEYBOARD") {
         refreshHotkeyGate()   // keep the tap's editing/login mirror fresh
-        if isEditingText { return }
+        if isEditingText && source != "PHONE" { return }   // the phone's Answer button is not typing on this Mac
         // The Setup page is for preparing, not for listening. Start interview is the one way in.
         if appStep == .setup {
             dlog("⌥ SPACE from \(source): on the Setup page — ignoring", tag: "SPACE")
@@ -1590,6 +1602,7 @@ class MainViewModel {
         case "finish": Task { _ = await finishInterview() }
         case "closesessions": sessionsOpen = false
         case "invite": inviteFriend()
+        case "phoneonly-on": setPhoneOnly(true)
         case "signout": signOut()
         case "login":    NotificationCenter.default.post(name: .showLogin, object: nil)
         case "snap-sessions":     snapshot(AnyView(SessionsView(preview: Self.demoSessions)), name: "sessions")
@@ -1663,7 +1676,7 @@ class MainViewModel {
         case "stallstart": StallMonitor.start(); StallMonitor.reset()
         case "stallreport": dlog("STALL: \(StallMonitor.summary)\nSTALL timeline: \(StallMonitor.timeline)", tag: "FLOW")
         #endif
-        case "dump":     dlog("FLOWSTATE: step=\(appStep) sessions=\(sessionsOpen) answer='\(aiAnswer.prefix(60).replacingOccurrences(of: "\n", with: " "))' transcript='\(transcript.prefix(40))' shownQuestion='\(transcriptForDisplay.prefix(40))' history=\(answerHistory.count) detailed=\(answerDetailed) badge='\(creditsText)' plan='\(creditsPlanText)' alert='\(alertTitle)' update='\(updateNoticeText)' hint='\(aiAnswerHint.prefix(50))'", tag: "FLOW")
+        case "dump":     dlog("FLOWSTATE: step=\(appStep) sessions=\(sessionsOpen) answer='\(aiAnswer.prefix(60).replacingOccurrences(of: "\n", with: " "))' transcript='\(transcript.prefix(40))' shownQuestion='\(transcriptForDisplay.prefix(40))' history=\(answerHistory.count) detailed=\(answerDetailed) badge='\(creditsText)' plan='\(creditsPlanText)' alert='\(alertTitle)' phoneonly=\(phoneOnlyHidden) auto=\(autoModeEnabled) screenshare='\(screenShareState.label)' update='\(updateNoticeText)' hint='\(aiAnswerHint.prefix(50))'", tag: "FLOW")
         default:
             // "ask What is a queue?" types the question into the Ask bar and sends it.
             if action.hasPrefix("ask ") { askManually(String(action.dropFirst(4))) }
@@ -1747,6 +1760,9 @@ class MainViewModel {
         refreshHotkeyGate()
         updateMicUI()
         dlog("INTERVIEW: started (\(autoModeEnabled ? "Auto" : "Manual"), \(practiceAudioOn ? "Practice" : "Interview") audio)", tag: "FLOW")
+        if phoneOnly {
+            DispatchQueue.main.async { [weak self] in self?.setPhoneOnlyHidden(true, why: "Start with phone only on") }
+        }
     }
 
     /// Back to Setup without ending the session. The microphone is closed: a listening app
@@ -2936,6 +2952,7 @@ class MainViewModel {
     private func syncWakefulness() {
         // The admin panel shows Listening the moment a session starts and clears it when it ends (Windows 1.0.31 item 29).
         PresenceTracker.shared.setListening(appStep == .interview && interviewStarted)
+        CompanionLink.shared.setListening(appStep == .interview && interviewStarted)   // the phone's Companion screen shows it too
         let want = session.isLoggedIn
         if want, sessionActivity == nil {
             sessionActivity = ProcessInfo.processInfo.beginActivity(
@@ -2951,6 +2968,8 @@ class MainViewModel {
 
     private func updateTranscript() {
         syncWakefulness()
+        // What the phone's Companion screen shows: the interviewer's words only, never the candidate's own (the microphone).
+        CompanionLink.shared.heard(lastTurnSource == "candidate" ? "" : transcript)
         tickListeningProblem()
         tickPreparedShots()
         checkAudioSourceTip()
@@ -5135,7 +5154,52 @@ class MainViewModel {
 
     /// ⌃⌥R from any app. Raises whichever window is in use — the compact overlay when that is
     /// showing, so it does not pull the hidden main window over it (Windows fbca2c6).
+    // ── Answers on my phone only (Windows, 2026-10-24/25) ─────────────────────────────────────
+    // With the setting on, Start hides every Replysis window on this Mac; listening, answering and the phone relay carry on exactly
+    // as before. Nobody can press Space on a hidden window, so it switches to Auto (the phone's Answer button is the Space).
+    // ⌃⌥H hides or shows it at any time, and ⌃⌥R also brings it back.
+    var phoneOnly = false
+    private(set) var phoneOnlyHidden = false
+
+    func setPhoneOnly(_ on: Bool) {
+        phoneOnly = on
+        saveSettings()
+        dlog("PHONE_ONLY: answers on my phone only \(on ? "ON" : "OFF")", tag: "PHONE_ONLY")
+    }
+
+    func setPhoneOnlyHidden(_ hide: Bool, why: String) {
+        guard hide != phoneOnlyHidden else { return }
+        if hide {
+            phoneOnlyHidden = true
+            if showCameraOverlay, let overlay = AnswerOverlayWindow.shared { overlay.orderOut(nil) }
+            mainPanel?.orderOut(nil)
+            if !autoModeEnabled { setListeningMode(.auto) }
+        } else {
+            phoneOnlyHidden = false
+            showWindowsAgain()
+        }
+        dlog("PHONE_ONLY: \(hide ? "hidden on this Mac" : "shown again") (\(why))", tag: "PHONE_ONLY")
+    }
+
+    /// Stop pressed in the phone app: Finish, once any answer still being written is done, so the last turn is saved whole.
+    func stopFromPhone() {
+        Task { @MainActor [weak self] in
+            for _ in 0..<40 {
+                guard let self, self.isProcessing || self.isScreenAnalyzing else { break }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+            guard let self, self.appStep == .interview else { return }
+            dlog("COMPANION: finishing the interview: Stop pressed on the phone", tag: "COMPANION")
+            _ = await self.finishInterview()
+        }
+    }
+
     func bringToFront() {
+        if phoneOnlyHidden { phoneOnlyHidden = false; dlog("PHONE_ONLY: shown again (⌃⌥R)", tag: "PHONE_ONLY") }
+        showWindowsAgain()
+    }
+
+    private func showWindowsAgain() {
         dlog("⌃⌥R — bringing Replysis to the front", tag: "WINDOW")
         if showCameraOverlay, let overlay = AnswerOverlayWindow.shared {
             overlay.orderFrontRegardless()
@@ -5377,6 +5441,7 @@ class MainViewModel {
             stealthModeEnabled = obj["stealthModeEnabled"] as? Bool ?? true
             isPinnedOnTop = obj["keepOnTop"] as? Bool ?? true
             screenKeysEverywhere = obj["screenKeysEverywhere"] as? Bool ?? true
+            phoneOnly = obj["phoneOnly"] as? Bool ?? false
             applyKeepOnTop()
             hotkey?.setScreenKeysEverywhere(screenKeysEverywhere)
 
@@ -5408,6 +5473,7 @@ class MainViewModel {
                                   "stealthModeEnabled": stealthModeEnabled,
                                   "keepOnTop": isPinnedOnTop,
                                   "screenKeysEverywhere": screenKeysEverywhere,
+                                  "phoneOnly": phoneOnly,
                                   "opacityDefaultV2Applied": true]
         try? JSONSerialization.data(withJSONObject: obj).write(to: path)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
@@ -5509,6 +5575,31 @@ class MainViewModel {
     /// The update notice (Windows 1.0.46): "on its way" as soon as one is found, "ready" with Restart once staged. Its own line, so a
     /// problem notice never hides it, and never shown while listening (an interview is never interrupted).
     var updateState: AppUpdater.State = .none
+    /// Who said the last turn, from the engine's ">>> SOURCE" line: interviewer, candidate or unknown.
+    var lastTurnSource = "unknown"
+
+    /// The setup page's "Screen share" row, from StealthSelfTest (Windows, 2026-10-22/23).
+    var screenShareState: ScreenShareState = .checking
+    private var stealthSelfTestRunning = false
+
+    /// Show a probe square with hiding applied and capture it like a screen share. At start and when Stealth is turned back on.
+    func runStealthSelfTest() {
+        guard stealthModeEnabled else { screenShareState = .off; return }
+        guard !stealthSelfTestRunning, !DeveloperOverrides.skipStealthSelfTest else { return }
+        stealthSelfTestRunning = true
+        screenShareState = .checking
+        Task { @MainActor [weak self] in
+            let result = await StealthSelfTest.run()
+            guard let self else { return }
+            self.stealthSelfTestRunning = false
+            guard self.stealthModeEnabled else { self.screenShareState = .off; return }
+            self.screenShareState = result
+            dlog("STEALTH: self-test: \(result.label) (stealth on)", tag: "STEALTH")
+            if result == .visible {
+                self.reportProblem("stealth-visible", "The hiding self-test square was seen by a screen capture")
+            }
+        }
+    }
     var updateNoticeText: String {
         guard !isListening, appStep != .interview else { return "" }   // never during an interview, listening or not
         switch updateState {
@@ -5805,6 +5896,7 @@ class MainViewModel {
         mainPanel?.sharingType = type
         AnswerOverlayWindow.shared?.sharingType = type
         StealthWindows.setEnabled(stealthModeEnabled)
+        if !stealthModeEnabled { screenShareState = .off } else if screenShareState == .off { runStealthSelfTest() }
         // First in every problem report: a copy with stealth off was invisible from admin (Windows, 2026-10-22).
         ClientErrorReporter.stealthState = stealthModeEnabled ? "STEALTH: on" : "STEALTH: OFF in Settings"
     }

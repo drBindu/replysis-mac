@@ -460,6 +460,8 @@ check(MicChoice.isNotAMic("BlackHole 2ch") && MicChoice.isNotAMic("ZoomAudioDevi
 check(!MicChoice.isNotAMic("MacBook Air Microphone") && !MicChoice.isNotAMic("AirPods Pro") && !MicChoice.isNotAMic("Krisp Microphone"), "mic: real microphones are")
 check(MicChoice.replacementForDefault(defaultName: "BlackHole 2ch", inputs: ["BlackHole 2ch", "MacBook Air Microphone"]) == "MacBook Air Microphone", "mic: a loopback default is replaced by the first real microphone")
 check(MicChoice.replacementForDefault(defaultName: "MacBook Air Microphone", inputs: ["BlackHole 2ch", "MacBook Air Microphone"]) == nil, "mic: a real default is left alone")
+check(StealthProbe.looksLikeProbe(red: 255, green: 0, blue: 255) && StealthProbe.looksLikeProbe(red: 236, green: 51, blue: 247), "self-test: the magenta probe is recognised, also after colour management")
+check(!StealthProbe.looksLikeProbe(red: 30, green: 30, blue: 30) && !StealthProbe.looksLikeProbe(red: 240, green: 240, blue: 240), "self-test: a dark or white desktop is not the probe")
 check([1, 2, 3, 8, 13, 14, 40].map(RecoveryPolicy.keyRetryAfterServerFault) == [2, 3, 5, 5, 5, 15, 15], "server-fault key retry waits 2, 3, then 5 seconds for a minute, then 15")
 check([1, 2, 3, 4, 5, 9].map(RecoveryPolicy.keyRetryAfterNoConnection) == [2, 4, 8, 15, 30, 30], "no-connection retry waits 2, 4, 8, 15, then 30 seconds")
 check([0, 1, 2, 3, 4, 20].map { RecoveryPolicy.credentialRenewalWait(attempt: $0) } == [5, 15, 30, 60, 60, 60], "rejected credentials renew after 5, 15, 30 seconds, then every minute")

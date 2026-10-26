@@ -29,7 +29,11 @@ enum StealthWindows {
 
     static var wanted: NSWindow.SharingType { enabled ? .none : .readOnly }
 
+    /// Windows the guard leaves alone. Only the self-test's control probe (developer builds) is ever in it.
+    static var exempt = Set<ObjectIdentifier>()
+
     static func apply(to window: NSWindow) {
+        guard !exempt.contains(ObjectIdentifier(window)) else { return }
         if window.sharingType != wanted { window.sharingType = wanted }
     }
 
