@@ -1605,6 +1605,7 @@ class MainViewModel {
                                                     .padding(22).frame(width: 760, alignment: .topLeading)
                                                     .background(Color(hex: "#0b1220"))), name: "answer")
         case "snap-main":         snapshot(AnyView(MainView().frame(width: 1040, height: 1000, alignment: .top)), name: "main")
+        case "snap-settings":     snapshot(AnyView(SettingsView().frame(width: 560, height: 1500, alignment: .top)), name: "settings")
         case "snap-main-narrow":  snapshot(AnyView(MainView().frame(width: 840, height: 1100, alignment: .top)), name: "main-narrow")
         case "snap-login":        snapshot(AnyView(LoginView(flat: true)), name: "login")
         case "snap-gate":         snapshot(AnyView(LoginView(flat: true, embedded: true).frame(width: 1038, height: 660)), name: "gate")
@@ -5599,7 +5600,10 @@ class MainViewModel {
     /// Show a probe square with hiding applied and capture it like a screen share. At start and when Stealth is turned back on.
     func runStealthSelfTest() {
         guard stealthModeEnabled else { screenShareState = .off; return }
-        guard !stealthSelfTestRunning, !DeveloperOverrides.skipStealthSelfTest else { return }
+        guard !stealthSelfTestRunning else { return }
+        #if DEBUG
+        guard !DeveloperOverrides.skipStealthSelfTest else { return }
+        #endif
         stealthSelfTestRunning = true
         screenShareState = .checking
         Task { @MainActor [weak self] in
