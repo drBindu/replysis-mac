@@ -435,6 +435,8 @@ class MainViewModel {
         // actually stopped; we no longer infer it from how the text is punctuated.
         engine.onUtteranceEnd = { [weak self] in self?.speechFinalTask?.cancel(); self?.handleUtteranceEnd() }
         engine.onSpeechFinal = { [weak self] in self?.handleSpeechFinal() }
+        AppUpdater.shared.onStateChange = { [weak self] state in self?.updateState = state }
+        updateState = AppUpdater.shared.state
         engine.onUploadStalled = { [weak self] in
             // Voice always comes first: on a slow line the screenshot sent ahead filled the upload and the voice stalled.
             dlog("SCREEN: the voice upload stalled; pausing screenshots sent ahead so speech keeps the line", tag: "SCREEN")
@@ -1587,6 +1589,7 @@ class MainViewModel {
         case "back":   backToSetup()
         case "finish": Task { _ = await finishInterview() }
         case "closesessions": sessionsOpen = false
+        case "invite": inviteFriend()
         case "signout": signOut()
         case "login":    NotificationCenter.default.post(name: .showLogin, object: nil)
         case "snap-sessions":     snapshot(AnyView(SessionsView(preview: Self.demoSessions)), name: "sessions")
@@ -1650,6 +1653,8 @@ class MainViewModel {
         case "miccame":   handleMicrophoneConnected()            // MICROPHONE CONNECTED
         case "reportminutes": reportListeningMinutes(1)      // what a minute of listening reports
         case "updatecheck": AppUpdater.shared.checkInBackgroundNow()   // a scheduled background check, now
+        case "updatefound": AppUpdater.shared.state = .onItsWay("9.9.9")   // what Sparkle's callbacks set, for the notice test
+        case "updateready": AppUpdater.shared.state = .ready("9.9.9")
         case "key-p":     handleModeShortcut(.audioSource)    // what ⌃⇧P does
         case "key-a":     handleModeShortcut(.answerMode)     // ⌃⇧A
         case "space":     handleSpacePress(source: "FLOW")   // the Space key: listen, or send what was heard
@@ -1658,7 +1663,7 @@ class MainViewModel {
         case "stallstart": StallMonitor.start(); StallMonitor.reset()
         case "stallreport": dlog("STALL: \(StallMonitor.summary)\nSTALL timeline: \(StallMonitor.timeline)", tag: "FLOW")
         #endif
-        case "dump":     dlog("FLOWSTATE: step=\(appStep) sessions=\(sessionsOpen) answer='\(aiAnswer.prefix(60).replacingOccurrences(of: "\n", with: " "))' transcript='\(transcript.prefix(40))' shownQuestion='\(transcriptForDisplay.prefix(40))' history=\(answerHistory.count) detailed=\(answerDetailed) badge='\(creditsText)' plan='\(creditsPlanText)' alert='\(alertTitle)' hint='\(aiAnswerHint.prefix(50))'", tag: "FLOW")
+        case "dump":     dlog("FLOWSTATE: step=\(appStep) sessions=\(sessionsOpen) answer='\(aiAnswer.prefix(60).replacingOccurrences(of: "\n", with: " "))' transcript='\(transcript.prefix(40))' shownQuestion='\(transcriptForDisplay.prefix(40))' history=\(answerHistory.count) detailed=\(answerDetailed) badge='\(creditsText)' plan='\(creditsPlanText)' alert='\(alertTitle)' update='\(updateNoticeText)' hint='\(aiAnswerHint.prefix(50))'", tag: "FLOW")
         default:
             // "ask What is a queue?" types the question into the Ask bar and sends it.
             if action.hasPrefix("ask ") { askManually(String(action.dropFirst(4))) }
@@ -4946,6 +4951,32 @@ class MainViewModel {
             && session.creditsKnown && !PlanFacts.isEmpty(session.credits)
     }
 
+    /// Invite a friend: copy the link, say so, and offer WhatsApp (Windows, 2026-10-21).
+    func inviteFriend() {
+        guard session.isLoggedIn, !session.isGuestSession else {
+            showAlert(title: "Sign in to invite friends", body: "Sign in first, then your invite link is one click away.")
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard let link = await NetworkClient.shared.fetchReferralLink() else {
+                self.showAlert(title: "Invite link not ready", body: "Try again in a moment, or open replysis.com/account to copy it there.")
+                return
+            }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(link, forType: .string)
+            dlog("INVITE: invite link copied", tag: "INVITE")
+            let share = "I use Replysis for interview practice and live help. Sign up with my link and we both get 5 free answers: " + link
+            self.showAlert(title: "Invite link copied",
+                           body: "Send it to a friend. When they sign up, you both get 5 free answers. \(link)",
+                           actionLabel: "Share on WhatsApp") {
+                var parts = URLComponents(string: "https://wa.me/")!
+                parts.queryItems = [URLQueryItem(name: "text", value: share)]
+                if let url = parts.url { NSWorkspace.shared.open(url) }
+            }
+        }
+    }
+
     func showOutOfAnswers() {
         let m = PlanFacts.outOfAnswers(freeTrial: onFreeTrial)
         aiAnswer = "\(m.title)\n\n\(m.body)"
@@ -5475,6 +5506,23 @@ class MainViewModel {
     private var practiceTipShown = false
     private var lastAudioSourceTipCheck = Date.distantPast
     /// An alert that can carry one action, for the two tips below.
+    /// The update notice (Windows 1.0.46): "on its way" as soon as one is found, "ready" with Restart once staged. Its own line, so a
+    /// problem notice never hides it, and never shown while listening (an interview is never interrupted).
+    var updateState: AppUpdater.State = .none
+    var updateNoticeText: String {
+        guard !isListening, appStep != .interview else { return "" }   // never during an interview, listening or not
+        switch updateState {
+        case .none: return ""
+        case .onItsWay(let v): return "Replysis AI \(v) is on its way"
+        case .ready(let v): return "Replysis AI \(v) is ready"
+        }
+    }
+    var updateReady: Bool { if case .ready = updateState { return true } else { return false } }
+    func restartToUpdate() {
+        guard !isListening, !isProcessing else { return }
+        AppUpdater.shared.restartToUpdate()
+    }
+
     var alertTitle = ""
     var alertBody = ""
     var alertActionLabel = ""

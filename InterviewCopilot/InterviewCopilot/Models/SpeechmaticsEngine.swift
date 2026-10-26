@@ -373,6 +373,15 @@ class SpeechmaticsEngine {
             dlog("  Interview language: \(language)", tag: "SM")
         }
         inputRoute.reset(to: micGranted ? AudioInputRoute.current() : nil)
+        if micGranted {
+            let defaultName = AudioInputRoute.current().flatMap { MicChoice.deviceName($0.deviceID) }
+            if let real = MicChoice.replacementForDefault(defaultName: defaultName, inputs: MicChoice.inputDeviceNames()) {
+                args += ["--device-name", real]
+                dlog("  MIC: the default input '\(defaultName ?? "")' carries the computer's sound, not a voice; using '\(real)'", tag: "SM")
+            } else if let defaultName, MicChoice.isNotAMic(defaultName) {
+                dlog("  MIC: the default input '\(defaultName)' is not a microphone and no real one was found", tag: "SM")
+            }
+        }
         var startedSysTap = false
         if !sysAudioCrashed, #available(macOS 14.2, *) {
             let fifo = appDataFolder.appendingPathComponent("sysaudio.pcm").path

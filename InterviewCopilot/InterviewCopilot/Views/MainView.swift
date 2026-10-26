@@ -239,9 +239,32 @@ struct MainView: View {
     /// The mic notice and the Interview / Practice tips, on their own line under the header.
     @ViewBuilder
     var transientMessageRow: some View {
-        if !vm.alertTitle.isEmpty || !vm.listeningNotice.isEmpty {
+        if !vm.alertTitle.isEmpty || !vm.listeningNotice.isEmpty || !vm.updateNoticeText.isEmpty {
             // One above the other: side by side, a full-width message left the notice no room.
             VStack(alignment: .leading, spacing: 6) {
+                if !vm.updateNoticeText.isEmpty {
+                    HStack(spacing: 8) {
+                        Image(systemName: vm.updateReady ? "arrow.down.circle.fill" : "arrow.down.circle")
+                            .font(.system(size: 11)).foregroundColor(Color(hex: "#60a5fa"))
+                        Text(vm.updateNoticeText + (vm.updateReady ? ". It installs when you close the app." : ". It downloads in the background."))
+                            .font(.system(size: 11)).foregroundColor(Color(hex: "#c3ccd8"))
+                            .lineLimit(1).truncationMode(.tail)
+                        if vm.updateReady {
+                            Button(action: { vm.restartToUpdate() }) {
+                                Text("Restart to update").font(.system(size: 10.5, weight: .semibold)).lineLimit(1).fixedSize()
+                            }
+                            .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
+                                                          minHeight: 24, horizontalPadding: 10, verticalPadding: 2))
+                            .accessibilityLabel("Restart to update")
+                        }
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 5)
+                    .frame(maxWidth: 1000, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 9).fill(Color(hex: "#161b22").opacity(0.96)))
+                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.12), lineWidth: 1))
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Update notice")
+                }
                 if !vm.alertTitle.isEmpty {
                     audioSourceAlert
                 }
@@ -600,6 +623,10 @@ struct MainView: View {
                 menuRow(icon: "clock.arrow.circlepath", title: "Past Sessions",
                         subtitle: "Review previous interviews") {
                     showProfileMenu = false; vm.sessionsOpen = true
+                }
+                menuRow(icon: "gift.fill", title: "Invite a friend",
+                        subtitle: "You both get 5 free answers") {
+                    showProfileMenu = false; vm.inviteFriend()
                 }
                 if !vm.session.isPaidPlan {
                     // Only offered to accounts actually below the paid tiers. Gating this on

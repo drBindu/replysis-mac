@@ -552,6 +552,29 @@ class NetworkClient {
     }
 
     /// Asks the website to auto add 15 minutes on the saved card (India, pay by the minute). See MinutesBalance.
+    /// This person's invite link (owner, 2026-10-21): GET /api/referral with the sign-in token answers {"link": ...}. When a friend
+    /// signs up through it, both get five free answers; the website makes the code and pays the reward.
+    func fetchReferralLink() async -> String? {
+        guard let url = URL(string: "\(AppConfig.backendUrl)/api/referral") else { return nil }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 10
+        req.setValue("Bearer \(UserSession.shared.idToken)", forHTTPHeaderField: "Authorization")
+        do {
+            let (data, response) = try await shortSession.data(for: AppIdentity.label(req))
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard (200...299).contains(status),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let link = object["link"] as? String, link.hasPrefix("https://") else {
+                dlog("INVITE: invite link failed: HTTP \(status)", tag: "INVITE")
+                return nil
+            }
+            return link
+        } catch {
+            dlog("INVITE: invite link failed: \(error.localizedDescription)", tag: "INVITE")
+            return nil
+        }
+    }
+
     func askToAddMinutes() async -> MinutesBalance.Outcome? {
         guard let url = URL(string: "\(AppConfig.backendUrl)/api/minutes") else { return nil }
         var req = URLRequest(url: url)
