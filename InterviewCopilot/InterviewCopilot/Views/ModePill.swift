@@ -2,8 +2,8 @@ import SwiftUI
 
 // ══════════════════════════════════════════════════════════════════════════
 // The one pill of the top bar (Windows MAC_CATCHUP, 2026-10-19: decided and locked by the owner on Windows, "Mac: match this layout"), shared by
-// the main window and the compact bar. "Interview Auto" or "Practice Manual": what Replysis hears, then how it answers. It opens a menu with
-// both choices and the window choices (Compact and Pin on top, or Full window when it is opened from the compact bar). A popover, so it is a
+// the main window and the compact bar. "Auto" or "Manual": how it answers (one listening mode since Windows 1.0.45: there is no Interview or
+// Practice any more). It opens a menu with that choice and the window choices (Compact and Pin on top, or Full window when it is opened from the compact bar). A popover, so it is a
 // window of its own (Stealth Mode covers it, see StealthWindows) that stays open until a choice is made, a click lands elsewhere, or Esc.
 // ══════════════════════════════════════════════════════════════════════════
 struct ModePill: View {
@@ -13,14 +13,12 @@ struct ModePill: View {
     @State private var showMenu = false
 
     var body: some View {
-        let hears = vm.practiceAudioOn ? "Practice" : "Interview"
         let answers = vm.listeningMode == .auto ? "Auto" : "Manual"
         Button(action: { showMenu.toggle() }) {
             HStack(spacing: 6) {
-                Image(systemName: vm.practiceAudioOn ? "mic.fill" : "video.fill")
+                Image(systemName: vm.listeningMode == .auto ? "bolt.fill" : "hand.tap.fill")
                     .font(.system(size: 10, weight: .semibold))
-                Text(hears).font(.system(size: 11.5, weight: .semibold))
-                Text(answers).font(.system(size: 11.5)).foregroundColor(Color(hex: "#94a3b8"))
+                Text(answers).font(.system(size: 11.5, weight: .semibold))
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundColor(Color(hex: "#64748b"))
             }
             .foregroundColor(.white)
@@ -30,20 +28,13 @@ struct ModePill: View {
             .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Mode menu: \(hears), \(answers)")
-        .help(AudioSourceRules.hearingLine(practiceOn: vm.practiceAudioOn))
+        .accessibilityLabel("Mode menu: \(answers)")
+        .help("How Replysis answers, and the window. It always hears the meeting and your microphone, and answers the interviewer.")
         .popover(isPresented: $showMenu, arrowEdge: .bottom) { menu }
     }
 
     private var menu: some View {
         VStack(alignment: .leading, spacing: 0) {
-            heading("WHAT REPLYSIS HEARS")
-            row(icon: "video.fill", title: "Interview", subtitle: "The call on this computer", selected: !vm.practiceAudioOn) {
-                vm.selectAudioSource(practice: false)
-            }
-            row(icon: "mic.fill", title: "Practice", subtitle: "Your voice. Interview or Practice: Control Shift P", selected: vm.practiceAudioOn) {
-                vm.selectAudioSource(practice: true)
-            }
             heading("HOW IT ANSWERS")
             row(icon: "bolt.fill", title: "Auto", subtitle: "Answers as soon as the question ends. Auto or Manual: Control Shift A", selected: vm.listeningMode == .auto) {
                 vm.setListeningMode(.auto)

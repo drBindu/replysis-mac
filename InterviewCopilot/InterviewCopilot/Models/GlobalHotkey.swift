@@ -65,14 +65,14 @@ class GlobalHotkey {
         keyCode == 4 && isControlOption(flags)
     }
 
-    /// The top bar's three shortcuts (Windows MAC_CATCHUP, 2026-10-19: Ctrl+Shift+P, A and C): Interview or Practice, Auto or Manual, Compact.
+    /// The top bar's shortcuts (Windows MAC_CATCHUP, 2026-10-19: Ctrl+Shift+A and C): Auto or Manual, Compact. Ctrl+Shift+P (Interview or
+    /// Practice) went with the modes themselves (one listening mode, Windows 1.0.45).
     /// Exactly Control and Shift. Never swallowed, and only acted on during an interview (see MainViewModel.handleModeShortcut).
-    enum ModeShortcut { case audioSource, answerMode, compact }
+    enum ModeShortcut { case answerMode, compact }
 
     static func modeShortcut(keyCode: Int64, flags: CGEventFlags) -> ModeShortcut? {
         guard flags.intersection(chordModifiers) == [.maskControl, .maskShift] else { return nil }
         switch keyCode {
-        case 35: return .audioSource     // P
         case 0:  return .answerMode      // A
         case 8:  return .compact         // C
         default: return nil

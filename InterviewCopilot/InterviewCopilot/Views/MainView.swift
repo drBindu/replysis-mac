@@ -2001,23 +2001,6 @@ extension MainView {
                 }
             }
 
-            setupChoiceGroup("WHAT IT HEARS") {
-                setupChoiceCard(icon: "video.fill", title: "Interview",
-                                selected: !vm.practiceAudioOn,
-                                tag: ("Recommended for real interviews", Color(hex: "#5FC98E")),
-                                action: { vm.selectAudioSource(practice: false) }) {
-                    Text("Hears ") + Text("system audio only").fontWeight(.semibold).foregroundColor(Color(hex: "#DDE4EE"))
-                        + Text(" from the meeting. Your microphone stays off, preventing your answer from becoming a new question.")
-                }
-                setupChoiceCard(icon: "mic.fill", title: "Practice",
-                                selected: vm.practiceAudioOn,
-                                tag: ("Practice environment only", Color(hex: "#D99B7C")),
-                                action: { vm.selectAudioSource(practice: true) }) {
-                    Text("Hears ") + Text("system audio and microphone").fontWeight(.semibold).foregroundColor(Color(hex: "#DDE4EE"))
-                        + Text(" together, ideal for rehearsing aloud or practising with someone nearby.")
-                }
-            }
-
             setupChoiceGroup("ANSWER LENGTH") {
                 setupChoiceCard(icon: "text.alignleft", title: "Short",
                                 selected: !vm.answerDetailed,

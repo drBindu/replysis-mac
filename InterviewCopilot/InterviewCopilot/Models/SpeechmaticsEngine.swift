@@ -28,6 +28,8 @@ class SpeechmaticsEngine {
     /// The engine could not get the voice out for a few seconds ("audio upload stalled"): whatever else uses the line
     /// (screenshots sent ahead) must give way (Windows, 2026-10-22).
     var onUploadStalled: (() -> Void)?
+    /// ">>> SOURCE interviewer|candidate|unknown": who is speaking, while they speak and at each turn's end (Windows 1.0.45).
+    var onTurnSource: ((String) -> Void)?
     /// When the recogniser last said a sentence was over, in any mode. Manual reads it to know the
     /// tail of a question has arrived.
     private(set) var lastUtteranceEndAt = Date.distantPast
@@ -680,6 +682,10 @@ class SpeechmaticsEngine {
             // only one leaves the app believing transcription still works. This is the
             // drop; watchForExit() below is the crash.
             // CONTRACT:RUNTIME — see ENGINE_CONTRACT.md and verify_engine_contract.py
+            for part in line.split(separator: "\n") where part.hasPrefix(">>> SOURCE ") {
+                let who = part.dropFirst(">>> SOURCE ".count).trimmingCharacters(in: .whitespaces)
+                Task { @MainActor [weak self] in self?.onTurnSource?(who) }
+            }
             if line.contains("audio upload stalled") {
                 Task { @MainActor [weak self] in self?.onUploadStalled?() }
             }

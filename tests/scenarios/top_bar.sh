@@ -21,27 +21,24 @@ sleep 10
 buttons | grep -q "^BUTTON Mode menu" && no "the pill shows on Setup" || ok "on Setup there is no pill"
 cmd start; sleep 4
 B=$(buttons)
-echo "$B" | grep -q "^BUTTON Mode menu: Interview, Manual" && ok "in the interview the pill says what it hears and how it answers (Interview, Manual)" || { no "no pill with the state"; echo "$B" | head -12 | cut -c1-80 | sed 's/^/        /'; }
+echo "$B" | grep -q "^BUTTON Mode menu: Manual" && ok "in the interview the pill says how it answers (Manual); one listening mode, no Interview or Practice" || { no "no pill with the state"; echo "$B" | head -12 | cut -c1-80 | sed 's/^/        /'; }
 echo "$B" | grep -q "^BUTTON Account" && ok "the profile is the round avatar" || no "no avatar button"
 echo "$B" | grep -q "^BUTTON Read screen\|^BUTTON .*Screen" && ok "Screen is in the bar" || no "no Screen button"
 echo "$B" | grep -q "^BUTTON AUTO\|^BUTTON MANUAL\|^BUTTON Compact\|^BUTTON Pin" && no "the old Auto, Manual, Compact or Pin buttons are still in the bar" || ok "the old Auto, Manual, Compact and Pin buttons are gone from the bar"
 /tmp/axpress $PID "Mode menu" | grep -q "press: ok" && ok "the pill opens" || no "the pill did not open"
 sleep 1; M=$(buttons)
-for row in "Interview" "Practice" "Auto" "Manual" "Compact" "Pin on top"; do
+for row in "Auto" "Manual" "Compact" "Pin on top"; do
   echo "$M" | grep -q "^BUTTON $row" && ok "the menu has $row" || no "the menu has no $row"
 done
-/tmp/axpress $PID "Practice" | grep -q "press: ok" && ok "choosing Practice works" || no "could not choose Practice"
-sleep 3
-buttons | grep -q "^BUTTON Mode menu: Practice, Manual" && ok "the pill now says Practice" || no "the pill did not change to Practice"
-/tmp/axpress $PID "Mode menu" >/dev/null; sleep 1
+for row in "Interview" "Practice"; do
+  echo "$M" | grep -q "^BUTTON $row " && no "the menu still has $row" || ok "the menu has no $row (one listening mode)"
+done
 /tmp/axpress $PID "Auto" | grep -q "press: ok" && ok "choosing Auto works" || no "could not choose Auto"
 sleep 2
-buttons | grep -q "^BUTTON Mode menu: Practice, Auto" && ok "the pill now says Practice, Auto" || no "the pill did not change to Auto"
-# the shortcuts Control Shift P and A (the flow commands call what the keys call)
-cmd key-p; sleep 3
-buttons | grep -q "^BUTTON Mode menu: Interview, Auto" && ok "Control Shift P switches Practice back to Interview" || no "Control Shift P did not switch to Interview"
+buttons | grep -q "^BUTTON Mode menu: Auto" && ok "the pill now says Auto" || no "the pill did not change to Auto"
+# the shortcut Control Shift A (the flow command calls what the key calls)
 cmd key-a; sleep 2
-buttons | grep -q "^BUTTON Mode menu: Interview, Manual" && ok "Control Shift A switches Auto to Manual" || no "Control Shift A did not switch to Manual"
+buttons | grep -q "^BUTTON Mode menu: Manual" && ok "Control Shift A switches Auto to Manual" || no "Control Shift A did not switch to Manual"
 kill $PID $MOCK 2>/dev/null
 [ $fail -eq 0 ] && echo "TOP BAR: all checks passed" || echo "TOP BAR: FAILED"
 exit $fail

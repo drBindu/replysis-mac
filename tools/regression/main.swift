@@ -462,6 +462,13 @@ check(MicChoice.replacementForDefault(defaultName: "BlackHole 2ch", inputs: ["Bl
 check(MicChoice.replacementForDefault(defaultName: "MacBook Air Microphone", inputs: ["BlackHole 2ch", "MacBook Air Microphone"]) == nil, "mic: a real default is left alone")
 check(StealthProbe.looksLikeProbe(red: 255, green: 0, blue: 255) && StealthProbe.looksLikeProbe(red: 236, green: 51, blue: 247), "self-test: the magenta probe is recognised, also after colour management")
 check(!StealthProbe.looksLikeProbe(red: 30, green: 30, blue: 30) && !StealthProbe.looksLikeProbe(red: 240, green: 240, blue: 240), "self-test: a dark or white desktop is not the probe")
+do {   // one listening mode: whose words are answered
+    let now = Date()
+    check(AutoTurnDetector.ignoreCandidateTurn(micOn: true, source: "candidate", lastInterviewerAt: now.addingTimeInterval(-60), now: now), "one mode: the candidate's words are not answered with an interviewer heard a minute ago")
+    check(!AutoTurnDetector.ignoreCandidateTurn(micOn: true, source: "candidate", lastInterviewerAt: now.addingTimeInterval(-700), now: now), "one mode: practising alone (no interviewer for 10 minutes), the candidate's questions are answered")
+    check(!AutoTurnDetector.ignoreCandidateTurn(micOn: true, source: "interviewer", lastInterviewerAt: now, now: now), "one mode: the interviewer is answered")
+    check(!AutoTurnDetector.ignoreCandidateTurn(micOn: false, source: "candidate", lastInterviewerAt: now, now: now), "one mode: with the microphone off nothing is filtered")
+}
 check([1, 2, 3, 8, 13, 14, 40].map(RecoveryPolicy.keyRetryAfterServerFault) == [2, 3, 5, 5, 5, 15, 15], "server-fault key retry waits 2, 3, then 5 seconds for a minute, then 15")
 check([1, 2, 3, 4, 5, 9].map(RecoveryPolicy.keyRetryAfterNoConnection) == [2, 4, 8, 15, 30, 30], "no-connection retry waits 2, 4, 8, 15, then 30 seconds")
 check([0, 1, 2, 3, 4, 20].map { RecoveryPolicy.credentialRenewalWait(attempt: $0) } == [5, 15, 30, 60, 60, 60], "rejected credentials renew after 5, 15, 30 seconds, then every minute")
@@ -1151,11 +1158,11 @@ check(problemBody["type"] as? String == "Problem.listening.nomic" && problemBody
 check(ClientErrorReporter.request(backendUrl: "https://replysis.com/", payload: problemBody)?.url?.absoluteString == "https://replysis.com/api/v1/diagnostics/client-error", "report: posted to the client-error endpoint")
 
 // ── The top bar's shortcuts (Windows MAC_CATCHUP, 2026-10-19) ───────────────────────────────────────────────────────────────
-check(GlobalHotkey.modeShortcut(keyCode: 35, flags: [.maskControl, .maskShift]) == .audioSource, "shortcut: Control Shift P switches Interview and Practice")
+check(GlobalHotkey.modeShortcut(keyCode: 35, flags: [.maskControl, .maskShift]) == nil, "shortcut: Control Shift P is gone with Interview and Practice (one listening mode)")
 check(GlobalHotkey.modeShortcut(keyCode: 0, flags: [.maskControl, .maskShift]) == .answerMode, "shortcut: Control Shift A switches Auto and Manual")
 check(GlobalHotkey.modeShortcut(keyCode: 8, flags: [.maskControl, .maskShift]) == .compact, "shortcut: Control Shift C switches Compact")
 check(GlobalHotkey.modeShortcut(keyCode: 35, flags: [.maskControl]) == nil && GlobalHotkey.modeShortcut(keyCode: 35, flags: [.maskShift]) == nil, "shortcut: P with only Control or only Shift is somebody else's")
-check(GlobalHotkey.modeShortcut(keyCode: 35, flags: [.maskControl, .maskShift, .maskCommand]) == nil, "shortcut: an extra modifier is somebody else's")
+check(GlobalHotkey.modeShortcut(keyCode: 0, flags: [.maskControl, .maskShift, .maskCommand]) == nil, "shortcut: an extra modifier is somebody else's")
 check(GlobalHotkey.modeShortcut(keyCode: 1, flags: [.maskControl, .maskShift]) == nil, "shortcut: other letters are not shortcuts")
 
 // ── India screening options (Windows MAC_CATCHUP item 56) ────────────────────────────────────────────────────────────────────

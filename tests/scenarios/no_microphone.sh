@@ -1,7 +1,7 @@
 #!/bin/bash
 # No microphone (Windows MAC_CATCHUP, 2026-10-18 and 2026-10-19) and problem reports to admin (2026-10-19).
-# The engine says NO_MICROPHONE_WAITING when Practice has no microphone to listen to. The alert must STAY (it used to be a note that
-# flashed), offer "Use Interview instead", go away by itself when MICROPHONE CONNECTED arrives, and the problem must reach admin once,
+# The engine says NO_MICROPHONE_WAITING when it has no microphone to listen to. The alert must STAY (it used to be a note that
+# flashed), go away by itself when MICROPHONE CONNECTED arrives, and the problem must reach admin once,
 # with no account, no path and no email in it. Runs the REAL app (a Debug build, invisible) against the fake server, which records
 # the report. The flow commands nomic and miccame do what the two engine lines do.
 #   no_microphone.sh <path-to-Debug-InterviewCopilot.app>
@@ -21,11 +21,8 @@ state(){ L=$(wc -l < "$LOG"); cmd dump; sleep 2; sed -n "$((L+1)),\$p" "$LOG" | 
 sleep 10; cmd start; sleep 4
 cmd nomic; sleep 12
 S=$(state)
-echo "$S" | grep -q "alert='No microphone found'" && ok "Practice with no microphone: the alert is still on screen 14 seconds later" || { no "the alert did not stay"; echo "        $S" | cut -c1-260; }
-/tmp/axpress $PID "Use Interview instead" | grep -q "press: ok" && ok "the alert has a Use Interview instead button" || no "no Use Interview instead button"
-sleep 2
-S=$(state); echo "$S" | grep -q "alert=''" && ok "pressing it takes the alert down" || no "the alert is still there after the button"
-grep -q '"micCaptureEnabled":false' "$DATA/settings.json" 2>/dev/null && ok "and the app is now on Interview (the computer's sound)" || { grep -o 'micCaptureEnabled[^,]*' "$DATA/settings.json" | head -1 | sed 's/^/        /'; no "the app did not switch to Interview"; }
+echo "$S" | grep -q "alert='No microphone found'" && ok "no microphone: the alert is still on screen 14 seconds later" || { no "the alert did not stay"; echo "        $S" | cut -c1-260; }
+/tmp/axpress $PID "Use Interview instead" | grep -q "press: ok" && no "the old Use Interview instead button is still there" || ok "no Use Interview instead button (one listening mode)"
 cmd nomic; sleep 2; S=$(state); echo "$S" | grep -q "alert='No microphone found'" || no "the alert did not come back for a second test"
 cmd miccame; sleep 2; S=$(state)
 echo "$S" | grep -q "alert=''" && ok "a microphone plugged in takes the alert down by itself" || no "the alert stayed after MICROPHONE CONNECTED"

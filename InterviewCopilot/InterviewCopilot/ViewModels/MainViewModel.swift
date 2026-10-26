@@ -77,15 +77,8 @@ class MainViewModel {
     /// wrong there, and undermines trust in a mode whose entire promise is pressing nothing.
     var idleHintForCurrentMode: String {
         switch listeningMode {
-        // In Interview mode the person must be told their own voice is not picked up: a
-        // tester who spoke to the app for minutes saw nothing and decided it was broken
-        // (Windows, 2026-09-29). Practice hears them, so it needs no such line.
-        case .manual: return practiceAudioOn
-            ? "Ready. Press SPACE to start listening, then SPACE again to get your answer."
-            : "Ready. Press SPACE to start listening, then SPACE again to get your answer. Interview mode does not pick up your own voice. To try it by speaking, choose Practice above."
-        case .auto:   return practiceAudioOn
-            ? "Listening. The answer appears when the question ends."
-            : "Auto is on. When the interviewer asks a question in your meeting, the answer appears here on its own. Interview mode does not pick up your own voice. To try it by speaking, choose Practice above. If an answer does not come, press SPACE."
+        case .manual: return "Ready. Press SPACE to start listening, then SPACE again to get your answer."
+        case .auto:   return "Listening. When the interviewer asks a question, the answer appears here on its own. If an answer does not come, press SPACE."
         }
     }
     var showThinking = false
@@ -198,8 +191,6 @@ class MainViewModel {
     var screenKeysEverywhere = true
     /// "Real interview? Mic off in Settings", shown in place of AUTO | MANUAL for four seconds
     /// the first time Auto is chosen in a launch with the microphone on. Windows 2523ecf.
-    var showMicOffHint = false
-    private var micOffHintShown = false
     var mainWindowOpacity: Double = 0.40
     var overlayOpacity: Double = 0.90
     var isScreenAnalyzing = false
@@ -440,6 +431,7 @@ class MainViewModel {
         CompanionLink.shared.onAnswerRequested = { [weak self] in self?.handleSpacePress(source: "PHONE") }
         CompanionLink.shared.start()
         updateState = AppUpdater.shared.state
+        engine.onTurnSource = { [weak self] who in self?.noteTurnSource(who) }
         engine.onUploadStalled = { [weak self] in
             // Voice always comes first: on a slow line the screenshot sent ahead filled the upload and the voice stalled.
             dlog("SCREEN: the voice upload stalled; pausing screenshots sent ahead so speech keeps the line", tag: "SCREEN")
@@ -949,12 +941,11 @@ class MainViewModel {
         refreshHotkeyGate()   // seed the tap's consume/pass-through state
     }
 
-    /// Control Shift P, A and C (Windows Ctrl+Shift+P, A, C): switch Interview and Practice, Auto and Manual, Compact. Only in an interview,
+    /// Control Shift A and C (Windows Ctrl+Shift+A, C): switch Auto and Manual, Compact. Only in an interview,
     /// where the top bar's pill exists; anywhere else the keys belong to whatever app has them.
     func handleModeShortcut(_ shortcut: GlobalHotkey.ModeShortcut) {
         guard appStep == .interview, session.isLoggedIn else { return }
         switch shortcut {
-        case .audioSource: selectAudioSource(practice: !practiceAudioOn)
         case .answerMode:  setListeningMode(listeningMode == .auto ? .manual : .auto)
         case .compact:     toggleCamera()
         }
@@ -1603,6 +1594,8 @@ class MainViewModel {
         case "closesessions": sessionsOpen = false
         case "invite": inviteFriend()
         case "phoneonly-on": setPhoneOnly(true)
+        case "source-interviewer": noteTurnSource("interviewer")   // what the engine's ">>> SOURCE" lines do, for tests
+        case "source-candidate": noteTurnSource("candidate")
         case "signout": signOut()
         case "login":    NotificationCenter.default.post(name: .showLogin, object: nil)
         case "snap-sessions":     snapshot(AnyView(SessionsView(preview: Self.demoSessions)), name: "sessions")
@@ -1668,7 +1661,6 @@ class MainViewModel {
         case "updatecheck": AppUpdater.shared.checkInBackgroundNow()   // a scheduled background check, now
         case "updatefound": AppUpdater.shared.state = .onItsWay("9.9.9")   // what Sparkle's callbacks set, for the notice test
         case "updateready": AppUpdater.shared.state = .ready("9.9.9")
-        case "key-p":     handleModeShortcut(.audioSource)    // what ⌃⇧P does
         case "key-a":     handleModeShortcut(.answerMode)     // ⌃⇧A
         case "space":     handleSpacePress(source: "FLOW")   // the Space key: listen, or send what was heard
         case "practice":  setMicCaptureEnabled(true)      // at once, the way a switch made between questions is applied: the engine restarts now
@@ -1759,7 +1751,7 @@ class MainViewModel {
         aiAnswerHint = idleHintForCurrentMode
         refreshHotkeyGate()
         updateMicUI()
-        dlog("INTERVIEW: started (\(autoModeEnabled ? "Auto" : "Manual"), \(practiceAudioOn ? "Practice" : "Interview") audio)", tag: "FLOW")
+        dlog("INTERVIEW: started (\(autoModeEnabled ? "Auto" : "Manual"), microphone \(micCaptureEnabled ? "on" : "off in Settings"))", tag: "FLOW")
         if phoneOnly {
             DispatchQueue.main.async { [weak self] in self?.setPhoneOnlyHidden(true, why: "Start with phone only on") }
         }
@@ -3652,6 +3644,17 @@ class MainViewModel {
             return
         }
 
+        // THE CANDIDATE IS NOT THE INTERVIEWER. The engine labels each turn (">>> SOURCE"): computer sound in it is the interviewer,
+        // microphone only is the candidate. While an interviewer has been heard in the last ten minutes, the candidate's own words
+        // are never a question (they are answering, or asking "can you repeat that?"); alone, practising, they are (Windows 1.0.45).
+        if AutoTurnDetector.ignoreCandidateTurn(micOn: micCaptureActive, source: lastTurnSource, lastInterviewerAt: lastInterviewerTurnAt) {
+            dlog("AUTO: the candidate is speaking (microphone only) with an interviewer present — not answered: '\(text.prefix(40))'", tag: "AUTO")
+            consumedPrefix = engine.readLatestTxt()
+            pendingSpeechStartedAt = nil
+            transcript = ""
+            return
+        }
+
         // NOT THE LANGUAGE WE ARE LISTENING FOR — or a conversation across the room. The
         // engine is configured for English and maps whatever it hears onto English words, so
         // Telugu (or a phone call nearby) arrives as confident nonsense that passes every
@@ -4405,21 +4408,15 @@ class MainViewModel {
             ? autoIdleListeningTimeout
             : (heardAnythingThisSession ? idleListeningTimeout : silentSessionTimeout)
 
-        // INTERVIEW MODE HEARS THE MEETING ONLY, never the person's own voice, by design, and
-        // nothing said so. After 45 seconds with nothing heard at all, say it once and offer
-        // the switch (Windows ListeningMeterTick, 2026-09-29).
-        // Measured on the SESSION clock, as Windows does (_sessionSeconds >= 45). An earlier
-        // version measured from listeningSince, which this tick re-stamps every five seconds,
-        // so the condition could never be true and the tip never appeared.
-        if !heardEverThisRun, !interviewSilentTipShown, !practiceAudioOn,
-           appStep == .interview, sessionSeconds >= 45, alertTitle.isEmpty {
+        // Nothing heard at all for 90 seconds of an interview: said once, and reported with what the engine saw, so a Mac listening
+        // to the wrong input is found from admin without asking anyone for a log (Windows, 2026-10-22). 45 s was a normal wait for
+        // the interviewer to start. Measured on the SESSION clock, as Windows does.
+        if !heardEverThisRun, !interviewSilentTipShown, appStep == .interview, sessionSeconds >= 90, alertTitle.isEmpty {
             interviewSilentTipShown = true
-            dlog("MODE: Interview mode heard nothing for 45s; offered a switch to Practice", tag: "MODE")
+            dlog("MODE: nothing heard for 90s of listening; told the user and reported it", tag: "MODE")
+            reportProblem("nothing-heard", "Nothing heard for 90 seconds of listening")
             showAlert(title: "Nothing heard yet",
-                      body: "Interview mode listens to your meeting only, so your own voice is not picked up. If you are speaking yourself, switch to Practice.",
-                      actionLabel: "Switch to Practice") { [weak self] in
-                self?.selectAudioSource(practice: true)
-            }
+                      body: "Replysis has not heard any voice. Practising? Speak into your microphone; earphones with a mic work best. In an online interview, the interviewer is heard from this computer's sound.")
         }
 
         // Developer builds only: a listening test in an empty room must not be ended by the quiet it is there to test.
@@ -5427,9 +5424,11 @@ class MainViewModel {
             // Default ON: system audio + the user's own voice, so Space captures both out
             // of the box. Users who want to stay fully invisible in a real interview can
             // switch to system-audio-only in Settings.
-            // Default for NEW installs is Interview (no microphone). Anyone who has saved a
-            // choice keeps it — the key is present in their settings file.
-            micCaptureEnabled = obj["micCaptureEnabled"] as? Bool ?? false
+            // ONE LISTENING MODE (Windows 1.0.45, 2026-10-22): the microphone and the computer's sound are always heard, and who spoke
+            // is decided per turn by the engine (">>> SOURCE"). The microphone stays a Settings switch, on by default. Every copy that
+            // chose Interview (microphone off) is moved to it once; after that the person's choice is kept.
+            micCaptureEnabled = obj["micCaptureEnabled"] as? Bool ?? true
+            if obj["oneListeningMode"] == nil { micCaptureEnabled = true; movedToOneMode = true }
             transcriptLanguage = obj["transcriptLanguage"] as? String ?? "en"
             cloudSyncEnabled = obj["cloudSyncEnabled"] as? Bool ?? true
             sarvamApiKey = obj["sarvamApiKey"] as? String ?? ""
@@ -5455,6 +5454,11 @@ class MainViewModel {
                 opacityDefaultV2Applied = true
                 saveSettings()
             }
+            if movedToOneMode {
+                movedToOneMode = false
+                saveSettings()
+                dlog("SETTINGS: moved to one listening mode: the microphone is on (it can be turned off in Settings)", tag: "SETTINGS")
+            }
         }
     }
 
@@ -5465,6 +5469,7 @@ class MainViewModel {
         let obj: [String: Any] = ["mainOpacity": mainWindowOpacity,
                                   "overlayOpacity": overlayOpacity, "answerLength": answerDetailed ? "detailed" : "short",
                                   "micCaptureEnabled": micCaptureEnabled,
+                                  "oneListeningMode": true,
                                   "transcriptLanguage": transcriptLanguage,
                                   "cloudSyncEnabled": cloudSyncEnabled,
                                   "sarvamApiKey": sarvamApiKey,
@@ -5488,7 +5493,9 @@ class MainViewModel {
     /// Off = system-audio-only: only the interviewer is transcribed, the mic is NEVER
     /// opened, so there's no orange indicator — fully invisible, for users who want to
     /// stay hidden in a real interview with nothing to reveal if the mic icon is checked.
-    var micCaptureEnabled = false
+    var micCaptureEnabled = true
+    /// Set while loading an older settings file: saved once with the one-mode marker.
+    private var movedToOneMode = false
 
     /// "Back up session history": mirrors questions and answers to the account, so they
     /// appear in Past Sessions on the other signed-in devices. On by default, as on
@@ -5567,9 +5574,6 @@ class MainViewModel {
     // The same preference the Settings switch writes, so the two can never disagree.
     // Practice means the microphone is open too. Ported from Windows (2026-09-20).
     var practiceAudioOn: Bool { micCaptureEnabled }
-    private var audioSourceChangePending = false
-    private var interviewTipShown = false
-    private var practiceTipShown = false
     private var lastAudioSourceTipCheck = Date.distantPast
     /// An alert that can carry one action, for the two tips below.
     /// The update notice (Windows 1.0.46): "on its way" as soon as one is found, "ready" with Restart once staged. Its own line, so a
@@ -5577,6 +5581,16 @@ class MainViewModel {
     var updateState: AppUpdater.State = .none
     /// Who said the last turn, from the engine's ">>> SOURCE" line: interviewer, candidate or unknown.
     var lastTurnSource = "unknown"
+    private var lastInterviewerTurnAt = Date.distantPast
+    /// An interviewer has been heard in the last ten minutes: the candidate's own words are then never a question.
+    var interviewerPresent: Bool { Date().timeIntervalSince(lastInterviewerTurnAt) < 600 }
+
+    func noteTurnSource(_ who: String) {
+        lastTurnSource = who
+        if who == "interviewer" { lastInterviewerTurnAt = Date() }
+        if who == "candidate" { CompanionLink.shared.heard("") }   // the phone shows the interviewer only
+        dlog("AUTO: turn spoken by: \(who)\(who == "candidate" && interviewerPresent ? " (interviewer present, will not answer)" : "")", tag: "AUTO")
+    }
 
     /// The setup page's "Screen share" row, from StealthSelfTest (Windows, 2026-10-22/23).
     var screenShareState: ScreenShareState = .checking
@@ -5630,15 +5644,10 @@ class MainViewModel {
         dlog("NO MICROPHONE: the engine found no microphone (\(waiting ? "waiting for one" : "carrying on with the computer's sound"))", tag: "AUDIO")
         let title = waiting ? "No microphone found" : "No microphone on this Mac"
         let body = waiting
-            ? "Practice mode needs a microphone. Plug in earphones with a mic and Replysis starts listening by itself."
+            ? "Plug in earphones with a mic and Replysis starts listening by itself."
             : "Replysis is listening to the computer's sound only. Plug in earphones with a mic if you want to practise out loud."
         noMicrophoneAlertTitle = title
-        showAlert(title: title, body: body, actionLabel: waiting ? "Use Interview instead" : "", action: waiting ? { [weak self] in
-            guard let self else { return }
-            self.noMicrophoneAlertTitle = nil
-            self.dismissAlert()
-            self.setMicCaptureEnabled(false)      // Interview: the engine restarts hearing the computer's sound
-        } : nil)
+        showAlert(title: title, body: body)
     }
 
     func handleMicrophoneConnected() {
@@ -5650,7 +5659,7 @@ class MainViewModel {
     /// Windows MAC_CATCHUP, 2026-10-19: every problem a person hits is reported to admin, once per kind per run, with the situation it
     /// happened in appended. See ClientErrorReporter for what is and is not sent.
     func reportProblem(_ kind: String, _ message: String) {
-        let situation = "[\(micCaptureEnabled ? "Practice" : "Interview"), \(autoModeEnabled ? "Auto" : "Manual"), \(appStep == .interview ? "in interview" : "setup")]"
+        let situation = "[microphone \(micCaptureEnabled ? "on" : "off"), \(autoModeEnabled ? "Auto" : "Manual"), \(appStep == .interview ? "in interview" : "setup")]"
         ClientErrorReporter.reportProblem(kind: kind, message: "\(message) \(situation)")
     }
 
@@ -5672,81 +5681,15 @@ class MainViewModel {
         alertTitle = ""; alertBody = ""; alertActionLabel = ""; alertAction = nil
     }
 
-    /// Switches between hearing the meeting only and hearing the meeting plus the
-    /// microphone. The engine is told by restarting it, which takes about a second, so it
-    /// waits while a question is being listened to rather than cutting it off.
-    func selectAudioSource(practice: Bool) {
-        guard micCaptureEnabled != practice else { return }
-        if isListening || isProcessing {
-            micCaptureEnabled = practice          // the toolbar shows the new choice at once
-            saveSettings()
-            audioSourceChangePending = true
-            showListeningNotice(practice ? "PRACTICE STARTS AFTER THIS QUESTION"
-                                         : "INTERVIEW STARTS AFTER THIS QUESTION")
-            dlog("Audio source → \(practice ? "Practice" : "Interview") — waiting for this question to finish", tag: "AUDIO")
-            return
-        }
-        audioSourceChangePending = false
-        setMicCaptureEnabled(practice)
-        dlog(practice ? "Practice: hears the meeting and the microphone"
-                      : "Interview: hears the meeting only", tag: "AUDIO")
-    }
-
-    /// Applies a switch that was asked for mid-question, once it is over.
-    private func applyPendingAudioSourceChange() {
-        guard audioSourceChangePending, !isListening, !isProcessing else { return }
-        audioSourceChangePending = false
-        let wanted = micCaptureEnabled
-        micCaptureEnabled = !wanted          // so setMicCaptureEnabled sees a real change
-        setMicCaptureEnabled(wanted)
-        dlog("Audio source applied now the question is over → \(wanted ? "Practice" : "Interview")", tag: "AUDIO")
-    }
-
-    /// Says something only when the setting is about to cost the user an interview: the
-    /// microphone is open with a meeting app running, or the app has been listening to
-    /// silence for minutes with no meeting anywhere. Each tip at most once per launch.
+    /// Settings changes that wait for the current question: applied once it is over.
     private func checkAudioSourceTip() {
         let now = Date()
         guard now.timeIntervalSince(lastAudioSourceTipCheck) >= 20 else { return }
         lastAudioSourceTipCheck = now
-        applyPendingAudioSourceChange()
         if languageChangePending, !isListening, !isProcessing {
             languageChangePending = false
             restartEngineForSettingChange()
             dlog("Interview language applied now the question is over", tag: "SETTINGS")
-        }
-        guard session.isLoggedIn, alertTitle.isEmpty else { return }
-
-        let practice = practiceAudioOn
-        let meeting = AudioSourceRules.meetingAppRunning()
-
-        if AudioSourceRules.shouldSuggestInterview(practiceOn: practice, meetingAppRunning: meeting,
-                                                   alreadySuggested: interviewTipShown) {
-            interviewTipShown = true
-            showAlert(title: "In a real interview?",
-                      body: "Replysis can hear your microphone, so your own answers can be taken as new questions. Interview hears the meeting only.",
-                      actionLabel: "Switch to Interview") { [weak self] in
-                self?.selectAudioSource(practice: false)
-            }
-            return
-        }
-
-        let quiet = heardAnythingThisSession ? now.timeIntervalSince(lastSpeechHeardAt) : 0
-        // "Listening" here has to include the standby the quiet itself causes. Measured:
-        // the mic stops after 3 minutes of silence (stopForIdle) at the same moment this
-        // rule's 3 minutes elapse, so a strict isListening meant the tip could never fire.
-        // Standby after a quiet stretch is the same evidence — the app is armed and
-        // nothing is being said to it.
-        let armed = isListening || (stoppedForIdle && autoModeEnabled)
-        if AudioSourceRules.shouldSuggestPractice(interviewOn: !practice, listening: armed,
-                                                  meetingAppRunning: meeting, quietFor: quiet,
-                                                  alreadySuggested: practiceTipShown) {
-            practiceTipShown = true
-            showAlert(title: "Practising on your own?",
-                      body: "Interview hears the meeting only, so nothing you say is picked up. Practice hears your microphone too.",
-                      actionLabel: "Switch to Practice") { [weak self] in
-                self?.selectAudioSource(practice: true)
-            }
         }
     }
 
@@ -5801,11 +5744,6 @@ class MainViewModel {
         // sentence, heard through an open microphone. In a real call the interviewer comes
         // through computer sound, so turning the mic off removes it entirely — but people only
         // do that if they are told. Once per launch, and only with the mic on.
-        if mode == .auto, micCaptureEnabled, !micOffHintShown {
-            micOffHintShown = true
-            showMicOffHint = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.showMicOffHint = false }
-        }
         // Clear what the PREVIOUS mode produced. Leaving the old answer on screen made a
         // mode that had correctly stayed silent look like it had answered wrongly — the
         // user reads a stale reply and blames the new mode for it. Also drops any

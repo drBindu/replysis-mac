@@ -33,38 +33,21 @@ struct SettingsView: View {
                 ScrollView {
                     VStack(spacing: 20) {
 
-                        // One mode, so one line and one switch. The microphone is a preference,
-                        // not a mode: off still works for real interviews, and practising alone
-                        // does not, which is what the switch says.
+                        // One listening mode (Windows 1.0.45): the meeting and the microphone are always heard, and the interviewer is the
+                        // one answered. The microphone stays a preference, on by default.
                         settingsSection("LISTENING") {
                             VStack(alignment: .leading, spacing: 10) {
-                                // Live tip, as on Windows 1.0.20: amber while the mic is on, green
-                                // once it is off. Follows the switch below as it is flipped.
-                                HStack(alignment: .top, spacing: 8) {
-                                    Image(systemName: vm.micCaptureEnabled ? "exclamationmark.triangle.fill" : "checkmark.seal.fill")
-                                        .foregroundColor(Color(hex: vm.micCaptureEnabled ? "#fbbf24" : "#34d399"))
-                                    Text(vm.micCaptureEnabled
-                                         ? "Real interview: switch the toolbar to Interview, so only the interviewer is heard."
-                                         : "Ready for a real interview. Interview mode hears only the interviewer's audio.")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundColor(Color(hex: vm.micCaptureEnabled ? "#fbbf24" : "#34d399"))
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                .padding(10)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color(hex: vm.micCaptureEnabled ? "#2A1F0D" : "#0D2A1F")))
-                                Text("For a live interview in Zoom, Google Meet or Teams, choose Interview in the toolbar. Replysis still hears the interviewer through your computer sound, without mistaking your spoken answer for a new question. Keep your microphone on in the meeting app so the interviewer can hear you.")
+                                Text("Replysis hears the meeting through this Mac's sound and you through the microphone, and answers the interviewer. Your own words are not answered while an interviewer is speaking; practising alone, your questions are.")
                                     .font(.system(size: 11))
                                     .foregroundColor(Color(hex: "#8b9bb0"))
                                     .fixedSize(horizontal: false, vertical: true)
                                 Toggle(isOn: Binding(get: { vm.micCaptureEnabled },
                                                      set: { vm.setMicCaptureEnabled($0) })) {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text("Practice mode: use my microphone")
+                                        Text("Use my microphone")
                                             .font(.system(size: 13, weight: .medium))
                                             .foregroundColor(.white)
-                                        Text("Same switch as Interview / Practice in the toolbar. Off (Interview) hears the meeting only, so your own answers are never taken as questions. On (Practice) also hears you, for practising alone. Replysis follows your Mac’s default input and reconnects when it changes.")
+                                        Text("On by default. Off hears the meeting only. Replysis follows your Mac’s default input and reconnects when it changes.")
                                             .font(.system(size: 11))
                                             .foregroundColor(Color(hex: "#8b9bb0"))
                                             .fixedSize(horizontal: false, vertical: true)
