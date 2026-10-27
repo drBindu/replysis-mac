@@ -318,8 +318,16 @@ check(PlanFacts.isFreeTrial(plan: "pro", signedIn: false), "a guest is on the tr
 check(!PlanFacts.isFreeTrial(plan: "pro", signedIn: true), "Pro is not the trial")
 check(!PlanFacts.isFreeTrial(plan: "max", signedIn: true), "Max is not the trial")
 check(PlanFacts.allowanceText(plan: "free", signedIn: true) == "5 answers, one time", "Free is one time")
-check(PlanFacts.allowanceText(plan: "pro", signedIn: true) == "500 answers each month", "Pro allowance")
-check(PlanFacts.allowanceText(plan: "max", signedIn: true) == "1,500 answers each month", "Max allowance")
+check(PlanFacts.allowanceText(plan: "pro", signedIn: true) == "Answers for an active job search, refreshed every month", "Pro allowance, no number")
+check(PlanFacts.allowanceText(plan: "max", signedIn: true) == "Our largest monthly allowance, for interview heavy weeks", "Max allowance, no number")
+check(PlanFacts.allowanceText(plan: "practice", signedIn: true) == "Practice interviews with Maya every month", "Practice allowance")
+check(PlanFacts.allowanceText(plan: "pro", signedIn: true, trial: true) == "3 day free trial", "the trial reads as the 3 day free trial")
+check(PlanFacts.isFreeTrial(plan: "pro", signedIn: true, trial: true), "the 3 day free trial (plan pro, trial true) is not Pro")
+check(!PlanFacts.isFreeTrial(plan: "practice", signedIn: true), "Practice is a paid plan")
+for plan in ["pro", "max", "practice", "lifetime"] {
+    let t = PlanFacts.allowanceText(plan: plan, signedIn: true)
+    check(t.rangeOfCharacter(from: .decimalDigits) == nil && !t.lowercased().contains("unlimited"), "no number and no unlimited on \(plan)")
+}
 check(PlanFacts.refreshText(plan: "free", signedIn: true) == "Not refreshed", "Free never refreshes")
 check(PlanFacts.isLow(10) && !PlanFacts.isLow(11), "amber at two answers or fewer")
 check(PlanFacts.isEmpty(4) && !PlanFacts.isEmpty(5), "blocked below one answer")
@@ -387,8 +395,9 @@ for kind in ListeningProblems.Kind.allCases {
 }
 check(ListeningProblems.describe(.noAnswers, freeTrial: true).title == "Your free answers are used", "free trial: the trial has ended")
 check(ListeningProblems.describe(.noAnswers, freeTrial: false).title == "No answers left this month", "paid: answers renew")
-check(ListeningProblems.describe(.noAnswers, freeTrial: true).step == .moreAnswers, "out of answers offers Get more answers")
-check(ListeningProblems.describe(.noListeningTime, freeTrial: true).step == .moreAnswers, "the free trial ending offers Get more answers")
+check(ListeningProblems.describe(.noAnswers, freeTrial: true).step == .upgrade, "free answers used: Upgrade now")
+check(ListeningProblems.describe(.noAnswers, freeTrial: false).step == .moreAnswers, "a paid plan out of answers: Get more answers")
+check(ListeningProblems.describe(.noListeningTime, freeTrial: true).step == .upgrade, "the free trial ending offers Upgrade now")
 check(ListeningProblems.describe(.noListeningTime, freeTrial: false).body.contains("Your answers are safe"), "this month's limit says answers are safe")
 func detect(online: Bool = false, status: Int = 0, listening: Bool = false, answers: Bool = false,
             waiting: Bool = false, mic: Bool = false, stalled: Bool = false, net: Bool = false) -> ListeningProblems.Kind? {

@@ -23,7 +23,8 @@ enum ListeningProblems {
         case anotherDevice, poorConnection
     }
 
-    enum NextStep { case none, seePlans, moreAnswers }
+    /// upgrade: "Upgrade now" to the plans page, when the free answers or the free trial run out (MAC_HANDOFF_2026-10-27).
+    enum NextStep { case none, seePlans, moreAnswers, upgrade }
 
     struct Description {
         let label: String
@@ -38,7 +39,7 @@ enum ListeningProblems {
         switch kind {
         case .noAnswers where freeTrial:
             let m = PlanFacts.outOfAnswers(freeTrial: true)
-            return Description(label: "NO ANSWERS", title: m.title, body: m.body, step: .moreAnswers)
+            return Description(label: "NO ANSWERS", title: m.title, body: m.body, step: .upgrade)
         case .noAnswers:
             let m = PlanFacts.outOfAnswers(freeTrial: false)
             return Description(label: "NO ANSWERS", title: m.title, body: m.body, step: .moreAnswers)
@@ -52,7 +53,7 @@ enum ListeningProblems {
                 label: "TRIAL OVER",
                 title: "Your free trial is over",
                 body: "That is what Replysis does in a real interview. Pro gives you a whole month, enough for many interviews, and you can cancel any time. Or add a few answers with no subscription.",
-                step: .moreAnswers)
+                step: .upgrade)
         case .noListeningTime:
             return Description(
                 label: "MONTHLY LIMIT",

@@ -488,7 +488,7 @@ class NetworkClient {
 
     // MARK: - Credits
 
-    func fetchCredits() async -> (credits: Int, plan: String, isUnlimited: Bool, minutesBalance: Int)? {
+    func fetchCredits() async -> (credits: Int, plan: String, isUnlimited: Bool, minutesBalance: Int, trial: Bool)? {
         guard let url = URL(string: "\(AppConfig.backendUrl)/api/v1/interview/credits") else { return nil }
         var req = URLRequest(url: url)
         req.setValue("Bearer \(UserSession.shared.idToken)", forHTTPHeaderField: "Authorization")
@@ -511,7 +511,7 @@ class NetworkClient {
             }
             let plan = obj["plan"] as? String ?? "free"
             let isUnlimited = obj["isUnlimited"] as? Bool ?? false
-            return (credits, plan, isUnlimited, MinutesBalance.balance(from: obj) ?? 0)
+            return (credits, plan, isUnlimited, MinutesBalance.balance(from: obj) ?? 0, obj["trial"] as? Bool ?? false)
         } catch { return nil }
     }
 

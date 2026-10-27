@@ -4788,8 +4788,9 @@ class MainViewModel {
             creditsRetryAttempt = 0
             session.plan = result.plan
             session.isUnlimited = result.isUnlimited
+            session.isTrial = result.trial
             minutesBalance = result.minutesBalance
-            dlog("Credits: \(result.credits), plan=\(result.plan), unlimited=\(result.isUnlimited)\(result.minutesBalance > 0 ? ", \(result.minutesBalance) bought minutes" : "")", tag: "CREDITS")
+            dlog("Credits: \(result.credits), plan=\(result.plan)\(result.trial ? " (trial)" : ""), unlimited=\(result.isUnlimited)\(result.minutesBalance > 0 ? ", \(result.minutesBalance) bought minutes" : "")", tag: "CREDITS")
             updateCreditsUI(credits: result.credits, plan: result.plan, isUnlimited: result.isUnlimited)
             await fetchListeningTime()
         } else {
@@ -4827,12 +4828,20 @@ class MainViewModel {
     /// On the one-time free answers rather than a paid plan. A guest counts.
     var onFreeTrial: Bool {
         !session.isUnlimited &&
-        PlanFacts.isFreeTrial(plan: session.plan, signedIn: session.isLoggedIn && !session.isGuestSession)
+        PlanFacts.isFreeTrial(plan: session.plan, signedIn: session.isLoggedIn && !session.isGuestSession, trial: session.isTrial)
+    }
+
+    /// "Max plan", "Practice plan": the plan's name as people bought it. The trial is never a plan name ("Free trial").
+    var planName: String {
+        if onFreeTrial { return "Free trial" }
+        let p = session.plan.trimmingCharacters(in: .whitespaces)
+        if p.isEmpty { return "Your plan" }
+        return p.lowercased().hasSuffix("plan") ? p.capitalized : "\(p.capitalized) plan"
     }
 
     /// The hover text on the answers badge.
     var creditsTooltip: String {
-        if session.isUnlimited { return "Unlimited answers.\nClick for details." }
+        if session.isUnlimited { return "\(planName) is active.\nClick for details." }
         if !session.creditsKnown { return "Checking how many answers you have left.\nClick to try again." }
         return PlanFacts.tooltip(credits: session.credits, freeTrial: onFreeTrial,
                                  listeningLimitReached: audioMinutesRemaining == 0)
@@ -4908,6 +4917,7 @@ class MainViewModel {
         let action: (label: String, run: () -> Void)?
         switch d.step {
         case .moreAnswers: action = ("Get more answers", { NSWorkspace.shared.open(PlanFacts.addAnswersURL) })
+        case .upgrade:     action = ("Upgrade now", { NSWorkspace.shared.open(PlanFacts.pricingURL) })
         case .seePlans:    action = ("See plans", { NSWorkspace.shared.open(PlanFacts.pricingURL) })
         case .none:        action = nil
         }
@@ -4964,7 +4974,7 @@ class MainViewModel {
     /// a subscription, and the plans are offered too.
     /// A paid plan (not the free trial) that still has answers: no "N min left" badge, no auto-add of minutes.
     var paidPlanWithAnswers: Bool {
-        !PlanFacts.isFreeTrial(plan: session.plan, signedIn: session.isLoggedIn && !session.isGuestSession)
+        !onFreeTrial
             && session.creditsKnown && !PlanFacts.isEmpty(session.credits)
     }
 
@@ -4997,8 +5007,13 @@ class MainViewModel {
     func showOutOfAnswers() {
         let m = PlanFacts.outOfAnswers(freeTrial: onFreeTrial)
         aiAnswer = "\(m.title)\n\n\(m.body)"
-        showAlert(title: m.title, body: m.body, actionLabel: "Get more answers") {
-            NSWorkspace.shared.open(PlanFacts.addAnswersURL)
+        // Free answers or the free trial used up: "Upgrade now" to the plans (MAC_HANDOFF_2026-10-27). A paid plan
+        // out of answers keeps "Get more answers", where answers are added without changing plan.
+        dlog("OUT-OF-ANSWERS-BUTTON: \(onFreeTrial ? "Upgrade now" : "Get more answers")", tag: "CREDITS")
+        if onFreeTrial {
+            showAlert(title: m.title, body: m.body, actionLabel: "Upgrade now") { NSWorkspace.shared.open(PlanFacts.pricingURL) }
+        } else {
+            showAlert(title: m.title, body: m.body, actionLabel: "Get more answers") { NSWorkspace.shared.open(PlanFacts.addAnswersURL) }
         }
         dlog("Out of answers — told the user (free trial=\(onFreeTrial))", tag: "CREDITS")
     }
@@ -5014,19 +5029,20 @@ class MainViewModel {
             return
         }
         if isUnlimited {
-            // A retired unlimited account. Nobody can buy this now; it still has to read right.
-            creditsText = "Unlimited"
+            // A retired unlimited account. Nobody can buy this now; it still has to read right, and never as
+            // "unlimited" (owner's rule, MAC_HANDOFF_2026-10-27).
+            creditsText = planName
             creditsColor = Color(red: 167/255, green: 139/255, blue: 250/255)
-            creditsPlanText = "Unlimited"
+            creditsPlanText = planName
             return
         }
-        let free = PlanFacts.isFreeTrial(plan: plan, signedIn: session.isLoggedIn && !session.isGuestSession)
+        let free = onFreeTrial
         creditsText = MinutesBalance.badgeText(minutes: minutesBalance, fallback: PlanFacts.badgeText(credits),
                                                paidWithAnswers: !free && !PlanFacts.isEmpty(credits))
         creditsPlanText = free ? "Free trial" : "\(plan.capitalized) plan"
         if PlanFacts.isEmpty(credits) {
             creditsColor = Color(red: 239/255, green: 68/255, blue: 68/255)
-            creditsPlanText = "Get more answers"
+            creditsPlanText = free ? "Upgrade now" : "Get more answers"
         } else if PlanFacts.isLow(credits) {
             creditsColor = Color(red: 245/255, green: 158/255, blue: 11/255)
         } else {

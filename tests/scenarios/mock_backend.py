@@ -135,6 +135,7 @@ class H(BaseHTTPRequestHandler):
                 if os.environ.get("MOCK_CREDITS") and credit_requests == 1: live_credits = int(os.environ["MOCK_CREDITS"])
                 body = {"credits": live_credits, "plan": os.environ.get("MOCK_PLAN", "free"), "isUnlimited": False}
                 if os.environ.get("MOCK_MINUTES"): body["minutesBalance"] = int(os.environ["MOCK_MINUTES"])   # India, pay by the minute (item 57)
+                if os.environ.get("MOCK_TRIAL") == "1": body["trial"] = True   # the 3 day free trial: plan "pro", trial true (MAC_HANDOFF_2026-10-27)
         elif url == "/api/v1/interview/screen-cache" and self.command == "POST":
             raw = read_body(self)
             try: obj = json.loads(raw or b"{}")

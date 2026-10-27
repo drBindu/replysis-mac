@@ -216,7 +216,7 @@ struct SettingsView: View {
                                     .buttonStyle(.plain)
                                 } else if UserSession.shared.isLoggedIn {
                                     infoRow("Account", UserSession.shared.email)
-                                    infoRow("Plan", "\(UserSession.shared.plan.capitalized), \(PlanFacts.answersLabel(UserSession.shared.credits)) left")
+                                    infoRow("Plan", "\(UserSession.shared.isTrial || !PlanFacts.isPaid(UserSession.shared.plan) ? "Free trial" : UserSession.shared.plan.capitalized), \(PlanFacts.answersLabel(UserSession.shared.credits)) left")
                                 }
                                 Button("Check for Updates…") { AppUpdater.shared.checkForUpdates() }
                                     .font(.system(size: 11, weight: .medium))

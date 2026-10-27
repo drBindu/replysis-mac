@@ -103,6 +103,9 @@ class UserSession {
     var creditsKnown = false
     var plan = "free"
     var isUnlimited = false
+    /// The 3 day free trial: stored as plan "pro", but it is the free tier, never shown as Pro (`"trial": true` in the
+    /// credits reply, MAC_HANDOFF_2026-10-27).
+    var isTrial = false
     var speechmaticsKey = ""
     /// Deepgram's short-lived token, minted by /stt/key alongside the Speechmatics one when the
     /// server has Deepgram enabled. Empty means the engine runs Speechmatics exactly as before.
@@ -130,9 +133,7 @@ class UserSession {
     /// "Max plan", "teams"), and a plan nobody anticipated should not produce an upsell.
     var isPaidPlan: Bool {
         if isUnlimited { return true }
-        let p = plan.lowercased()
-        return ["pro", "max", "lifetime", "team", "enterprise", "unlimited"]
-            .contains { p.contains($0) }
+        return !isTrial && PlanFacts.isPaid(plan)
     }
 
     private let sessionFile: URL = {
