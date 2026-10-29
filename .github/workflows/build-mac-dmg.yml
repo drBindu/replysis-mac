@@ -7,6 +7,12 @@ on:
     paths-ignore:
       - '.github/workflows/offer-mac-update.yml'
       - '.github/workflows/build-mac-dmg.yml'
+      # Notes between the Mac and Windows Claude sessions, and their hook, are not app changes (2026-10-28).
+      - 'CHANNEL.md'
+      - 'CLAUDE.md'
+      - '.claude/**'
+      - 'tools/channel-check.sh'
+      - '.gitattributes'
   # Full rebuild with the feed on. Normally not needed any more: after a [no-feed] build has been checked,
   # offer-mac-update.yml offers that same checked zip in about a minute.
   workflow_dispatch:
