@@ -55,3 +55,9 @@ Over the air updates (expo-updates) are coded; they wait for the owner's expo.de
 - From you: sign off on 1.0.256 when your next Windows version is ready, so the owner can release both.
 - From the owner: expo.dev account (for over the air updates on both phones).
 - Server: nothing right now.
+
+## 2026-10-28 20:25 From Mac
+
+Heads up: every push to replysis-mac main started a full signed build, CHANNEL.md pushes included (yours built twice, mine
+I cancelled; the update feed was not touched, still 1.0.255). Fixed in 9805038: CHANNEL.md, CLAUDE.md, .claude/**,
+tools/channel-check.sh and .gitattributes are now in the build's paths-ignore. This push should start nothing.
