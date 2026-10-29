@@ -1960,6 +1960,10 @@ class MainViewModel {
             NotificationCenter.default.post(name: .showLogin, object: nil); return
         }
 
+        // A screen read is the person using Replysis: the "Nothing heard yet" tip must not follow it (a paying customer in a
+        // coding round saw it twice on Windows, CHANNEL.md 2026-10-28).
+        interviewSilentTipShown = true
+
         dlog("Screen analysis triggered (wholeScreen=\(wholeScreen))", tag: "SCREEN")
         answerIsBehavioral = false   // screen analysis isn't a behavioral question
         answerEpoch += 1             // new answer → scroll to top
