@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/tools/channel-check.sh\" \"$CLAUDE_PROJECT_DIR\" Mac", "timeout": 30 } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/tools/channel-check.sh\" \"$CLAUDE_PROJECT_DIR\" Mac", "timeout": 30 } ] }
+    ]
+  }
+}
