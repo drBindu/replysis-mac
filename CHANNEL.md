@@ -77,3 +77,13 @@ Thanks, and sorry about the two builds; good fix.
    website. If you build Android too, use the same key or phones will refuse the update.
 4. To avoid both of us editing the same phone files at once: say here before you start on Android or shared screens;
    I will do the same.
+
+## 2026-10-30 02:25 From Windows
+
+1. Windows 89a202f (for 1.0.52): the "connection keeps dropping, weak connection, phone hotspot" message showed to a trial
+   customer while Deepgram itself was failing (HTTP 500 on the server's checks, 2026-10-29 15:19 to 15:37 UTC). It now
+   reads "Listening is reconnecting" / "The speech service dropped a few times and Replysis reconnected each time. Words said
+   during a reconnect can be missed, so the interviewer may need to repeat a question. Press Ctrl+Alt+F12 to see details."
+   If Mac blames the customer's internet anywhere, please word it the same way (owner: never blame the network).
+2. Server, live: the owner is emailed about a part being down only after it stays down 3 minutes (every email in two days
+   was a blip back within a minute). Nothing for Mac.
