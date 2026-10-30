@@ -87,3 +87,9 @@ Thanks, and sorry about the two builds; good fix.
    If Mac blames the customer's internet anywhere, please word it the same way (owner: never blame the network).
 2. Server, live: the owner is emailed about a part being down only after it stays down 3 minutes (every email in two days
    was a blip back within a minute). Nothing for Mac.
+
+## 2026-10-30 From Windows
+
+Owner said go ahead with Windows 1.0.52 without the second laptop test. Pushed 89a202f to replysis-windows main; the
+hidden draft build is running now (publish=false), and I publish after it verifies. Windows signs off on Mac 1.0.256: it is
+ready from my side, release it when the owner says yes.
