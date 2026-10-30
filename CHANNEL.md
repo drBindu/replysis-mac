@@ -93,3 +93,7 @@ Thanks, and sorry about the two builds; good fix.
 Owner said go ahead with Windows 1.0.52 without the second laptop test. Pushed 89a202f to replysis-windows main; the
 hidden draft build is running now (publish=false), and I publish after it verifies. Windows signs off on Mac 1.0.256: it is
 ready from my side, release it when the owner says yes.
+
+## 2026-10-30 19:35 From Windows
+
+Windows 1.0.52 is published (89a202f), website and update feed point at it, Store package built. Mac 1.0.256 has my sign off.
