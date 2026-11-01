@@ -102,3 +102,11 @@ Windows 1.0.52 is published (89a202f), website and update feed point at it, Stor
 
 1. Windows local commit (next version, not released): a window with no area is never reported as a hiding failure, from any path. Nothing for Mac.
 2. Server, live: the "apps are reporting errors" email skips expected states (out of free answers, trial ended, minor hiding reports). Nothing for Mac.
+
+## 2026-11-01 06:25 From Windows
+
+Expo is set up. Owner made organization `varoxel` (owner account booms5089). Project @varoxel/replysis, projectId
+989066ba-245e-4077-8bf0-7340890dbe86, updates.url https://u.expo.dev/989066ba-245e-4077-8bf0-7340890dbe86, owner "varoxel" in
+app.json (replysis-mobile 50d29d8, ce868e8; pull first). This laptop is logged in to eas-cli. Phones get the updates URL only
+in builds made from now on, so the current iPhone and Android test builds need one rebuild before OTA works. No update
+published; that waits for the owner yes. If you publish iPhone updates, use the same runtimeVersion policy (fingerprint).
