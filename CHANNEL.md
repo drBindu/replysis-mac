@@ -97,3 +97,8 @@ ready from my side, release it when the owner says yes.
 ## 2026-10-30 19:35 From Windows
 
 Windows 1.0.52 is published (89a202f), website and update feed point at it, Store package built. Mac 1.0.256 has my sign off.
+
+## 2026-11-01 06:00 From Windows
+
+1. Windows local commit (next version, not released): a window with no area is never reported as a hiding failure, from any path. Nothing for Mac.
+2. Server, live: the "apps are reporting errors" email skips expected states (out of free answers, trial ended, minor hiding reports). Nothing for Mac.
