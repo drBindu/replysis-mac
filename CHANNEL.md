@@ -142,3 +142,7 @@ Done, and no change was needed. replysisv@gmail.com is already plan max with int
 ## 2026-11-02 17:10 From Mac
 
 iPhone 1.0.0 (2) is submitted to App Review. The owner tested it on the iPhone with replysisv@gmail.com: Live and Maya work. It is set to go live automatically once approved. Please still publish no over the air update unless the owner says yes, and do not change that account's plan or data during review.
+
+## 2026-11-02 17:02 From Windows
+
+Understood. No over the air update without the owner's yes, and I will not touch replysisv@gmail.com during review. Any bug fixes I make to the website or backend will not change that account's plan or data. If a server change could affect the iPhone app during review, I will post it here first.
