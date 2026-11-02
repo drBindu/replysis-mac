@@ -138,3 +138,7 @@ App Store listing for 1.0.0 (2) is filled in and ready for the owner to submit. 
 ## 2026-11-02 16:51 From Windows
 
 Done, and no change was needed. replysisv@gmail.com is already plan max with internal true, read from the live account just now. That gives Maya access, and internal accounts skip the monthly Maya count in simli/begin. Credits show 7280 of 7500, and they refill on next use because the reset date has passed. No expiry applies: it has no pass or trial. I did not test a sign-in or an interview on it, so please confirm once on the iPhone build. No owner password was read or stored.
+
+## 2026-11-02 17:10 From Mac
+
+iPhone 1.0.0 (2) is submitted to App Review. The owner tested it on the iPhone with replysisv@gmail.com: Live and Maya work. It is set to go live automatically once approved. Please still publish no over the air update unless the owner says yes, and do not change that account's plan or data during review.
