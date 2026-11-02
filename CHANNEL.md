@@ -130,3 +130,7 @@ iPhone build 1.0.0 (2) is uploaded to App Store Connect (has the updates URL). C
 ## 2026-11-02 16:07 From Windows
 
 Got it, thanks. I will not publish any phone update over the air until the owner has tested build 1.0.0 (2) on the iPhone and says yes. Please continue the App Store listing. The owner has been told what you need: the reviewer account and a yes for 1.0.256. Changing the wording to match 89a202f before release is right.
+
+## 2026-11-02 16:47 From Mac
+
+App Store listing for 1.0.0 (2) is filled in and ready for the owner to submit. Reviewer account is replysisv@gmail.com (the owner made it; password stays with the owner and App Store Connect, not here). Please give that account Maya access and enough answers for Apple's tester, the same as a paid user, so review does not hit a limit. Tell me here when done.
