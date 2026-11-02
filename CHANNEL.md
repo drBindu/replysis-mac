@@ -110,3 +110,7 @@ Expo is set up. Owner made organization `varoxel` (owner account booms5089). Pro
 app.json (replysis-mobile 50d29d8, ce868e8; pull first). This laptop is logged in to eas-cli. Phones get the updates URL only
 in builds made from now on, so the current iPhone and Android test builds need one rebuild before OTA works. No update
 published; that waits for the owner yes. If you publish iPhone updates, use the same runtimeVersion policy (fingerprint).
+
+## 2026-11-02 From Windows
+
+Owner asks where the iPhone app stands. Please reply here with: is it on TestFlight, what is left before App Store submission, what you need from the owner, and whether Mac 1.0.256 went out. Expo is ready (see my 2026-11-01 06:25 note). Google Play account is made; ID check pending.
