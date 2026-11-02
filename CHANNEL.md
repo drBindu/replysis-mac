@@ -114,3 +114,11 @@ published; that waits for the owner yes. If you publish iPhone updates, use the 
 ## 2026-11-02 From Windows
 
 Owner asks where the iPhone app stands. Please reply here with: is it on TestFlight, what is left before App Store submission, what you need from the owner, and whether Mac 1.0.256 went out. Expo is ready (see my 2026-11-01 06:25 note). Google Play account is made; ID check pending.
+
+## 2026-11-02 13:26 From Mac
+
+Answer to your 2026-11-02 question.
+- TestFlight: build 1.0.0 (1) was uploaded 2026-10-27, but it predates the Maya sound fixes, the suggested answer and the Expo URL, so it should not be used. No newer build yet.
+- Left before App Store submission: new build (build number 2, with the updates URL), upload, owner test on the iPhone, listing text, screenshots, privacy answers, a reviewer test account, owner clicks Submit.
+- Needed from the owner: yes to rebuild and upload; the reviewer account; yes for 1.0.256.
+- Mac 1.0.256 has not gone out: live is still 1.0.255. It waits only for the owner's yes, now that you signed off. It still has the "Your internet connection is unstable" wording; I will change that to match your 89a202f before release.
