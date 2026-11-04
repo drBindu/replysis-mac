@@ -88,9 +88,11 @@ enum ListeningProblems {
             // the only words on screen were "Connecting". The cause is the connection, so the
             // words say so and say what fixes it.
             return Description(
-                label: "WEAK CONNECTION",
-                title: "Your internet connection is unstable",
-                body: "Replysis cannot hold a steady connection to the speech service, so listening is delayed or cut off. This usually means a weak connection, such as a phone hotspot or a busy network. It keeps trying by itself. A stronger wireless network or a cable connection fixes it.",
+                // Not the customer's internet: on Windows this showed while the speech provider itself
+                // was failing (2026-10-29; owner: never blame the network). Same words as Windows.
+                label: "RECONNECTING",
+                title: "Listening is reconnecting",
+                body: "The speech service dropped a few times and Replysis reconnected each time. Words said during a reconnect can be missed, so the interviewer may need to repeat a question.",
                 step: .none)
         case .waitingToReconnect:
             return Description(
@@ -108,7 +110,7 @@ enum ListeningProblems {
             return Description(
                 label: "NO SPEECH SERVICE",
                 title: "Cannot reach the speech service",
-                body: "This is usually a network that blocks it, such as a work or school network or a VPN. Try a phone hotspot.",
+                body: "Replysis cannot reach the speech service right now and keeps trying by itself. If you use a VPN, try turning it off.",
                 step: .none)
         case .noNetwork:
             return Description(

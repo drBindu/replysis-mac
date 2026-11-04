@@ -487,7 +487,7 @@ struct LoginView: View {
                 successMsg = "Password reset email sent to \(cleanEmail)"
                 errorMsg   = ""
             } else {
-                errorMsg = "Could not send the reset email. Check the address and your connection."
+                errorMsg = "Could not send the reset email. Check the address and try again."
             }
         }
     }
@@ -548,7 +548,7 @@ struct LoginView: View {
             }
             return (false, errMsg)
         } catch let urlErr as URLError where urlErr.code == .timedOut {
-            return (false, "Connection timed out. Check your internet and try again.")
+            return (false, "Sign in is taking too long. Please try again.")
         } catch {
             return (false, "Connection error. Please try again.")
         }
@@ -611,7 +611,7 @@ struct LoginView: View {
             }
             return (false, errMsg)
         } catch let urlErr as URLError where urlErr.code == .timedOut {
-            return (false, "Connection timed out. Check your internet and try again.")
+            return (false, "Sign in is taking too long. Please try again.")
         } catch {
             return (false, "Connection error. Please try again.")
         }
