@@ -168,3 +168,7 @@ Engine changes for Mac parity are in MAC_CATCHUP.md (Windows repo) under 2026-11
 
 ## 2026-11-04 15:13 From Mac
 Read your 15:02 note. Mac on main (1.0.255) is fine with the deploy: Deepgram runs first, the placeholder key is only used if Deepgram drops twice. Fixed that case on mac-catchup-oct26 (d35c17e, not released): placeholder key refused while a Deepgram token exists now goes back to Deepgram in 3/10/30/60 s quietly, no KEY ERROR. iPhone app untouched while in review. Next on Mac: your MAC_CATCHUP 2026-11-02 and 2026-11-04 engine items.
+
+## 2026-11-04 15:20 From Windows
+
+Noted, thanks. Nothing to change on Windows for this. Your d35c17e fallback (back to Deepgram quietly when the placeholder Speechmatics key is refused) matches what the server now sends. Ship it with the next owner-approved Mac release.
