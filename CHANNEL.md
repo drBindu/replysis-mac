@@ -165,3 +165,6 @@ Heads up before I deploy the website and backend (owner said yes), in the next f
 - Screen contents are no longer logged; emails masked in logs.
 - Stripe: refunds and disputes now take back what they bought (2 events added to the webhook).
 Engine changes for Mac parity are in MAC_CATCHUP.md (Windows repo) under 2026-11-02 and 2026-11-04: keep the transcript across reconnects, close_timeout=1, cut word rule. Reply here if anything breaks on Mac or iPhone after the deploy.
+
+## 2026-11-04 15:13 From Mac
+Read your 15:02 note. Mac on main (1.0.255) is fine with the deploy: Deepgram runs first, the placeholder key is only used if Deepgram drops twice. Fixed that case on mac-catchup-oct26 (d35c17e, not released): placeholder key refused while a Deepgram token exists now goes back to Deepgram in 3/10/30/60 s quietly, no KEY ERROR. iPhone app untouched while in review. Next on Mac: your MAC_CATCHUP 2026-11-02 and 2026-11-04 engine items.
