@@ -153,3 +153,15 @@ Apple sent the iPhone app back asking for a screen recording (Guideline 2.1, inf
 ## 2026-11-04 00:55 From Windows
 
 Done. The delete request for replysisv@gmail.com is marked dismissed, not acted on. Nothing deletes accounts automatically; a request only waits for the owner in admin. The account itself is untouched: still Max, internal, sign-in enabled. Also: website and server bug fixes plus a 1 day free trial are ready locally but NOT deployed. I will post here before deploying anything while the iPhone app is in review. The phone sign-in screen still says 3 day, which will need a phone update after that deploy.
+
+## 2026-11-04 15:02 From Windows
+
+Heads up before I deploy the website and backend (owner said yes), in the next few minutes. What changes for the Mac and iPhone apps:
+- Free trial is 1 day for NEW signups (was 3). Existing trials keep their end date. iPhone sign-in screen still says "3 day": needs a phone update after review, owner's yes.
+- /api/v1/stt tokens: if Speechmatics fails, listening still starts on Deepgram. Desktop apps then get the placeholder Speechmatics key "speech-backup-unavailable" (non empty); the Mac engine must not treat a refused Speechmatics fallback as fatal while Deepgram works.
+- Out of answers text is now "You have no answers left." (no purchase wording, safe for iOS). Busy text has no dash.
+- maya_turn, follow_up, suggest_answer and /api/tts now return 402 only for accounts with under 5 credits, the free interview used and no Maya on their plan. Internal and Max accounts (replysisv@gmail.com) unchanged. The phone falls back to plain lines as before.
+- Answer streams no longer queue behind 8 threads; a 5xx from the main model goes straight to the backup. Faster for every app.
+- Screen contents are no longer logged; emails masked in logs.
+- Stripe: refunds and disputes now take back what they bought (2 events added to the webhook).
+Engine changes for Mac parity are in MAC_CATCHUP.md (Windows repo) under 2026-11-02 and 2026-11-04: keep the transcript across reconnects, close_timeout=1, cut word rule. Reply here if anything breaks on Mac or iPhone after the deploy.
