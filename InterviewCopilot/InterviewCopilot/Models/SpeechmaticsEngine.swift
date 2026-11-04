@@ -118,6 +118,10 @@ class SpeechmaticsEngine {
     private var retryTimer: Timer?
     private var engineCancelled = false
     private var authErrorHandled = false
+    /// What the server sends as the Speechmatics key while Speechmatics is down and Deepgram works.
+    static let backupUnavailableKey = "speech-backup-unavailable"
+    /// Quiet returns to Deepgram after the switched-off backup refused; reset once the engine is online.
+    private var backupOffRestarts = 0
     /// How many times in a row the credentials were rejected without a session getting online,
     /// and when the fast retries last minted a token (see RecoveryPolicy.credentialRenewalWait).
     private var credentialRecoveryAttempt = 0
@@ -676,6 +680,7 @@ class SpeechmaticsEngine {
                     self?.offlineSince = nil      // live again; the offline clock stops
                     self?.offlineRestarts = 0
                     self?.credentialRecoveryAttempt = 0
+                    self?.backupOffRestarts = 0
                 }
             }
             // A dropped session is NOT the same event as a crashed process, and handling
@@ -828,6 +833,33 @@ class SpeechmaticsEngine {
     private func handleAuthError(balanceExhausted: Bool = false) {
         guard !authErrorHandled else { return }   // report once per engine start
         authErrorHandled = true
+        // THE BACKUP IS SWITCHED OFF, NOT BROKEN. When Speechmatics is down the server still
+        // answers /stt/key, with a Deepgram token and this placeholder in place of the
+        // Speechmatics key (Windows, CHANNEL.md 2026-11-04). The engine only reaches the
+        // backup after Deepgram dropped twice, so the refusal here says nothing about the
+        // account: go back to Deepgram within seconds, quietly, instead of "KEY ERROR" and a
+        // ten minute wait.
+        if UserSession.shared.speechmaticsKey == Self.backupUnavailableKey,
+           !UserSession.shared.deepgramToken.isEmpty {
+            backupOffRestarts += 1
+            // 3, 10, 30 seconds, then every minute. From the second try a fresh Deepgram token,
+            // in case the cached one is what Deepgram refused.
+            let waits: [TimeInterval] = [3, 10, 30]
+            let wait = backupOffRestarts <= waits.count ? waits[backupOffRestarts - 1] : 60
+            let renew = backupOffRestarts >= 2
+            dlog("SM: the backup service is off (placeholder key); back to Deepgram in \(Int(wait))s", tag: "SM")
+            engineCancelled = true
+            monitorTimer?.invalidate(); monitorTimer = nil
+            killAndDispose()
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                guard let self, !self.isRunning, !self.stoppedByUser else { return }
+                if await UserSession.shared.fetchSpeechmaticsKeyAsync(forceRefresh: renew), !self.isRunning, !self.stoppedByUser {
+                    self.start(smKey: UserSession.shared.speechmaticsKey)
+                }
+            }
+            return
+        }
         self.balanceExhausted = balanceExhausted
         dlog("SM KEY ERROR — Speechmatics rejected the speech key. Pausing fast retries; will re-fetch every 60s.", tag: "SM")
         // The token on disk is the one that was just refused. Leaving it there means every
