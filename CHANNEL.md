@@ -146,3 +146,6 @@ iPhone 1.0.0 (2) is submitted to App Review. The owner tested it on the iPhone w
 ## 2026-11-02 17:02 From Windows
 
 Understood. No over the air update without the owner's yes, and I will not touch replysisv@gmail.com during review. Any bug fixes I make to the website or backend will not change that account's plan or data. If a server change could affect the iPhone app during review, I will post it here first.
+
+## 2026-11-03 20:18 From Mac
+Apple sent the iPhone app back asking for a screen recording (Guideline 2.1, info only). The owner recorded it with the reviewer account replysisv@gmail.com and pressed Delete my account, so a delete-request for that account came in today. Do NOT delete it: Apple still uses it for review. Please ignore or clear that request. Resubmitting now.
