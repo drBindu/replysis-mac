@@ -7,7 +7,7 @@ trap 'rm -rf "$BUILD"' EXIT
 xcrun swiftc -module-cache-path "$BUILD/cache" \
   "$SRC/AutoTurnDetector.swift" "$SRC/PromptBuilder.swift" "$SRC/AudioSourceRules.swift" "$SRC/PlanFacts.swift" "$SRC/ListeningProblems.swift" "$SRC/RecoveryPolicy.swift" "$SRC/Gzip.swift" "$SRC/TranscriptTyping.swift" "$SRC/VocabTerms.swift" "$SRC/AccountScope.swift" "$SRC/SessionInsights.swift" "$SRC/UplinkGovernor.swift" "$SRC/OcrLayout.swift" "$SRC/AnswerClosers.swift" "$SRC/AnswerLayout.swift" "$SRC/CaptureTarget.swift" "$SRC/Clipboard.swift" "$SRC/ScreenOcr.swift" "$SRC/OAuthLoopback.swift" "$SRC/ClosingMarker.swift" "$SRC/AppIdentity.swift" "$SRC/PresencePing.swift" "$SRC/ClientErrorReporter.swift" "$SRC/ScreeningOptions.swift" "$SRC/MinutesBalance.swift" \
   "$SRC/GlobalHotkey.swift" "$SRC/AppNotifications.swift" \
-  "$SRC/AudioInputRoute.swift" "$SRC/StealthSelfTestRules.swift" "$SRC/ListeningMode.swift" "$SRC/ResumeParser.swift" \
+  "$SRC/AudioInputRoute.swift" "$SRC/StealthSelfTestRules.swift" "$SRC/ListeningMode.swift" "$SRC/ResumeParser.swift" "$SRC/SignInMessages.swift" \
   "$ROOT/tools/regression/main.swift" -o "$BUILD/regressions"
 "$BUILD/regressions"
 
@@ -30,3 +30,13 @@ done
 grep -q 'reportAs: ListeningProblems.reportKind(kind)' "$VM" || { echo "REPORT CHECK FAILED: speech problems are not reported by kind"; exit 1; }
 grep -q 'reportAs: "no-microphone-minor"' "$VM" || { echo "REPORT CHECK FAILED: no microphone is not reported as minor"; exit 1; }
 echo "REPORT CHECK: banners are reported by kind, information banners not at all"
+
+# The sign-in page (Windows bug rounds 1 and 32): fields and icon buttons carry names for VoiceOver, a closed window reports
+# nothing, and no sign-in words blame the connection.
+LOGIN="$ROOT/InterviewCopilot/InterviewCopilot/Views/LoginView.swift"
+for label in '"Email address"' '"Password"' '"Full name"' 'showPassword ? "Hide password" : "Show password"' '"Close"'; do
+  grep -q "accessibilityLabel($label)" "$LOGIN" || { echo "SIGN IN CHECK FAILED: no accessibility label $label"; exit 1; }
+done
+grep -q 'onDisappear { life.closed = true }' "$LOGIN" && grep -q 'guard !life.closed else { return }' "$LOGIN" || { echo "SIGN IN CHECK FAILED: a closed sign-in window still reports"; exit 1; }
+if grep -niE '"[^"]*(connection|internet|network)[^"]*"' "$LOGIN" "$ROOT/InterviewCopilot/InterviewCopilot/Models/GoogleSignIn.swift" | grep -v 'dlog(' ; then echo "SIGN IN CHECK FAILED: sign-in words blame the connection"; exit 1; fi
+echo "SIGN IN CHECK: labels for VoiceOver, a closed window reports nothing, no connection words"

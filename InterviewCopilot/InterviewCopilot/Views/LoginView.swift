@@ -11,6 +11,9 @@ struct LoginView: View {
     @State private var isLoading   = false
     @State private var errorMsg    = ""
     @State private var successMsg  = ""
+    /// Whether the sign-in window has gone. A reference, so a sign-in still running when the window closes can read it.
+    @State private var life = WindowLife()
+    final class WindowLife { var closed = false }
 
     /// `flat` draws the form without a scroll view, for the debug snapshot (an image renderer
     /// cannot draw a scroll view's content). The real window always scrolls if it has to.
@@ -253,6 +256,7 @@ struct LoginView: View {
                                 .textFieldStyle(.plain).focused($focus, equals: .name)
                                 .font(.system(size: 13.5)).foregroundColor(Palette.ink)
                                 .autocorrectionDisabled().onSubmit { focus = .email }
+                                .accessibilityLabel("Full name")
                         }
                         .padding(.bottom, 16)
                     }
@@ -263,6 +267,7 @@ struct LoginView: View {
                             .textFieldStyle(.plain).focused($focus, equals: .email)
                             .font(.system(size: 13.5)).foregroundColor(Palette.ink)
                             .autocorrectionDisabled().onSubmit { focus = .password }
+                            .accessibilityLabel("Email address")
                     }
                     .padding(.bottom, 16)
 
@@ -278,6 +283,7 @@ struct LoginView: View {
                         .textFieldStyle(.plain).focused($focus, equals: .password)
                         .font(.system(size: 13.5)).foregroundColor(Palette.ink)
                         .onSubmit { submit() }
+                        .accessibilityLabel("Password")
                         Button(action: { showPassword.toggle() }) {
                             Image(systemName: showPassword ? "eye.slash" : "eye")
                                 .font(.system(size: 13)).foregroundColor(Palette.faint)
@@ -285,6 +291,8 @@ struct LoginView: View {
                         }
                         .buttonStyle(.plain)
                         .help(showPassword ? "Hide password" : "Show password")
+                        // The name follows the tooltip, for VoiceOver (Windows bug round 32).
+                        .accessibilityLabel(showPassword ? "Hide password" : "Show password")
                         .padding(.trailing, 5)
                     }
 
@@ -369,9 +377,22 @@ struct LoginView: View {
         .task {
             focus = hasSavedAccount ? nil : .email
         }
+        .onAppear { life.closed = false }
+        .onDisappear { life.closed = true }
     }
 
     // MARK: — Actions
+
+    /// Shows a sign-in problem and reports it to admin (Windows LoginWindow.ShowError): by kind, typing mistakes minor, empty
+    /// fields not at all. A window already closed shows and reports nothing: someone closing it while a sign-in was still
+    /// running is not a failed sign-in (Windows bug round 1).
+    private func fail(_ message: String, _ life: WindowLife) {
+        guard !life.closed else { return }
+        if let kind = SignInMessages.reportKind(message) {
+            ClientErrorReporter.reportProblem(kind: kind, message: message)
+        }
+        errorMsg = message
+    }
 
     /// What was typed, without the space or line break a paste brings with it. An email with a
     /// trailing space was refused as "Incorrect email or password", which sends someone to reset a
@@ -381,11 +402,12 @@ struct LoginView: View {
     func signIn() {
         guard !isLoading else { return }   // a double click sent two requests, and "too many attempts" is real
         guard !cleanEmail.isEmpty && !password.isEmpty else {
-            errorMsg = "Please enter your email and password."
+            errorMsg = SignInMessages.emptyFields
             return
         }
         isLoading = true
         errorMsg = ""
+        let life = self.life
         Task {
             let result = await signInWithEmailPassword()
             isLoading = false
@@ -393,27 +415,28 @@ struct LoginView: View {
                 vm.onLoginSuccess()
                 dismiss()
             } else {
-                errorMsg = result.error ?? "Sign in failed. Please try again."
+                fail(result.error ?? SignInMessages.failed, life)
             }
         }
     }
 
     func createAccount() {
         guard !fullName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            errorMsg = "Please enter your name."
+            errorMsg = SignInMessages.emptyName
             return
         }
         guard !isLoading else { return }
         guard !cleanEmail.isEmpty && !password.isEmpty else {
-            errorMsg = "Please enter your email and password."
+            errorMsg = SignInMessages.emptyFields
             return
         }
         guard password.count >= 6 else {
-            errorMsg = "Password must be at least 6 characters."
+            fail(SignInMessages.shortPassword, life)
             return
         }
         isLoading = true
         errorMsg = ""
+        let life = self.life
         Task {
             let result = await signUpWithEmailPassword()
             isLoading = false
@@ -421,7 +444,7 @@ struct LoginView: View {
                 vm.onLoginSuccess()
                 dismiss()
             } else {
-                errorMsg = result.error ?? "Could not create account. Please try again."
+                fail(result.error ?? SignInMessages.createFailed, life)
             }
         }
     }
@@ -432,6 +455,7 @@ struct LoginView: View {
         guard !isLoading else { return }
         isLoading = true
         errorMsg = ""
+        let life = self.life
         Task {
             let result = await GoogleSignIn.signIn()
             isLoading = false
@@ -446,7 +470,7 @@ struct LoginView: View {
                 vm.onLoginSuccess()
                 dismiss()
             } else {
-                errorMsg = result.error
+                fail(result.error, life)
                 // Report real failures so they surface automatically instead of only being
                 // known if the user happens to report them — but skip the two cases that
                 // are just the user closing the browser or double-tapping, not a bug.
@@ -460,6 +484,7 @@ struct LoginView: View {
     func continueAsSaved() {
         isLoading = true
         errorMsg = ""
+        let life = self.life
         Task {
             let ok = await UserSession.shared.tryRefreshAsync()
             isLoading = false
@@ -467,14 +492,14 @@ struct LoginView: View {
                 vm.onLoginSuccess()
                 dismiss()
             } else {
-                errorMsg = "Your session expired. Please sign in again."
+                fail(SignInMessages.sessionExpired, life)
             }
         }
     }
 
     func forgotPassword() {
         guard !cleanEmail.isEmpty else {
-            errorMsg = "Enter your email above, then tap Forgot password."
+            errorMsg = SignInMessages.emptyResetEmail
             return
         }
         // BUG-18 FIX: guard prevents spamming the Firebase reset endpoint via rapid taps.
@@ -508,7 +533,7 @@ struct LoginView: View {
         do {
             let (data, _) = try await URLSession.shared.data(for: AppIdentity.label(req))
             guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return (false, "Sign in failed. Please try again.")
+                return (false, SignInMessages.didNotGoThrough)
             }
             if let idToken      = obj["idToken"]      as? String,
                let refreshToken = obj["refreshToken"] as? String,
@@ -527,30 +552,12 @@ struct LoginView: View {
             // expose account enumeration (EMAIL_NOT_FOUND vs INVALID_PASSWORD tells attacker
             // which emails are registered — collapse both to the same message).
             let errCode = (obj["error"] as? [String: Any])?["message"] as? String ?? ""
-            // Matched by the start: the service adds text after the code ("TOO_MANY_ATTEMPTS_TRY_LATER :
-            // Access to this account has been temporarily disabled..."), and an exact match let that
-            // fall through to a title-cased dump of the raw message.
-            func code(_ c: String) -> Bool { errCode == c || errCode.hasPrefix(c + " ") }
-            let errMsg: String
-            if code("EMAIL_NOT_FOUND") || code("INVALID_PASSWORD") || code("INVALID_LOGIN_CREDENTIALS") {
-                errMsg = "Incorrect email or password."
-            } else if code("INVALID_EMAIL") {
-                errMsg = "Please enter a valid email address."
-            } else if code("USER_DISABLED") {
-                errMsg = "This account has been disabled. Contact support."
-            } else if code("TOO_MANY_ATTEMPTS_TRY_LATER") {
-                errMsg = "Too many failed attempts. Please try again later."
-            } else if code("MISSING_PASSWORD") || code("MISSING_EMAIL") {
-                errMsg = "Please enter your email and password."
-            } else {
-                if !errCode.isEmpty { dlog("AUTH: sign in refused with code \(errCode.prefix(40))", tag: "AUTH") }
-                errMsg = "Sign in failed. Please try again."
-            }
-            return (false, errMsg)
-        } catch let urlErr as URLError where urlErr.code == .timedOut {
-            return (false, "Sign in is taking too long. Please try again.")
+            // Matched by the code at the start: the service adds text after it ("WEAK_PASSWORD : ..."), and an unknown code
+            // never shows raw (SignInMessages).
+            if !errCode.isEmpty { dlog("AUTH: sign in refused with code \(SignInMessages.code(errCode).prefix(40))", tag: "AUTH") }
+            return (false, SignInMessages.message(firebaseCode: errCode, creating: false))
         } catch {
-            return (false, "Connection error. Please try again.")
+            return (false, SignInMessages.message(for: error))
         }
     }
 
@@ -570,7 +577,7 @@ struct LoginView: View {
         do {
             let (data, _) = try await URLSession.shared.data(for: AppIdentity.label(req))
             guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return (false, "Could not create account. Please try again.")
+                return (false, SignInMessages.didNotGoThrough)
             }
             if let idToken      = obj["idToken"]      as? String,
                let refreshToken = obj["refreshToken"] as? String,
@@ -591,29 +598,10 @@ struct LoginView: View {
                 return (true, nil)
             }
             let errCode = (obj["error"] as? [String: Any])?["message"] as? String ?? ""
-            func code(_ c: String) -> Bool { errCode == c || errCode.hasPrefix(c + " ") }
-            let errMsg: String
-            if code("EMAIL_EXISTS") {
-                errMsg = "An account with this email already exists. Try signing in instead."
-            } else if code("INVALID_EMAIL") {
-                errMsg = "Please enter a valid email address."
-            } else if code("WEAK_PASSWORD") {
-                errMsg = "Password must be at least 6 characters."
-            } else if code("OPERATION_NOT_ALLOWED") {
-                errMsg = "Account creation is temporarily unavailable. Please try again later."
-            } else if code("TOO_MANY_ATTEMPTS_TRY_LATER") {
-                errMsg = "Too many attempts. Please try again later."
-            } else if code("MISSING_PASSWORD") || code("MISSING_EMAIL") {
-                errMsg = "Please enter your email and password."
-            } else {
-                if !errCode.isEmpty { dlog("AUTH: sign up refused with code \(errCode.prefix(40))", tag: "AUTH") }
-                errMsg = "Could not create account. Please try again."
-            }
-            return (false, errMsg)
-        } catch let urlErr as URLError where urlErr.code == .timedOut {
-            return (false, "Sign in is taking too long. Please try again.")
+            if !errCode.isEmpty { dlog("AUTH: sign up refused with code \(SignInMessages.code(errCode).prefix(40))", tag: "AUTH") }
+            return (false, SignInMessages.message(firebaseCode: errCode, creating: true))
         } catch {
-            return (false, "Connection error. Please try again.")
+            return (false, SignInMessages.message(for: error))
         }
     }
 

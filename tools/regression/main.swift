@@ -1234,5 +1234,32 @@ check(evil == .notUsed("no reason given"), "minutes: an address that is not Stri
 check(MinutesBalance.outcome(fromAddResponse: Data(#"{"added":0,"reason":"auto add is off"}"#.utf8)) == .notUsed("auto add is off"), "minutes: auto add off, the reason is kept for the log")
 check(MinutesBalance.balance(from: ["minutesBalance": -3]) == 0 && MinutesBalance.balance(from: ["minutesBalance": 12]) == 12 && MinutesBalance.balance(from: [:]) == nil, "minutes: the balance is read, never below zero")
 
+// ── Sign-in words and reports (Windows MAC_CATCHUP 2026-11-02 and 2026-11-07, bug round 1) ─────────────────────────────
+check(SignInMessages.message(firebaseCode: "WEAK_PASSWORD : Password should be at least 6 characters", creating: true) == SignInMessages.shortPassword, "sign in: a code with detail after it still maps")
+check(SignInMessages.message(firebaseCode: "TOO_MANY_ATTEMPTS_TRY_LATER : Access to this account has been temporarily disabled", creating: false).hasPrefix("Too many attempts"), "sign in: a lockout with detail still maps")
+check(SignInMessages.message(firebaseCode: "INVALID_LOGIN_CREDENTIALS", creating: false) == SignInMessages.wrongCredentials, "sign in: wrong password")
+check(SignInMessages.message(firebaseCode: "EMAIL_EXISTS", creating: true) == SignInMessages.emailUsed, "sign up: email already used")
+check(SignInMessages.message(firebaseCode: "SOMETHING_NEW : raw detail", creating: false) == "Could not sign in just now. Please try again.", "sign in: an unknown code never shows raw")
+check(!SignInMessages.message(firebaseCode: "SOMETHING_NEW", creating: true).contains("SOMETHING"), "sign up: an unknown code never shows raw")
+check(SignInMessages.message(for: URLError(.timedOut)) == "That took too long. Please try again.", "sign in: a timeout")
+check(SignInMessages.message(for: URLError(.notConnectedToInternet)) == "Could not sign in just now. Please try again.", "sign in: no reply at all")
+check(SignInMessages.didNotGoThrough == "That did not go through. Please try again.", "sign in: an unreadable reply")
+for m in [SignInMessages.failed, SignInMessages.tooLong, SignInMessages.didNotGoThrough, SignInMessages.createFailed,
+          SignInMessages.message(firebaseCode: "USER_DISABLED", creating: false), SignInMessages.message(firebaseCode: "OPERATION_NOT_ALLOWED", creating: true)] {
+    let low = m.lowercased()
+    check(!low.contains("connection") && !low.contains("internet") && !low.contains("network"), "sign in never blames the network: \(m)")
+}
+for code in ["INVALID_PASSWORD", "EMAIL_NOT_FOUND", "INVALID_EMAIL", "WEAK_PASSWORD : x", "EMAIL_EXISTS", "INVALID_LOGIN_CREDENTIALS"] {
+    let kind = SignInMessages.reportKind(SignInMessages.message(firebaseCode: code, creating: true)) ?? ""
+    check(kind.hasPrefix("signin-") && kind.hasSuffix("-minor"), "sign in: the typing mistake \(code) is reported minor (\(kind))")
+}
+for code in ["USER_DISABLED", "TOO_MANY_ATTEMPTS_TRY_LATER", "SOMETHING_NEW"] {
+    let kind = SignInMessages.reportKind(SignInMessages.message(firebaseCode: code, creating: false)) ?? ""
+    check(kind.hasPrefix("signin-") && !kind.hasSuffix("-minor"), "sign in: \(code) still counts (\(kind))")
+}
+check(SignInMessages.reportKind(SignInMessages.tooLong) == "signin-that-took-too-long-please-try-again", "sign in: reported by its kind")
+check(SignInMessages.reportKind(SignInMessages.emptyFields) == nil && SignInMessages.reportKind(SignInMessages.emptyName) == nil
+      && SignInMessages.reportKind(SignInMessages.googleCancelled) == nil, "sign in: empty fields and a cancelled Google sign-in are not reported")
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)
