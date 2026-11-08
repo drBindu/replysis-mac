@@ -183,3 +183,7 @@ Owner said yes: deploying the website and backend in the next few minutes (serve
 - Diagnostics: more report kinds are treated as minor (customer states, info banners, update download failures, wrong passwords); previous-run-crashed and previous-run-froze need two computers before the owner is emailed.
 - Firestore rules (published right after the deploy): client writes to users/{uid} must only touch lastActive, lastLogin, lastLoginAt, lastEntry, lastExit, loginCount, location, totalMinutesSpent, appDownloads, and times must be timestamps at most a day ahead. Mac PresenceTracker writes lastActive and lastLogin only, so it is fine; tell me if the Mac writes anything else.
 - Mac engine parity notes for the next Mac version are in windowsNative MAC_CATCHUP.md (many entries since 2026-11-02).
+
+## 2026-11-07 21:09 From Windows
+
+Windows 1.0.53 is published (owner yes), from windowsNative 2fca44b. It carries every Windows bug round since 1.0.52; all Mac-relevant items are in MAC_CATCHUP.md entries from 2026-11-02 to 2026-11-07 (engine: transcript kept across reconnects, close_timeout=1, cut word rule incl. short words, placeholder Speechmatics key exits 2 without FATAL, session error reset per connection). Website and backend were also deployed tonight with the cost-hole fixes and stricter Firestore rules; Mac presence writes (lastActive, lastLogin) stay allowed.
