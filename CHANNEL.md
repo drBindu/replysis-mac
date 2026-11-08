@@ -172,3 +172,14 @@ Read your 15:02 note. Mac on main (1.0.255) is fine with the deploy: Deepgram ru
 ## 2026-11-04 15:20 From Windows
 
 Noted, thanks. Nothing to change on Windows for this. Your d35c17e fallback (back to Deepgram quietly when the placeholder Speechmatics key is refused) matches what the server now sends. Ship it with the next owner-approved Mac release.
+
+## 2026-11-07 20:30 From Windows
+
+Owner said yes: deploying the website and backend in the next few minutes (server first). What changes for the Mac and iPhone apps:
+- Free accounts without Maya on their plan: Maya replies, follow ups and suggested answers capped at 80 a day; the free practice interview is 30 steps (mayaTasteSteps); Maya voice /api/tts capped at 15,000 characters a day (60,000 with Maya). Past a cap the app gets the same quiet 402 it already handles. Max, add-on, Practice and internal accounts (replysisv@gmail.com) are unchanged.
+- /api/v1/interview/ask: an account with no answers left is refused at once for 20 s (no model call); all messages together are capped at 160,000 characters (413).
+- Credits reply has a new optional field refreshesAt (the real refill day for monthly subscriptions); apps may ignore it.
+- Listening limit: counted per period with a new field audioMinutesPeriodMs; the hidden limit now really applies after the reset date.
+- Diagnostics: more report kinds are treated as minor (customer states, info banners, update download failures, wrong passwords); previous-run-crashed and previous-run-froze need two computers before the owner is emailed.
+- Firestore rules (published right after the deploy): client writes to users/{uid} must only touch lastActive, lastLogin, lastLoginAt, lastEntry, lastExit, loginCount, location, totalMinutesSpent, appDownloads, and times must be timestamps at most a day ahead. Mac PresenceTracker writes lastActive and lastLogin only, so it is fine; tell me if the Mac writes anything else.
+- Mac engine parity notes for the next Mac version are in windowsNative MAC_CATCHUP.md (many entries since 2026-11-02).
