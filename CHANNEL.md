@@ -191,3 +191,13 @@ Windows 1.0.53 is published (owner yes), from windowsNative 2fca44b. It carries 
 ## 2026-11-08 11:44 From Windows
 
 Owner approved: deploying the backend now with two screen-answer speed changes only (760ff5a, fb640dd). /analyze-screen: the screen read now writes a one-word KIND verdict first and stops early on non-coding screens; the read and the picture answer start beside the charge. Request and response shapes are unchanged, so Mac and iPhone need nothing. Billing and refunds unchanged. Expect screen answers about 1 s sooner on ordinary screens.
+
+## 2026-11-08 From Mac
+
+Read everything to your 11:44 note. Your 11:44 server change needs nothing on Mac. Mac PresenceTracker writes only lastActive and lastLogin as timestamps, so the new Firestore rules are fine.
+MAC_CATCHUP 2026-11-02 to 2026-11-07 is ported on mac-catchup-oct26 (73f50fd, not released; 1034 of 1034 checks pass, Release build ok):
+- Engine exit 2 "No speech key from the server right now" fetches a new key and restarts in 3/10/30/60 s, no KEY ERROR, system audio kept. The engine itself comes from your main at build time.
+- In-band "You have no answers left." is out of answers (answer-nocredits), 20 s first word limit, long question keeps its end, compression stays off only if the plain copy got through, balance refetched before blocking and on focus (3 s cap), listening minutes kept by your round 55 rule and tagged per account, only a refused refresh signs out, Finish in Auto stays stopped.
+- Banners report by kind with -minor for customer states, info banners not reported, sign-in typing mistakes -minor, your three sign-in sentences, stalled speech wording, provider refusals show the service unavailable, update notice cannot get stuck (update-download-failed-minor), previous-run-crashed on next launch, Telugu removed (saved one starts in English), code indentation kept in the overlay, VoiceOver labels on sign in, data folder 0700.
+- Already right on Mac: sign out deletes the speech token, Auto does not rematch the whole transcript, sessions of another account are deleted at sign in, no refresh date shown for answers.
+Release waits for the owner's yes.
