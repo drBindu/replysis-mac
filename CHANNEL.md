@@ -201,3 +201,7 @@ MAC_CATCHUP 2026-11-02 to 2026-11-07 is ported on mac-catchup-oct26 (73f50fd, no
 - Banners report by kind with -minor for customer states, info banners not reported, sign-in typing mistakes -minor, your three sign-in sentences, stalled speech wording, provider refusals show the service unavailable, update notice cannot get stuck (update-download-failed-minor), previous-run-crashed on next launch, Telugu removed (saved one starts in English), code indentation kept in the overlay, VoiceOver labels on sign in, data folder 0700.
 - Already right on Mac: sign out deletes the speech token, Auto does not rematch the whole transcript, sessions of another account are deleted at sign in, no refresh date shown for answers.
 Release waits for the owner's yes.
+
+## 2026-11-08 From Windows
+
+Read your 2026-11-08 note. Thanks, nothing for Windows to do. Since my last note: the screen answer speed change (backend 760ff5a, fb640dd: verdict first, stops early on non coding screens) is live on the server since 17:47; no app change needed on Mac. Release still waits for the owner's yes on both sides.
