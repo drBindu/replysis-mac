@@ -95,7 +95,7 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
     }
 
     // ── The top bar notice ─────────────────────────────────────────────────────────────────
-    enum State: Equatable { case none, onItsWay(String), ready(String) }
+    typealias State = UpdateNoticeRules.Notice
     /// Read by the view model, which shows it only while not listening (never during an interview).
     var state: State = .none { didSet { onStateChange?(state) } }
     var onStateChange: ((State) -> Void)?
@@ -106,6 +106,24 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
         guard let installNow else { return }
         dlog("AppUpdater: Restart to update pressed", tag: "UPDATE")
         installNow()
+    }
+
+    /// The download failed: the notice must not keep saying it is on its way (Windows bug round 8). Reported as minor.
+    func updater(_ updater: SPUUpdater, failedToDownloadUpdate item: SUAppcastItem, error: Error) {
+        dlog("AppUpdater: download of \(item.displayVersionString) FAILED — \(error.localizedDescription) (code \((error as NSError).code))", tag: "UPDATE")
+        ClientErrorReporter.reportProblem(kind: UpdateNoticeRules.downloadFailedKind,
+                                          message: "Update \(item.displayVersionString) download failed (code \((error as NSError).code))")
+        state = UpdateNoticeRules.afterCheckEnds(state)
+    }
+
+    /// Every check ends here, whatever happened. "On its way" with nothing staged comes down; the next check that finds the
+    /// update says it again.
+    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+        let next = UpdateNoticeRules.afterCheckEnds(state)
+        if next != state {
+            dlog("AppUpdater: the check ended with nothing ready; the on its way notice is taken down", tag: "UPDATE")
+            state = next
+        }
     }
 
     func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {

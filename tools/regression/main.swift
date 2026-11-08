@@ -433,6 +433,33 @@ check(ListeningProblems.isConnectionTrouble(">>> [DEEPGRAM] error: timed out dur
 check(ListeningProblems.isConnectionTrouble(">>> [DEEPGRAM] HTTP 408: server rejected WebSocket connection: HTTP 408"), "an HTTP 408 is connection trouble")
 check(ListeningProblems.isConnectionTrouble(">>> [DEEPGRAM] error: received 1011 (internal error) Deepgram did not receive audio data or a text message"), "a drop for want of audio is connection trouble")
 check(!ListeningProblems.isConnectionTrouble(">>> STATUS: ONLINE"), "being online is not trouble")
+// Windows MAC_CATCHUP 2026-11-02: no problem ever blames the network, a VPN or a hotspot, or names Interview or Practice mode.
+for kind in ListeningProblems.Kind.allCases {
+    let d = ListeningProblems.describe(kind)
+    let words = (d.title + " " + d.body).lowercased()
+    check(!["network", "internet", "vpn", "hotspot", "wi-fi", "wifi"].contains(where: { words.contains($0) }), "problem \(kind) never blames the network")
+    check(!words.contains("practice mode") && !words.contains("interview mode"), "problem \(kind) names no listening mode")
+}
+check(ListeningProblems.describe(.noSpeechService).title == "Still connecting to speech", "stalled speech: Windows title")
+check(ListeningProblems.describe(.noSpeechService).body == "Replysis is connecting to the speech service and keeps trying on its own. It starts listening by itself as soon as it connects.", "stalled speech: Windows words")
+func detectFault(status: Int = 0, net: Bool = false, stalled: Bool = true, fault: Bool = true) -> ListeningProblems.Kind? {
+    ListeningProblems.detect(engineOnline: false, speechStatusCode: status, outOfListeningTime: false, outOfAnswers: false,
+                             waitingToRetry: true, fatalNoMicrophone: false, connectionStalled: stalled, noNetwork: net,
+                             anotherDevice: false, poorConnection: true, providerFault: fault)
+}
+check(detectFault() == .serviceUnavailable, "a speech provider refusal reads as the service unavailable, not reconnecting or the network")
+check(detectFault(fault: false) == .poorConnection, "without a provider refusal the old reading stands")
+check(detectFault(status: 401) == .signInExpired, "a provider refusal never hides an expired sign in")
+for code in ["402", "403", "429"] {
+    check(ListeningProblems.isProviderFaultLine(">>> [DEEPGRAM] Refused with \(code); Speechmatics takes over."), "provider refusal \(code) is a provider fault")
+}
+check(ListeningProblems.isProviderFaultLine(">>> [DEEPGRAM] HTTP 503: server rejected WebSocket connection: HTTP 503"), "a provider 5xx is a provider fault")
+check(!ListeningProblems.isProviderFaultLine(">>> [DEEPGRAM] Refused with 401; Speechmatics takes over."), "a 401 is a token to renew, not a provider fault")
+check(!ListeningProblems.isProviderFaultLine(">>> [DEEPGRAM] HTTP 408: server rejected WebSocket connection: HTTP 408"), "a 408 is the line, not the provider")
+check(!ListeningProblems.isProviderFaultLine(">>> STATUS: ONLINE"), "being online is not a provider fault")
+check(ListeningProblems.reportKind(.noAnswers) == "listening-noAnswers-minor" && ListeningProblems.reportKind(.noListeningTime) == "listening-noListeningTime-minor"
+      && ListeningProblems.reportKind(.noMicrophone) == "listening-noMicrophone-minor", "the customer's own state is reported as minor")
+check(ListeningProblems.reportKind(.serviceUnavailable) == "listening-serviceUnavailable" && ListeningProblems.reportKind(.noSpeechService) == "listening-noSpeechService", "a real speech problem is reported by kind, not minor")
 check(detectBusy() == .anotherDevice, "a full account reads as another device using it")
 check(detectBusy(waiting: true) == .anotherDevice, "...and the retry wait that follows does not turn it into reconnecting")
 check(detectBusy(online: true) == nil, "...and it clears the moment listening works")
@@ -1240,6 +1267,57 @@ check(ListeningReport.secondsForOwner(90, owner: "uid-a", current: "uid-a") == 9
 check(!RecoveryPolicy.refreshFailureSignsOut(refused: false) && RecoveryPolicy.refreshFailureSignsOut(refused: true), "sign in: only a refused refresh signs out, never a timeout or a 5xx")
 check(!RecoveryPolicy.sessionRefused(byStatus: 0) && !RecoveryPolicy.sessionRefused(byStatus: 500) && !RecoveryPolicy.sessionRefused(byStatus: 503) && RecoveryPolicy.sessionRefused(byStatus: 400), "sign in: Google's 5xx or no answer is not a refusal")
 check(!RecoveryPolicy.answerWaitsForRefresh(tokenAge: 52 * 60) && RecoveryPolicy.answerWaitsForRefresh(tokenAge: 59 * 60) && RecoveryPolicy.answerRefreshWaitCap == 3, "answer path: a token that still works is sent without waiting; one in its last minute waits at most 3 s")
+
+// ── Sign-in words and reports (Windows MAC_CATCHUP 2026-11-02 and 2026-11-07, bug round 1) ─────────────────────────────
+check(SignInMessages.message(firebaseCode: "WEAK_PASSWORD : Password should be at least 6 characters", creating: true) == SignInMessages.shortPassword, "sign in: a code with detail after it still maps")
+check(SignInMessages.message(firebaseCode: "TOO_MANY_ATTEMPTS_TRY_LATER : Access to this account has been temporarily disabled", creating: false).hasPrefix("Too many attempts"), "sign in: a lockout with detail still maps")
+check(SignInMessages.message(firebaseCode: "INVALID_LOGIN_CREDENTIALS", creating: false) == SignInMessages.wrongCredentials, "sign in: wrong password")
+check(SignInMessages.message(firebaseCode: "EMAIL_EXISTS", creating: true) == SignInMessages.emailUsed, "sign up: email already used")
+check(SignInMessages.message(firebaseCode: "SOMETHING_NEW : raw detail", creating: false) == "Could not sign in just now. Please try again.", "sign in: an unknown code never shows raw")
+check(!SignInMessages.message(firebaseCode: "SOMETHING_NEW", creating: true).contains("SOMETHING"), "sign up: an unknown code never shows raw")
+check(SignInMessages.message(for: URLError(.timedOut)) == "That took too long. Please try again.", "sign in: a timeout")
+check(SignInMessages.message(for: URLError(.notConnectedToInternet)) == "Could not sign in just now. Please try again.", "sign in: no reply at all")
+check(SignInMessages.didNotGoThrough == "That did not go through. Please try again.", "sign in: an unreadable reply")
+for m in [SignInMessages.failed, SignInMessages.tooLong, SignInMessages.didNotGoThrough, SignInMessages.createFailed,
+          SignInMessages.message(firebaseCode: "USER_DISABLED", creating: false), SignInMessages.message(firebaseCode: "OPERATION_NOT_ALLOWED", creating: true)] {
+    let low = m.lowercased()
+    check(!low.contains("connection") && !low.contains("internet") && !low.contains("network"), "sign in never blames the network: \(m)")
+}
+for code in ["INVALID_PASSWORD", "EMAIL_NOT_FOUND", "INVALID_EMAIL", "WEAK_PASSWORD : x", "EMAIL_EXISTS", "INVALID_LOGIN_CREDENTIALS"] {
+    let kind = SignInMessages.reportKind(SignInMessages.message(firebaseCode: code, creating: true)) ?? ""
+    check(kind.hasPrefix("signin-") && kind.hasSuffix("-minor"), "sign in: the typing mistake \(code) is reported minor (\(kind))")
+}
+for code in ["USER_DISABLED", "TOO_MANY_ATTEMPTS_TRY_LATER", "SOMETHING_NEW"] {
+    let kind = SignInMessages.reportKind(SignInMessages.message(firebaseCode: code, creating: false)) ?? ""
+    check(kind.hasPrefix("signin-") && !kind.hasSuffix("-minor"), "sign in: \(code) still counts (\(kind))")
+}
+check(SignInMessages.reportKind(SignInMessages.tooLong) == "signin-that-took-too-long-please-try-again", "sign in: reported by its kind")
+check(SignInMessages.reportKind(SignInMessages.emptyFields) == nil && SignInMessages.reportKind(SignInMessages.emptyName) == nil
+      && SignInMessages.reportKind(SignInMessages.googleCancelled) == nil, "sign in: empty fields and a cancelled Google sign-in are not reported")
+
+// ── Update notice (Windows MAC_CATCHUP 2026-11-07, bug round 8) ───────────────────────────────────────────────────────────
+check(UpdateNoticeRules.afterCheckEnds(.onItsWay("1.0.300")) == .none, "update: on its way with nothing ready comes down when the check ends")
+check(UpdateNoticeRules.afterCheckEnds(.ready("1.0.300")) == .ready("1.0.300"), "update: a staged update keeps its Restart notice")
+check(UpdateNoticeRules.afterCheckEnds(.none) == .none, "update: nothing stays nothing")
+check(UpdateNoticeRules.downloadFailedKind.hasSuffix("-minor"), "update: a failed download is reported as minor")
+
+// ── Interview language (Windows MAC_CATCHUP 2026-11-07 round 53) ──────────────────────────────────────────────────────────
+check(!LanguageRules.offered.contains(where: { LanguageRules.sarvamLanguages.contains($0.code) || $0.name.contains("Sarvam") }), "language: no Sarvam language is offered")
+check(LanguageRules.offered.first?.code == "en" && LanguageRules.offered.contains(where: { $0.code == "hi" }), "language: English first, Hindi still offered")
+check(LanguageRules.engineLanguage(saved: "te", sarvamKey: "") == "en" && LanguageRules.engineLanguage(saved: "te", sarvamKey: nil) == "en", "language: a saved Telugu with no key starts in English")
+check(LanguageRules.engineLanguage(saved: "te", sarvamKey: "sk_x") == "te", "language: a Telugu with its own key keeps working")
+check(LanguageRules.engineLanguage(saved: "hi", sarvamKey: "") == "hi" && LanguageRules.engineLanguage(saved: nil, sarvamKey: nil) == "en", "language: other languages unchanged, nothing saved is English")
+check(LanguageRules.pickerList(current: "en").count == LanguageRules.offered.count && LanguageRules.pickerList(current: "te").last?.code == "te", "language: a kept Telugu still shows in the picker")
+
+// ── Code keeps its indentation next to bullets (Windows MAC_CATCHUP 2026-11-07 round 20) ────────────────────────────────────
+let depthWithCode = "- Use a set for the lookups\n```python\ndef f(xs):\n    seen = set()\n    for x in xs:\n        seen.add(x)\n```\n* It runs in one pass"
+let depthOut = AnswerLayout.depthBullets(depthWithCode)
+check(depthOut.contains("\n    seen = set()\n    for x in xs:\n        seen.add(x)"), "depth: lines inside a code fence keep their indentation")
+check(depthOut.hasPrefix("• Use a set for the lookups") && depthOut.hasSuffix("• It runs in one pass"), "depth: lines outside the code are still bulleted")
+check(!depthOut.contains("• def") && !depthOut.contains("• seen") && !depthOut.contains("```") && !depthOut.contains("python"), "depth: code is never bulleted and the fences go")
+check(AnswerLayout.depthBullets("- one\n-  two\n\n• three") == "• one\n• two\n• three", "depth: plain bullets are unchanged")
+let indentedFirst = AnswerLayout.split("Here it is.\n```python\n\n    return x\n```")
+check(indentedFirst.code == "    return x", "split: the first code line keeps its indentation")
 
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

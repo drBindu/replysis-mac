@@ -54,6 +54,10 @@ class SpeechmaticsEngine {
     private(set) var engineBuildId = "unknown"
 
     private(set) var lastAudioActivityAt = Date.distantPast
+    /// When the engine last printed that the speech provider refused it or failed (HTTP 402, 403, 429, 5xx).
+    private(set) var lastProviderFaultAt = Date.distantPast
+    /// The provider refused or failed within the last 45 s: the window says the service is unavailable, not a network problem.
+    var providerAtFault: Bool { Date().timeIntervalSince(lastProviderFaultAt) < ListeningProblems.providerFaultWindow }
     private(set) var lastWordsAt = Date.distantPast
 
     /// Audio in the last 3s, and no words for 12s.
@@ -148,6 +152,10 @@ class SpeechmaticsEngine {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let dir = DeveloperOverrides.dataFolder.map { URL(fileURLWithPath: $0) } ?? support.appendingPathComponent("InterviewCopilot")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // The system sound FIFO (sysaudio.pcm, made 0600), the transcript the engine writes (latest.txt) and the flags all
+        // live here. The folder is the current user's only, so nothing passing audio or words to the engine can be read by
+        // another account even if a file in it is created with the default mode (Windows bug round 18). Nothing is deleted.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
         return dir
     }()
 
@@ -368,8 +376,9 @@ class SpeechmaticsEngine {
         let micCaptureEnabled = savedSettings["micCaptureEnabled"] as? Bool ?? false
         // The engine hears ONLY this language, so it has to match the interview. Speech in
         // another language comes back as garbled words in this one.
-        let language = (savedSettings["transcriptLanguage"] as? String ?? "en")
-            .trimmingCharacters(in: .whitespaces)
+        // A Sarvam language with no key is started in English: without the key the engine exits at once (round 53).
+        let language = LanguageRules.engineLanguage(saved: savedSettings["transcriptLanguage"] as? String,
+                                                    sarvamKey: savedSettings["sarvamApiKey"] as? String)
         // The saved preference AND the active mode must both permit the mic.
         let micAllowed = micCaptureEnabled && micCaptureAllowed
         let micGranted = micAllowed && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
@@ -622,6 +631,9 @@ class SpeechmaticsEngine {
             }
             if ListeningProblems.isConnectionTrouble(line) {
                 Task { @MainActor [weak self] in self?.noteConnectionTrouble() }
+            }
+            if ListeningProblems.isProviderFaultLine(line) {
+                Task { @MainActor [weak self] in self?.lastProviderFaultAt = Date() }
             }
             if Self.isNoSpeechKeyExit(line) {
                 Task { @MainActor [weak self] in self?.handleNoSpeechKeyExit() }

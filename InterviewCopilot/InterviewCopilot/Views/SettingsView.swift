@@ -63,7 +63,7 @@ struct SettingsView: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 Picker("", selection: Binding(get: { vm.transcriptLanguage },
                                                               set: { vm.setInterviewLanguage($0) })) {
-                                    ForEach(MainViewModel.interviewLanguages, id: \.code) { lang in
+                                    ForEach(LanguageRules.pickerList(current: vm.transcriptLanguage), id: \.code) { lang in
                                         Text(lang.name).tag(lang.code)
                                     }
                                 }

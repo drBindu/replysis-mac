@@ -4813,6 +4813,9 @@ class MainViewModel {
         // Everything the write needs is read HERE, on the main actor; the queue touches none of it.
         let header: String = {
             let fmt = DateFormatter()
+            // A fixed calendar: a Mac set to the Buddhist calendar wrote the year 2569 (Windows round 16).
+            fmt.locale = Locale(identifier: "en_US_POSIX")
+            fmt.calendar = Calendar(identifier: .gregorian)
             fmt.dateFormat = "yyyy-MM-dd HH:mm"
             return "SESSION \(sessionNumber) | ai | \(fmt.string(from: Date())) | RESUME: \(ResumeParser.extractName(resumeText))\n\n"
         }()
@@ -4997,7 +5000,8 @@ class MainViewModel {
             connectionStalled: stalled,
             noNetwork: !network.isUp,
             anotherDevice: engine.accountBusy,
-            poorConnection: network.isUp && engine.connectionIsPoor)
+            poorConnection: network.isUp && engine.connectionIsPoor,
+            providerFault: engine.providerAtFault)
         currentProblem = problem
         if let problem {
             showProblemOnce(problem)
@@ -5031,7 +5035,7 @@ class MainViewModel {
         case .seePlans:    action = ("See plans", { NSWorkspace.shared.open(PlanFacts.pricingURL) })
         case .none:        action = nil
         }
-        showAlert(title: d.title, body: d.body, actionLabel: action?.label ?? "", action: action?.run)
+        showAlert(title: d.title, body: d.body, actionLabel: action?.label ?? "", reportAs: ListeningProblems.reportKind(kind), action: action?.run)
     }
 
     /// Clicking the answers badge asks again at once. Someone who just upgraded or added
@@ -5097,7 +5101,8 @@ class MainViewModel {
         Task { @MainActor [weak self] in
             guard let self else { return }
             guard let link = await NetworkClient.shared.fetchReferralLink() else {
-                self.showAlert(title: "Invite link not ready", body: "Try again in a moment, or open replysis.com/account to copy it there.")
+                self.showAlert(title: "Invite link not ready", body: "Try again in a moment, or open replysis.com/account to copy it there.",
+                               reportAs: "invite-link-not-ready")
                 return
             }
             NSPasteboard.general.clearContents()
@@ -5121,9 +5126,9 @@ class MainViewModel {
         // out of answers keeps "Get more answers", where answers are added without changing plan.
         dlog("OUT-OF-ANSWERS-BUTTON: \(onFreeTrial ? "Upgrade now" : "Get more answers")", tag: "CREDITS")
         if onFreeTrial {
-            showAlert(title: m.title, body: m.body, actionLabel: "Upgrade now", reportKind: PlanFacts.answerProblemKind(noAnswersLeft: true, slug: "")) { NSWorkspace.shared.open(PlanFacts.pricingURL) }
+            showAlert(title: m.title, body: m.body, actionLabel: "Upgrade now", reportAs: "alert-no-answers-minor") { NSWorkspace.shared.open(PlanFacts.pricingURL) }
         } else {
-            showAlert(title: m.title, body: m.body, actionLabel: "Get more answers", reportKind: PlanFacts.answerProblemKind(noAnswersLeft: true, slug: "")) { NSWorkspace.shared.open(PlanFacts.addAnswersURL) }
+            showAlert(title: m.title, body: m.body, actionLabel: "Get more answers", reportAs: "alert-no-answers-minor") { NSWorkspace.shared.open(PlanFacts.addAnswersURL) }
         }
         dlog("Out of answers — told the user (free trial=\(onFreeTrial))", tag: "CREDITS")
     }
@@ -5556,9 +5561,10 @@ class MainViewModel {
             // chose Interview (microphone off) is moved to it once; after that the person's choice is kept.
             micCaptureEnabled = obj["micCaptureEnabled"] as? Bool ?? true
             if obj["oneListeningMode"] == nil { micCaptureEnabled = true; movedToOneMode = true }
-            transcriptLanguage = obj["transcriptLanguage"] as? String ?? "en"
             cloudSyncEnabled = obj["cloudSyncEnabled"] as? Bool ?? true
             sarvamApiKey = obj["sarvamApiKey"] as? String ?? ""
+            // A saved Telugu (or other Sarvam language) with no key starts in English (Windows round 53).
+            transcriptLanguage = LanguageRules.engineLanguage(saved: obj["transcriptLanguage"] as? String, sarvamKey: sarvamApiKey)
             isWatchMode = obj["screenAnswers"] as? Bool ?? true
             listeningMode = ListeningMode.fromStored(obj["listeningMode"] as? String)
                 ?? ((obj["autoModeEnabled"] as? Bool ?? false) ? .auto : .manual)
@@ -5593,7 +5599,11 @@ class MainViewModel {
 
     func saveSettings() {
         let path = engine.appDataFolder.appendingPathComponent("settings.json")
-        let obj: [String: Any] = ["mainOpacity": mainWindowOpacity,
+        // Starts from what is stored, as Windows now does (bug round 6: Save built a blank config and reset what the form
+        // did not carry). Every setting below is written from the window, and anything else in the file is kept.
+        var obj: [String: Any] = (try? Data(contentsOf: path))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        let current: [String: Any] = ["mainOpacity": mainWindowOpacity,
                                   "overlayOpacity": overlayOpacity, "answerLength": answerDetailed ? "detailed" : "short",
                                   "micCaptureEnabled": micCaptureEnabled,
                                   "oneListeningMode": true,
@@ -5607,6 +5617,7 @@ class MainViewModel {
                                   "screenKeysEverywhere": screenKeysEverywhere,
                                   "phoneOnly": phoneOnly,
                                   "opacityDefaultV2Applied": true]
+        obj.merge(current) { _, new in new }
         try? JSONSerialization.data(withJSONObject: obj).write(to: path)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
     }
@@ -5641,24 +5652,16 @@ class MainViewModel {
     // The engine hears ONLY this language (--language), so it has to match the interview:
     // speech in another language comes back as garbled words in this one. Same list and
     // codes as Windows, so a transcript is the same on both. Telugu and the other Indian
-    // languages Speechmatics cannot do are routed by the engine to Sarvam AI, which needs
-    // a key in Settings; without one they stay unavailable and the picker says so.
-    static let interviewLanguages: [(name: String, code: String)] = [
-        ("English", "en"), ("Hindi", "hi"), ("Tamil", "ta"), ("Telugu (Sarvam AI)", "te"),
-        ("Bengali", "bn"), ("Marathi", "mr"), ("Urdu", "ur"), ("Spanish", "es"),
-        ("French", "fr"), ("German", "de"), ("Portuguese", "pt"), ("Italian", "it"),
-        ("Mandarin Chinese", "cmn"), ("Japanese", "ja"), ("Korean", "ko"),
-        ("Arabic", "ar"), ("Russian", "ru"),
-    ]
-    /// Codes the engine routes to Sarvam AI. Keep in sync with SARVAM_LANG_MAP in
-    /// speechmatics_engine.py and with Windows _sarvamLangs.
-    static let sarvamLanguages: Set<String> = ["te", "kn", "ml", "gu", "pa", "or", "as"]
+    // languages Speechmatics cannot do need a Sarvam AI key no customer has, so they are not
+    // offered (Windows round 53, LanguageRules); one kept from an older version with its own key still works.
+    static var interviewLanguages: [(name: String, code: String)] { LanguageRules.offered }
+    static var sarvamLanguages: Set<String> { LanguageRules.sarvamLanguages }
 
     var transcriptLanguage = "en"
     var sarvamApiKey = ""
 
     var interviewLanguageName: String {
-        Self.interviewLanguages.first { $0.code == transcriptLanguage }?.name ?? "English"
+        LanguageRules.pickerList(current: transcriptLanguage).first { $0.code == transcriptLanguage }?.name ?? "English"
     }
 
     func setInterviewLanguage(_ code: String) {
@@ -5777,7 +5780,7 @@ class MainViewModel {
             ? "Plug in earphones with a mic and Replysis starts listening by itself."
             : "Replysis is listening to the computer's sound only. Plug in earphones with a mic if you want to practise out loud."
         noMicrophoneAlertTitle = title
-        showAlert(title: title, body: body)
+        showAlert(title: title, body: body, reportAs: "no-microphone-minor")
     }
 
     func handleMicrophoneConnected() {
@@ -5793,11 +5796,13 @@ class MainViewModel {
         ClientErrorReporter.reportProblem(kind: kind, message: "\(message) \(situation)")
     }
 
-    /// - Parameter reportKind: the kind to report it under, when the title is not the right one (out of answers is
-    ///   "answer-nocredits", which never counts towards the outage email).
-    func showAlert(title: String, body: String, actionLabel: String = "", reportKind: String? = nil, action: (() -> Void)? = nil) {
+    /// - Parameter reportAs: the problem KIND sent to admin, or nil for a notice that is not a problem ("Nothing heard yet",
+    ///   "Your minutes are almost over", "Invite link copied"). Never the title (Windows MAC_CATCHUP 2026-11-07, rounds 17
+    ///   and 22): reported by title, a customer out of answers or with no microphone counted towards the owner's "apps are
+    ///   reporting errors" email. A customer's own state ends in "-minor".
+    func showAlert(title: String, body: String, actionLabel: String = "", reportAs: String? = nil, action: (() -> Void)? = nil) {
         dlog("ALERT: \(title) — \(body)", tag: "ALERT")
-        reportProblem(reportKind ?? ("alert." + ClientErrorReporter.slug(title)), "\(title). \(body)")
+        if let reportAs { reportProblem(reportAs, "\(title). \(body)") }
         alertTitle = title; alertBody = body
         alertActionLabel = action == nil ? "" : actionLabel
         alertAction = action
@@ -6156,21 +6161,8 @@ class MainViewModel {
     /// anyway, which reads as a dash rather than a list — so convert leading markers to a
     /// real bullet here regardless of what it produced. Dashes are NOT touched: nothing in
     /// this section is spoken, and a hyphen mid-line is usually a range or a compound word.
-    private func cleanDepth(_ text: String) -> String {
-        var out: [String] = []
-        for raw in text.components(separatedBy: "\n") {
-            var line = raw.trimmingCharacters(in: .whitespaces)
-            line = PromptBuilder.stripMarkdownPreservingCode(line)
-            if line.isEmpty { continue }
-            for marker in ["- ", "* ", "• ", "•", "- ", "– "] where line.hasPrefix(marker) {
-                line = String(line.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
-                break
-            }
-            if line.isEmpty { continue }
-            out.append("• " + line)
-        }
-        return out.joined(separator: "\n")
-    }
+    /// Lines inside a code fence keep their indentation and are never bulleted (Windows round 20); see AnswerLayout.depthBullets.
+    private func cleanDepth(_ text: String) -> String { AnswerLayout.depthBullets(text) }
 }
 
 // MARK: - Color hex helper

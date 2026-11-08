@@ -77,8 +77,4 @@ enum AudioSourceRules {
         practiceOn ? "Hearing the meeting and your microphone" : "Hearing the meeting only"
     }
 
-    static let interviewHelp =
-        "Interview. Hears the meeting only, so your own answers are never taken as questions. Use this for a real interview in Zoom, Teams or Meet."
-    static let practiceHelp =
-        "Practice. Hears the meeting and your microphone, for practising on your own or with someone in the room."
 }

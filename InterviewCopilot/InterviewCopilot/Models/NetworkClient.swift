@@ -418,7 +418,7 @@ class NetworkClient {
                     if attempt == 0 && !yielded { try? await Task.sleep(nanoseconds: Self.answerRetryDelay); continue }
                     // Dropped mid-answer with text already on screen → keep the partial answer.
                     if yielded { onMain { onDone() } }
-                    else { onMain { onError("Connection issue. Please try again.") } }
+                    else { onMain { onError("That did not go through. Please try again.") } }
                     return
                 }
             }
