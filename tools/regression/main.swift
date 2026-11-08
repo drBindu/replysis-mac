@@ -1261,5 +1261,11 @@ check(SignInMessages.reportKind(SignInMessages.tooLong) == "signin-that-took-too
 check(SignInMessages.reportKind(SignInMessages.emptyFields) == nil && SignInMessages.reportKind(SignInMessages.emptyName) == nil
       && SignInMessages.reportKind(SignInMessages.googleCancelled) == nil, "sign in: empty fields and a cancelled Google sign-in are not reported")
 
+// ── Update notice (Windows MAC_CATCHUP 2026-11-07, bug round 8) ───────────────────────────────────────────────────────────
+check(UpdateNoticeRules.afterCheckEnds(.onItsWay("1.0.300")) == .none, "update: on its way with nothing ready comes down when the check ends")
+check(UpdateNoticeRules.afterCheckEnds(.ready("1.0.300")) == .ready("1.0.300"), "update: a staged update keeps its Restart notice")
+check(UpdateNoticeRules.afterCheckEnds(.none) == .none, "update: nothing stays nothing")
+check(UpdateNoticeRules.downloadFailedKind.hasSuffix("-minor"), "update: a failed download is reported as minor")
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)
