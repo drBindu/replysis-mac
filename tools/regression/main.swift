@@ -1275,5 +1275,15 @@ check(LanguageRules.engineLanguage(saved: "te", sarvamKey: "sk_x") == "te", "lan
 check(LanguageRules.engineLanguage(saved: "hi", sarvamKey: "") == "hi" && LanguageRules.engineLanguage(saved: nil, sarvamKey: nil) == "en", "language: other languages unchanged, nothing saved is English")
 check(LanguageRules.pickerList(current: "en").count == LanguageRules.offered.count && LanguageRules.pickerList(current: "te").last?.code == "te", "language: a kept Telugu still shows in the picker")
 
+// ── Code keeps its indentation next to bullets (Windows MAC_CATCHUP 2026-11-07 round 20) ────────────────────────────────────
+let depthWithCode = "- Use a set for the lookups\n```python\ndef f(xs):\n    seen = set()\n    for x in xs:\n        seen.add(x)\n```\n* It runs in one pass"
+let depthOut = AnswerLayout.depthBullets(depthWithCode)
+check(depthOut.contains("\n    seen = set()\n    for x in xs:\n        seen.add(x)"), "depth: lines inside a code fence keep their indentation")
+check(depthOut.hasPrefix("• Use a set for the lookups") && depthOut.hasSuffix("• It runs in one pass"), "depth: lines outside the code are still bulleted")
+check(!depthOut.contains("• def") && !depthOut.contains("• seen") && !depthOut.contains("```") && !depthOut.contains("python"), "depth: code is never bulleted and the fences go")
+check(AnswerLayout.depthBullets("- one\n-  two\n\n• three") == "• one\n• two\n• three", "depth: plain bullets are unchanged")
+let indentedFirst = AnswerLayout.split("Here it is.\n```python\n\n    return x\n```")
+check(indentedFirst.code == "    return x", "split: the first code line keeps its indentation")
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

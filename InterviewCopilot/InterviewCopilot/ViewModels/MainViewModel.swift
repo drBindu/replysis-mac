@@ -6052,21 +6052,8 @@ class MainViewModel {
     /// anyway, which reads as a dash rather than a list — so convert leading markers to a
     /// real bullet here regardless of what it produced. Dashes are NOT touched: nothing in
     /// this section is spoken, and a hyphen mid-line is usually a range or a compound word.
-    private func cleanDepth(_ text: String) -> String {
-        var out: [String] = []
-        for raw in text.components(separatedBy: "\n") {
-            var line = raw.trimmingCharacters(in: .whitespaces)
-            line = PromptBuilder.stripMarkdownPreservingCode(line)
-            if line.isEmpty { continue }
-            for marker in ["- ", "* ", "• ", "•", "- ", "– "] where line.hasPrefix(marker) {
-                line = String(line.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
-                break
-            }
-            if line.isEmpty { continue }
-            out.append("• " + line)
-        }
-        return out.joined(separator: "\n")
-    }
+    /// Lines inside a code fence keep their indentation and are never bulleted (Windows round 20); see AnswerLayout.depthBullets.
+    private func cleanDepth(_ text: String) -> String { AnswerLayout.depthBullets(text) }
 }
 
 // MARK: - Color hex helper

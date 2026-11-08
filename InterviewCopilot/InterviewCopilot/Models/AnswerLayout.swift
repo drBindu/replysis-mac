@@ -97,7 +97,9 @@ enum AnswerLayout {
         // leaving the half-written fence in the prose as well would show the same code twice.
         let prose = replace(fencedCode, in: text, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let codeText = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Blank lines off the ends, but the first line keeps its indent: trimming every kind of space took it off, and for
+        // Python that is a different program (Windows round 20).
+        let codeText = trimBlankLines(code)
         if codeText.isEmpty {
             return Parts(prose: stripScaffolding(prose, complexityShown: false), code: "", language: "", complexity: nil)
         }
@@ -271,6 +273,42 @@ enum AnswerLayout {
 
     private static func replace(_ re: NSRegularExpression, in s: String, with template: String) -> String {
         re.stringByReplacingMatches(in: s, range: NSRange(location: 0, length: (s as NSString).length), withTemplate: template)
+    }
+
+    /// Whole blank lines off the start and trailing space off the end; the indentation of the first real line is kept.
+    static func trimBlankLines(_ s: String) -> String {
+        var lines = s.components(separatedBy: "\n")
+        while let first = lines.first, first.trimmingCharacters(in: .whitespaces).isEmpty { lines.removeFirst() }
+        return trimEnd(lines.joined(separator: "\n"))
+    }
+
+    /// MORE TO SAY, the half that is only glanced at: every line a "•" bullet, whatever marker the model used. Lines inside
+    /// a code fence are kept exactly as written, indentation and all, and are never bulleted; the fence lines themselves go
+    /// (Windows round 20: the compact window trimmed every code line when the answer had bullets).
+    static func depthBullets(_ text: String) -> String {
+        var out: [String] = []
+        var inFence = false
+        for raw in text.components(separatedBy: "\n") {
+            let trimmed = raw.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") {
+                inFence.toggle()
+                // Code on the fence line itself ("```x = 1") is kept; a language name is not.
+                let rest = String(trimmed.dropFirst(3)).replacingOccurrences(of: "```", with: "").trimmingCharacters(in: .whitespaces)
+                if !rest.isEmpty, rest.range(of: #"^[A-Za-z0-9+#_-]+$"#, options: .regularExpression) == nil { out.append(rest) }
+                continue
+            }
+            if inFence { out.append(trimEnd(raw)); continue }
+            var line = PromptBuilder.stripMarkdownPreservingCode(trimmed)
+            if line.isEmpty { continue }
+            for marker in ["- ", "* ", "• ", "•", "– "] where line.hasPrefix(marker) {
+                line = String(line.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
+                break
+            }
+            if line.isEmpty { continue }
+            out.append("• " + line)
+        }
+        while out.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { out.removeLast() }
+        return out.joined(separator: "\n")
     }
 
     private static func trimEnd(_ s: String) -> String {
