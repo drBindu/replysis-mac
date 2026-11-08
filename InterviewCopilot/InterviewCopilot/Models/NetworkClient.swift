@@ -72,7 +72,7 @@ class NetworkClient {
                     Double(body?.count ?? 0) / 1024, resumeKB, messages.count, histKB, question.count),
              tag: "PERF")
         // Real-time SSE streaming with mid-interview resilience (see streamSSE).
-        streamSSE(url: url, body: body,
+        streamSSE(url: url, body: body, firstWordLimit: RecoveryPolicy.answerFirstWordLimit,
                   onToken: onToken, onDone: onDone, onError: onError)
     }
 
@@ -226,20 +226,55 @@ class NetworkClient {
     ///   • network blip / 5xx before the first token → retry once, automatically & silently.
     ///   • connection drop *mid-answer* → keep the partial answer instead of wiping it
     ///     with a scary error (a truncated answer beats a blank one in front of an interviewer).
-    /// Set when the server refuses a gzip body; every later request in this run goes plain.
+    /// Set when the server refuses a gzip body and the plain copy gets through; every later request in this run goes plain.
     nonisolated(unsafe) private static var gzipRefused = false
+
+    /// One answer request's end, decided once: the first word limit and the stream must not both report.
+    nonisolated private final class StreamGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var finished = false, gotWord = false
+        /// The stream ends now (an answer, an error or the limit). False when it had already ended.
+        func finish() -> Bool { lock.withLock { if finished { return false }; finished = true; return true } }
+        /// The first word arrived. False when the request had already ended (the limit ran out first).
+        func word() -> Bool { lock.withLock { if finished { return false }; gotWord = true; return true } }
+        /// The first word limit ran out: true when nothing had arrived and nothing had ended.
+        func timeOut() -> Bool { lock.withLock { if finished || gotWord { return false }; finished = true; return true } }
+        var isFinished: Bool { lock.withLock { finished } }
+    }
+
+    /// Set once from another task, read by a poll.
+    nonisolated private final class DoneFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var done = false
+        func set() { lock.withLock { done = true } }
+        var isSet: Bool { lock.withLock { done } }
+    }
 
     /// How long to wait before the one silent retry of a failed answer request.
     private static let answerRetryDelay: UInt64 = 250_000_000
 
-    private func streamSSE(url: URL, body: Data?,
-                           onToken: @escaping (String) -> Void,
-                           onDone: @escaping () -> Void,
-                           onError: @escaping (String) -> Void) {
+    private func streamSSE(url: URL, body: Data?, firstWordLimit: TimeInterval? = nil,
+                           onToken deliverToken: @escaping (String) -> Void,
+                           onDone deliverDone: @escaping () -> Void,
+                           onError deliverError: @escaping (String) -> Void) {
         let enteredAt = Date()
+        // Exactly one ending reaches the caller: the stream's own, or the first word limit's.
+        let gate = StreamGate()
+        let onToken: (String) -> Void = { token in if !gate.isFinished { deliverToken(token) } }
+        let onDone: () -> Void = { if gate.finish() { deliverDone() } }
+        let onError: (String) -> Void = { err in if gate.finish() { deliverError(err) } }
+        // A sign-in refresh that is due starts now, and is waited for (at most 3 s) only when the token is in its last
+        // minute. A token that still works is sent as it is: a slow refresh never holds the answer back.
+        let user = UserSession.shared
+        let refreshDone = DoneFlag()
+        var waitForRefresh = false
+        if !user.isGuestSession, !user.refreshToken.isEmpty, user.tokenNeedsRefresh {
+            waitForRefresh = RecoveryPolicy.answerWaitsForRefresh(tokenAge: Date().timeIntervalSince(user.tokenSavedAt))
+            Task { @MainActor in _ = await UserSession.shared.tryRefreshAsync(); refreshDone.set() }
+        }
         // Read now, on the main thread where this is called, so the first attempt never waits for the main thread
         // to be free. A retry after a refresh reads it again.
-        let firstToken = UserSession.shared.idToken
+        let firstToken = user.idToken
         // Also read here, not inside the task: measured, reading it from the background task waited 800 ms for the
         // main thread to be free. This module's default isolation is the main actor, and a static that is
         // isolated there is not free to read from another thread.
@@ -250,18 +285,25 @@ class NetworkClient {
         // leave until whatever the window was doing had finished: measured 600 ms between asking for the request
         // and the request starting, right when the answer is being waited for. Only delivering tokens to the
         // screen needs the main thread.
-        Task.detached(priority: .userInitiated) {
+        let work = Task.detached(priority: .userInitiated) {
             var yielded = false
+            if waitForRefresh {
+                let deadline = Date().addingTimeInterval(RecoveryPolicy.answerRefreshWaitCap)
+                while !refreshDone.isSet && Date() < deadline { try? await Task.sleep(nanoseconds: 50_000_000) }
+            }
             // Compress once. If the server ever refuses a compressed body (400, 415 or 501), the
-            // request is resent PLAIN, once, and stays plain for the rest of this run.
+            // request is resent PLAIN, once. It stays plain for the rest of this run only when the plain
+            // copy gets through: the server also answers 400 to a question over its size limit.
             let gzipped = (Self.gzipRefused || body == nil) ? nil : body.flatMap { Gzip.compress($0) }
             // Nothing is logged before the request has left. Even a log line costs a hop to the main thread, and
             // measured, that hop alone held the request back by over half a second while the window was busy.
             let sizeNote: String? = body.flatMap { b in gzipped.map { "request body \(b.count / 1024)KB to \(max(1, $0.count / 1024))KB with gzip" } }
             var sendPlain = gzipped == nil
+            var plainAfterRefusal = false
             for attempt in 0..<2 {
+                if Task.isCancelled || gate.isFinished { return }
                 // Read the freshest token each attempt (it may have just been refreshed).
-                let token = attempt == 0 ? firstToken : await MainActor.run { UserSession.shared.idToken }
+                let token = (attempt == 0 && !waitForRefresh) ? firstToken : await MainActor.run { UserSession.shared.idToken }
                 var req = URLRequest(url: url)
                 req.httpMethod = "POST"
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -284,15 +326,30 @@ class NetworkClient {
                     if let http = response as? HTTPURLResponse {
                         // A server that cannot read a compressed body says so BEFORE it charges
                         // anything, so resending the same question plain is safe.
-                        if !sendPlain, gzipped != nil, [400, 415, 501].contains(http.statusCode) {
-                            Self.gzipRefused = true; sendPlain = true
-                            dlog("NET: server refused the compressed request (HTTP \(http.statusCode)) — sending plain from now on", tag: "NET")
+                        if !sendPlain, gzipped != nil, Gzip.serverRefusedCompression(http.statusCode) {
+                            sendPlain = true; plainAfterRefusal = true
+                            dlog("NET: server refused the compressed request (HTTP \(http.statusCode)), sending it plain", tag: "NET")
                             continue
+                        }
+                        if plainAfterRefusal {
+                            plainAfterRefusal = false
+                            if Gzip.compressionWasTheCause(plainStatus: http.statusCode) {
+                                Self.gzipRefused = true
+                                dlog("NET: the plain copy got through (HTTP \(http.statusCode)); sending plain from now on", tag: "NET")
+                            } else {
+                                dlog("NET: the plain copy was refused too (HTTP \(http.statusCode)); the request itself was refused, compression stays on", tag: "NET")
+                            }
                         }
                         if http.statusCode == 402 { onMain { onError("NO_CREDITS") }; return }
                         if http.statusCode == 401 {
                             // Token expired mid-interview — refresh and retry before giving up.
                             if attempt == 0, await UserSession.shared.tryRefreshAsync() { continue }
+                            // Only a refresh Google REFUSED signs anyone out. A timeout, no connection or a 5xx from the
+                            // token service is not a refusal: the person stays signed in and asks again.
+                            let refused = await MainActor.run { UserSession.shared.lastRefreshRefused }
+                            if attempt == 0, !RecoveryPolicy.refreshFailureSignsOut(refused: refused) {
+                                onMain { onError("NOT_THROUGH") }; return
+                            }
                             onMain { onError("SESSION_EXPIRED") }; return
                         }
                         // A RATE LIMIT IS NOT A TRANSIENT ERROR, and must fail at once.
@@ -323,6 +380,8 @@ class NetworkClient {
                             // a generic line, and without this there is no way to tell afterwards
                             // which limit or fault the person actually hit.
                             dlog("NET: server answered with an error instead of an answer: \(serverError.prefix(200))", tag: "NET")
+                            // Out of answers, said inside the stream (the charge runs there): the same as a 402.
+                            if PlanFacts.isServerNoAnswersLeft(serverError) { onMain { onError("NO_CREDITS") }; return }
                             onMain { onError("SERVER_MSG:" + serverError) }
                             return
                         }
@@ -337,6 +396,8 @@ class NetworkClient {
                                  + (sizeNote.map { "; " + $0 } ?? ""), tag: "NET")
                         }
                         let firstOne = !yielded
+                        // The first word limit ran out while this word was on its way: that ending stands.
+                        if firstOne, !gate.word() { return }
                         let handedAt = Date()
                         yielded = true
                         onMain {
@@ -351,12 +412,26 @@ class NetworkClient {
                     else { onMain { onError("Server returned empty response. Please try again.") } }
                     return
                 } catch {
+                    // Stopped by the first word limit: it has already said so.
+                    if Task.isCancelled || gate.isFinished { return }
                     // Clean failure before a single token arrived → silent retry once.
                     if attempt == 0 && !yielded { try? await Task.sleep(nanoseconds: Self.answerRetryDelay); continue }
                     // Dropped mid-answer with text already on screen → keep the partial answer.
                     if yielded { onMain { onDone() } }
                     else { onMain { onError("Connection issue. Please try again.") } }
                     return
+                }
+            }
+        }
+        // No first word in 20 s: the request is stopped and the person told to ask again (Windows 2026-11-02).
+        if let firstWordLimit {
+            Task.detached {
+                try? await Task.sleep(nanoseconds: UInt64(firstWordLimit * 1_000_000_000))
+                guard gate.timeOut() else { return }
+                work.cancel()
+                onMain {
+                    dlog("NET: no first word within \(Int(firstWordLimit)) s; the request was stopped", tag: "NET")
+                    deliverError("FIRST_WORD_TIMEOUT")
                 }
             }
         }

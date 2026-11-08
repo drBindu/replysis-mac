@@ -1209,6 +1209,11 @@ check(MinutesBalance.balance(from: ["minutesBalance": -3]) == 0 && MinutesBalanc
 
 
 // ── Answer path parity (Windows MAC_CATCHUP 2026-11-02 to 2026-11-07) ──────────────────────────────────────────────────────
+check(PlanFacts.isServerNoAnswersLeft("You have no answers left.") && PlanFacts.isServerNoAnswersLeft("  you have no answers left. "), "out of answers: the server's in-band \"You have no answers left.\" is recognised")
+check(!PlanFacts.isServerNoAnswersLeft("This minute's AI allowance is used up.") && !PlanFacts.isServerNoAnswersLeft(nil), "out of answers: other stream errors are not out of answers")
+check(PlanFacts.answerProblemKind(noAnswersLeft: true, slug: "server-msg") == "answer-nocredits", "out of answers: reported as answer-nocredits, never counted as a real error")
+check(PlanFacts.answerProblemKind(noAnswersLeft: false, slug: "server-error-500") == "answer.server-error-500", "a real answer failure keeps its own kind")
+check(RecoveryPolicy.answerFirstWordLimit == 20, "first word limit: 20 s, then \"That did not go through. Please try again.\"")
 let longBrief = String(repeating: "The platform takes payments from many shops. ", count: 120) + "So how would you design the backend for that?"
 let cutBrief = PromptBuilder.truncateKeepingEnd(longBrief)
 check(cutBrief.hasPrefix("[earlier part cut]\n") && cutBrief.hasSuffix("So how would you design the backend for that?"), "a long question keeps its end, marked [earlier part cut]")
@@ -1221,6 +1226,13 @@ PromptBuilder.shared.addToHistory(question: longBrief, answer: "I would split it
 let historyMessages = PromptBuilder.shared.buildMessages(resumeFacts: "", currentQuestion: "And the database?")
 check(historyMessages.contains { $0["role"] == "user" && $0["content"] == cutBrief }, "history keeps the capped question, with its end")
 PromptBuilder.shared.clearHistory()
+check(Gzip.serverRefusedCompression(400) && Gzip.serverRefusedCompression(415) && Gzip.serverRefusedCompression(501) && !Gzip.serverRefusedCompression(500), "compression: 400, 415 and 501 are a refusal of the compressed body")
+check(Gzip.compressionWasTheCause(plainStatus: 200), "compression: the plain copy got through, so compression stays off")
+check(!Gzip.compressionWasTheCause(plainStatus: 400) && !Gzip.compressionWasTheCause(plainStatus: 415), "compression: the plain copy was refused too (an oversized question), so compression stays on")
+check(!Gzip.compressionWasTheCause(plainStatus: 0), "compression: the plain copy never got an answer, so compression stays on")
+check(!RecoveryPolicy.refreshFailureSignsOut(refused: false) && RecoveryPolicy.refreshFailureSignsOut(refused: true), "sign in: only a refused refresh signs out, never a timeout or a 5xx")
+check(!RecoveryPolicy.sessionRefused(byStatus: 0) && !RecoveryPolicy.sessionRefused(byStatus: 500) && !RecoveryPolicy.sessionRefused(byStatus: 503) && RecoveryPolicy.sessionRefused(byStatus: 400), "sign in: Google's 5xx or no answer is not a refusal")
+check(!RecoveryPolicy.answerWaitsForRefresh(tokenAge: 52 * 60) && RecoveryPolicy.answerWaitsForRefresh(tokenAge: 59 * 60) && RecoveryPolicy.answerRefreshWaitCap == 3, "answer path: a token that still works is sent without waiting; one in its last minute waits at most 3 s")
 
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

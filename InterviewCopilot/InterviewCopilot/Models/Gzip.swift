@@ -17,6 +17,14 @@ enum Gzip {
     /// Below this the saving is not worth the CPU or the extra header bytes.
     static let minimumSize = 1024
 
+    /// The statuses a server gives a body it cannot decode: bad request, unsupported media type, not implemented.
+    nonisolated static func serverRefusedCompression(_ status: Int) -> Bool { [400, 415, 501].contains(status) }
+
+    /// Whether compression was really what the server refused, judged by the plain copy. The server also answers 400
+    /// when it rejects the question itself (over its size limit), and then the plain copy is refused the same way.
+    /// Compression stays off for the run only when the plain copy got through (Windows RequestCompression, 2026-11-07).
+    nonisolated static func compressionWasTheCause(plainStatus: Int) -> Bool { plainStatus > 0 && !serverRefusedCompression(plainStatus) }
+
     static func compress(_ input: Data) -> Data? {
         guard input.count >= minimumSize else { return nil }
         let capacity = input.count + 1024

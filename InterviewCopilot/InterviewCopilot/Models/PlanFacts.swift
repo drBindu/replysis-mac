@@ -139,6 +139,24 @@ enum PlanFacts {
         isUnlimited || !balanceKnown || !isEmpty(credits) || minutes > 0
     }
 
+    /// What the server writes into the answer stream when the charge finds no answers left (InterviewController
+    /// noAnswersLeftEvent). The /ask charge runs inside the stream, so this is the usual way running out arrives,
+    /// not a 402. It is out of answers, never an answer fault (Windows bug round 4, 2026-11-07).
+    nonisolated static let serverNoAnswersLeft = "You have no answers left."
+
+    nonisolated static func isServerNoAnswersLeft(_ said: String?) -> Bool {
+        (said ?? "").trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(serverNoAnswersLeft) == .orderedSame
+    }
+
+    /// The kind an answer failure is reported under. Running out of answers is a customer's own state, so it carries
+    /// "nocredits", which the server's alert rule (DiagnosticsController.isRealError) never counts. Same name as Windows.
+    static func answerProblemKind(noAnswersLeft: Bool, slug: String) -> String {
+        noAnswersLeft ? "answer-nocredits" : "answer." + slug
+    }
+
+    /// The longest an answer waits for an empty balance to be asked again before it is refused (Windows 2026-11-04).
+    static let balanceWaitCap: TimeInterval = 3
+
     /// What someone reads when an answer is refused for having none left. A free trial is
     /// the end of a trial, not a limit that renews, so it says what Pro gives. No numbers:
     /// those belong to the server and the website.

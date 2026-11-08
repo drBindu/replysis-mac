@@ -64,6 +64,20 @@ enum RecoveryPolicy {
         [400, 401, 403].contains(status)
     }
 
+    /// No first word of an answer in this long ends the request with "That did not go through. Please try again."
+    /// (Windows FirstWordTimeout, 2026-11-02), reported as answer-first-word-timeout.
+    nonisolated static let answerFirstWordLimit: TimeInterval = 20
+
+    /// The answer path never waits on a slow sign-in refresh while the token still works. A refresh is started when one
+    /// is due, and only a token in its last minute (59 of its 60 minutes gone) is waited for, at most 3 s
+    /// (Windows UserSession.FreshEnoughForAnswerAsync, 2026-11-02).
+    nonisolated static let answerRefreshWaitCap: TimeInterval = 3
+    nonisolated static func answerWaitsForRefresh(tokenAge: TimeInterval) -> Bool { tokenAge >= 59 * 60 }
+
+    /// Whether a sign-in refresh that did not work must sign the person out. Only a refusal does; a timeout, no
+    /// connection or a 5xx from Google's token service never signs anyone out (Windows 2026-11-02).
+    nonisolated static func refreshFailureSignsOut(refused: Bool) -> Bool { refused }
+
     /// How long to wait before asking once more when the refresh could not be done at launch.
     static let launchRefreshRetryDelay: TimeInterval = 3
 }

@@ -1417,6 +1417,11 @@ class MainViewModel {
                     self.showOutOfAnswers()
                 }
                 else if err == "SESSION_EXPIRED" { self.engine.stop(); self.session.clear(); self.setLoggedOutUI() }
+                else if err == "FIRST_WORD_TIMEOUT" || err == "NOT_THROUGH" {
+                    // No first word in 20 s, or a sign-in refresh that could not be done right now (not refused):
+                    // the person stays signed in and simply asks again.
+                    self.aiAnswer = Self.answerDidNotGoThrough
+                }
                 else if err.hasPrefix("RATE_LIMIT") {
                     self.aiAnswer = Self.rateLimitMessage(err)
                 }
@@ -1427,7 +1432,12 @@ class MainViewModel {
                     self.aiAnswer = "⏳ " + String(err.dropFirst("SERVER_MSG:".count))
                 }
                 else                         { self.aiAnswer = "⚠ Something went wrong. Please try again." }
-                self.reportProblem("answer." + ClientErrorReporter.slug(String(err.prefix(40))), "An answer failed: \(err)")
+                // Out of answers is the customer's own state, never counted as an app error ("answer-nocredits").
+                self.reportProblem(err == "FIRST_WORD_TIMEOUT" ? "answer-first-word-timeout"
+                                   : PlanFacts.answerProblemKind(noAnswersLeft: err == "NO_CREDITS",
+                                                                 slug: ClientErrorReporter.slug(String(err.prefix(40)))),
+                                   err == "FIRST_WORD_TIMEOUT" ? "No first word within \(Int(RecoveryPolicy.answerFirstWordLimit)) s; the request was stopped"
+                                   : "An answer failed: \(err)")
                 // DATA-LOSS FIX: previously the error paths saved nothing, so if the AI
                 // failed (out of credits, connection issue) the interviewer's question was
                 // lost from the session record entirely. Preserve it with a clear
@@ -1435,7 +1445,7 @@ class MainViewModel {
                 // for SESSION_EXPIRED — the session is cleared there, so there's nothing to
                 // save into.
                 if err != "SESSION_EXPIRED" {
-                    let reason = err == "NO_CREDITS" ? "no answers left" : "connection issue"
+                    let reason = err == "NO_CREDITS" ? "no answers left" : "it did not go through"
                     self.appendToSessionLog(q: q, a: "[No answer: \(reason). Question preserved.]")
                 }
                 self.stopThinkingUI()
@@ -1456,6 +1466,9 @@ class MainViewModel {
     /// A wait under fifteen seconds is never printed. An early version on Windows managed
     /// "try again in about 1 seconds", which is worse than saying nothing — it reads as
     /// broken twice over, and by the time it is read the number is wrong anyway.
+    /// What an answer that did not arrive says (Windows AnswerDidNotGoThrough). Never blames the customer's connection.
+    static let answerDidNotGoThrough = "That did not go through. Please try again."
+
     static func rateLimitMessage(_ err: String) -> String {
         let seconds = Int(err.split(separator: ":").last.map(String.init) ?? "") ?? 0
         let when = seconds >= 15 ? "in about \(seconds) seconds" : "in a moment"
@@ -2142,6 +2155,9 @@ class MainViewModel {
                     self.aiAnswer = "⏳ " + String(err.dropFirst("SERVER_MSG:".count))
                 } else if err.hasPrefix("RATE_LIMIT") {
                     self.aiAnswer = Self.rateLimitMessage(err)
+                } else if err == "NOT_THROUGH" {
+                    // A sign-in refresh that could not be done right now is not a sign-out.
+                    self.aiAnswer = Self.answerDidNotGoThrough
                 } else {
                     // NOT gated on watch mode any more. Errors were being swallowed there —
                     // exactly where they are least visible, because in watch mode nobody
@@ -3292,7 +3308,7 @@ class MainViewModel {
         guard Date().timeIntervalSince(busyStartedAt) > busyLimit else { return }
         dlog("WATCHDOG: \(Int(busyLimit))s with no answer — releasing so listening resumes", tag: "AUTO")
         if Self.answerBody(aiAnswer).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            aiAnswer = "⚠ No answer came back because the connection stalled. Ask again."
+            aiAnswer = Self.answerDidNotGoThrough
         }
         stopThinkingUI()
     }
@@ -5015,9 +5031,9 @@ class MainViewModel {
         // out of answers keeps "Get more answers", where answers are added without changing plan.
         dlog("OUT-OF-ANSWERS-BUTTON: \(onFreeTrial ? "Upgrade now" : "Get more answers")", tag: "CREDITS")
         if onFreeTrial {
-            showAlert(title: m.title, body: m.body, actionLabel: "Upgrade now") { NSWorkspace.shared.open(PlanFacts.pricingURL) }
+            showAlert(title: m.title, body: m.body, actionLabel: "Upgrade now", reportKind: PlanFacts.answerProblemKind(noAnswersLeft: true, slug: "")) { NSWorkspace.shared.open(PlanFacts.pricingURL) }
         } else {
-            showAlert(title: m.title, body: m.body, actionLabel: "Get more answers") { NSWorkspace.shared.open(PlanFacts.addAnswersURL) }
+            showAlert(title: m.title, body: m.body, actionLabel: "Get more answers", reportKind: PlanFacts.answerProblemKind(noAnswersLeft: true, slug: "")) { NSWorkspace.shared.open(PlanFacts.addAnswersURL) }
         }
         dlog("Out of answers — told the user (free trial=\(onFreeTrial))", tag: "CREDITS")
     }
@@ -5687,9 +5703,11 @@ class MainViewModel {
         ClientErrorReporter.reportProblem(kind: kind, message: "\(message) \(situation)")
     }
 
-    func showAlert(title: String, body: String, actionLabel: String = "", action: (() -> Void)? = nil) {
+    /// - Parameter reportKind: the kind to report it under, when the title is not the right one (out of answers is
+    ///   "answer-nocredits", which never counts towards the outage email).
+    func showAlert(title: String, body: String, actionLabel: String = "", reportKind: String? = nil, action: (() -> Void)? = nil) {
         dlog("ALERT: \(title) — \(body)", tag: "ALERT")
-        reportProblem("alert." + ClientErrorReporter.slug(title), "\(title). \(body)")
+        reportProblem(reportKind ?? ("alert." + ClientErrorReporter.slug(title)), "\(title). \(body)")
         alertTitle = title; alertBody = body
         alertActionLabel = action == nil ? "" : actionLabel
         alertAction = action
