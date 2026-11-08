@@ -1214,6 +1214,7 @@ check(!PlanFacts.isServerNoAnswersLeft("This minute's AI allowance is used up.")
 check(PlanFacts.answerProblemKind(noAnswersLeft: true, slug: "server-msg") == "answer-nocredits", "out of answers: reported as answer-nocredits, never counted as a real error")
 check(PlanFacts.answerProblemKind(noAnswersLeft: false, slug: "server-error-500") == "answer.server-error-500", "a real answer failure keeps its own kind")
 check(RecoveryPolicy.answerFirstWordLimit == 20, "first word limit: 20 s, then \"That did not go through. Please try again.\"")
+check(PlanFacts.balanceWaitCap == 3, "an empty balance is asked again for at most 3 s before a question is refused")
 let longBrief = String(repeating: "The platform takes payments from many shops. ", count: 120) + "So how would you design the backend for that?"
 let cutBrief = PromptBuilder.truncateKeepingEnd(longBrief)
 check(cutBrief.hasPrefix("[earlier part cut]\n") && cutBrief.hasSuffix("So how would you design the backend for that?"), "a long question keeps its end, marked [earlier part cut]")

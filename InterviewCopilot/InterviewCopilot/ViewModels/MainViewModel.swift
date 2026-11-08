@@ -468,6 +468,16 @@ class MainViewModel {
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in self?.reconnectAfterWake() }
         }
+        // Coming back to the window (from the website, after paying) asks again for an empty balance.
+        focusObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.refreshEmptyBalanceOnFocus() }
+        }
+        // The window can take focus without the app activating (a panel that does not activate), so a window becoming key counts too.
+        keyWindowObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.refreshEmptyBalanceOnFocus() }
+        }
         restoreSession()
         // Proven, not trusted: test the hiding 4 s after start, before any interview (Windows, 2026-10-22).
         Task { @MainActor [weak self] in
@@ -482,6 +492,8 @@ class MainViewModel {
     // out by timing out (about twenty seconds) and then backing off, so the first question after opening the
     // lid met a deaf app. The network adapter needs a moment to come back, so wait 2.5 s and reconnect.
     private var wakeObserver: NSObjectProtocol?
+    private var focusObserver: NSObjectProtocol?
+    private var keyWindowObserver: NSObjectProtocol?
     static let wakeReconnectDelay: TimeInterval = 2.5
     private var lastWakeAt = Date.distantPast
 
@@ -1236,7 +1248,8 @@ class MainViewModel {
         saveHints()
     }
 
-    private func startAI(manualQuestion: String? = nil) {
+    /// - Parameter balanceRechecked: an empty balance has just been asked for again, so it is now believed.
+    private func startAI(manualQuestion: String? = nil, balanceRechecked: Bool = false) {
         let q = manualQuestion ?? extractLatestQuestion(from: transcript)
         if !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { lastQuestionShown = q }
         // WATCH MODE: the interviewer is sharing their screen, so every question is about
@@ -1318,7 +1331,22 @@ class MainViewModel {
         // letting it through only earns a refusal from the server mid-question.
         guard PlanFacts.mayAsk(balanceKnown: session.creditsKnown, credits: session.credits,
                                isUnlimited: session.isUnlimited, minutes: minutesBalance) else {
-            showOutOfAnswers(); return
+            // Someone who just bought answers on the website still shows none here until the next refresh. Ask the
+            // server once more (at most 3 s) before refusing, so a customer who just paid is not blocked (Windows 2026-11-02).
+            guard balanceRechecked else {
+                guard !balanceRecheckInFlight else { return }
+                balanceRecheckInFlight = true
+                isProcessing = true; updateMicUI()
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    await self.fetchCreditsWaitingAtMost(PlanFacts.balanceWaitCap)
+                    self.balanceRecheckInFlight = false
+                    self.isProcessing = false
+                    self.startAI(manualQuestion: q, balanceRechecked: true)
+                }
+                return
+            }
+            showOutOfAnswers(); updateMicUI(); return
         }
         // Not known yet: ask the server (it has the real number) and look again in the background.
         if !session.creditsKnown { Task { [weak self] in await self?.fetchCredits() } }
@@ -4824,6 +4852,29 @@ class MainViewModel {
 
     private var creditsRetryAttempt = 0
     private var creditsRetryTask: Task<Void, Never>?
+    /// An empty balance is being asked for again before a question is refused.
+    private var balanceRecheckInFlight = false
+    private var lastFocusBalanceCheckAt = Date.distantPast
+
+    /// Asks for the balance and waits for it, but never longer than `cap`: the fetch refreshes the token and asks two
+    /// endpoints, and nothing is on screen while an answer waits for it. A slower reply still lands in the background.
+    func fetchCreditsWaitingAtMost(_ cap: TimeInterval) async {
+        var done = false
+        Task { @MainActor [weak self] in await self?.fetchCredits(); done = true }
+        let deadline = Date().addingTimeInterval(cap)
+        while !done && Date() < deadline { try? await Task.sleep(nanoseconds: 50_000_000) }
+        if !done { dlog("Credits: no balance within \(Int(cap)) s; going on with what is known", tag: "CREDITS") }
+    }
+
+    /// The window got focus: an empty balance is asked for again, so a customer who just paid on the website is not
+    /// still shown none (Windows 2026-11-02). At most every 10 seconds.
+    func refreshEmptyBalanceOnFocus() {
+        guard session.isLoggedIn, session.creditsKnown, !session.isUnlimited, PlanFacts.isEmpty(session.credits),
+              Date().timeIntervalSince(lastFocusBalanceCheckAt) > 10 else { return }
+        lastFocusBalanceCheckAt = Date()
+        dlog("Credits: window focused with no answers left; asking for the balance again", tag: "CREDITS")
+        Task { @MainActor [weak self] in await self?.fetchCredits() }
+    }
 
     /// 4, 10, 20, then 40 seconds, then the five-minute refresh takes over.
     private func scheduleCreditsRetry() {
