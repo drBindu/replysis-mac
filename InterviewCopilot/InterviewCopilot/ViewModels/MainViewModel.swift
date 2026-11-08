@@ -4926,7 +4926,7 @@ class MainViewModel {
         case .seePlans:    action = ("See plans", { NSWorkspace.shared.open(PlanFacts.pricingURL) })
         case .none:        action = nil
         }
-        showAlert(title: d.title, body: d.body, actionLabel: action?.label ?? "", action: action?.run)
+        showAlert(title: d.title, body: d.body, actionLabel: action?.label ?? "", reportAs: ListeningProblems.reportKind(kind), action: action?.run)
     }
 
     /// Clicking the answers badge asks again at once. Someone who just upgraded or added
@@ -4992,7 +4992,8 @@ class MainViewModel {
         Task { @MainActor [weak self] in
             guard let self else { return }
             guard let link = await NetworkClient.shared.fetchReferralLink() else {
-                self.showAlert(title: "Invite link not ready", body: "Try again in a moment, or open replysis.com/account to copy it there.")
+                self.showAlert(title: "Invite link not ready", body: "Try again in a moment, or open replysis.com/account to copy it there.",
+                               reportAs: "invite-link-not-ready")
                 return
             }
             NSPasteboard.general.clearContents()
@@ -5016,9 +5017,9 @@ class MainViewModel {
         // out of answers keeps "Get more answers", where answers are added without changing plan.
         dlog("OUT-OF-ANSWERS-BUTTON: \(onFreeTrial ? "Upgrade now" : "Get more answers")", tag: "CREDITS")
         if onFreeTrial {
-            showAlert(title: m.title, body: m.body, actionLabel: "Upgrade now") { NSWorkspace.shared.open(PlanFacts.pricingURL) }
+            showAlert(title: m.title, body: m.body, actionLabel: "Upgrade now", reportAs: "alert-no-answers-minor") { NSWorkspace.shared.open(PlanFacts.pricingURL) }
         } else {
-            showAlert(title: m.title, body: m.body, actionLabel: "Get more answers") { NSWorkspace.shared.open(PlanFacts.addAnswersURL) }
+            showAlert(title: m.title, body: m.body, actionLabel: "Get more answers", reportAs: "alert-no-answers-minor") { NSWorkspace.shared.open(PlanFacts.addAnswersURL) }
         }
         dlog("Out of answers — told the user (free trial=\(onFreeTrial))", tag: "CREDITS")
     }
@@ -5672,7 +5673,7 @@ class MainViewModel {
             ? "Plug in earphones with a mic and Replysis starts listening by itself."
             : "Replysis is listening to the computer's sound only. Plug in earphones with a mic if you want to practise out loud."
         noMicrophoneAlertTitle = title
-        showAlert(title: title, body: body)
+        showAlert(title: title, body: body, reportAs: "no-microphone-minor")
     }
 
     func handleMicrophoneConnected() {
@@ -5688,9 +5689,13 @@ class MainViewModel {
         ClientErrorReporter.reportProblem(kind: kind, message: "\(message) \(situation)")
     }
 
-    func showAlert(title: String, body: String, actionLabel: String = "", action: (() -> Void)? = nil) {
+    /// - Parameter reportAs: the problem KIND sent to admin, or nil for a notice that is not a problem ("Nothing heard yet",
+    ///   "Your minutes are almost over", "Invite link copied"). Never the title (Windows MAC_CATCHUP 2026-11-07, rounds 17
+    ///   and 22): reported by title, a customer out of answers or with no microphone counted towards the owner's "apps are
+    ///   reporting errors" email. A customer's own state ends in "-minor".
+    func showAlert(title: String, body: String, actionLabel: String = "", reportAs: String? = nil, action: (() -> Void)? = nil) {
         dlog("ALERT: \(title) — \(body)", tag: "ALERT")
-        reportProblem("alert." + ClientErrorReporter.slug(title), "\(title). \(body)")
+        if let reportAs { reportProblem(reportAs, "\(title). \(body)") }
         alertTitle = title; alertBody = body
         alertActionLabel = action == nil ? "" : actionLabel
         alertAction = action

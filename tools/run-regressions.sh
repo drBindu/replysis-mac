@@ -20,3 +20,13 @@ BAD=$( { grep -rnE '"[^"]*(—|–|·)[^"]*"' "$VIEWS" --include='*.swift' | gre
          grep -nE '(aiAnswer|aiAnswerHint|thinkingText|listeningNotice|showListeningNotice|showAlert|errorMsg)[^"]*"[^"]*(—|–|·)[^"]*"' "$VM" | grep -v 'dlog(' ; } || true)
 if [ -n "$BAD" ]; then echo "COPY CHECK FAILED: dashes or middle dots in customer-visible text:"; echo "$BAD" | cut -c1-200; exit 1; fi
 echo "COPY CHECK: no dashes or middle dots in customer-visible text"
+
+# Banners are reported to admin by their KIND, never by their title (Windows MAC_CATCHUP 2026-11-07, rounds 17 and 22), and the
+# information banners are not reported at all.
+if grep -nE 'reportProblem\("alert\." *\+ *ClientErrorReporter\.slug\(title\)' "$VM" >/dev/null; then echo "REPORT CHECK FAILED: a banner is reported by its title"; exit 1; fi
+for info in "Nothing heard yet" "Your minutes are almost over" "Invite link copied" "Sign in to invite friends"; do
+  if grep -A3 "showAlert(title: \"$info\"" "$VM" | grep -q "reportAs:"; then echo "REPORT CHECK FAILED: the information banner '$info' is reported as a problem"; exit 1; fi
+done
+grep -q 'reportAs: ListeningProblems.reportKind(kind)' "$VM" || { echo "REPORT CHECK FAILED: speech problems are not reported by kind"; exit 1; }
+grep -q 'reportAs: "no-microphone-minor"' "$VM" || { echo "REPORT CHECK FAILED: no microphone is not reported as minor"; exit 1; }
+echo "REPORT CHECK: banners are reported by kind, information banners not at all"
