@@ -5490,7 +5490,11 @@ class MainViewModel {
 
     func saveSettings() {
         let path = engine.appDataFolder.appendingPathComponent("settings.json")
-        let obj: [String: Any] = ["mainOpacity": mainWindowOpacity,
+        // Starts from what is stored, as Windows now does (bug round 6: Save built a blank config and reset what the form
+        // did not carry). Every setting below is written from the window, and anything else in the file is kept.
+        var obj: [String: Any] = (try? Data(contentsOf: path))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        let current: [String: Any] = ["mainOpacity": mainWindowOpacity,
                                   "overlayOpacity": overlayOpacity, "answerLength": answerDetailed ? "detailed" : "short",
                                   "micCaptureEnabled": micCaptureEnabled,
                                   "oneListeningMode": true,
@@ -5504,6 +5508,7 @@ class MainViewModel {
                                   "screenKeysEverywhere": screenKeysEverywhere,
                                   "phoneOnly": phoneOnly,
                                   "opacityDefaultV2Applied": true]
+        obj.merge(current) { _, new in new }
         try? JSONSerialization.data(withJSONObject: obj).write(to: path)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
     }

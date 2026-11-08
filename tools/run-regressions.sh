@@ -40,3 +40,7 @@ done
 grep -q 'onDisappear { life.closed = true }' "$LOGIN" && grep -q 'guard !life.closed else { return }' "$LOGIN" || { echo "SIGN IN CHECK FAILED: a closed sign-in window still reports"; exit 1; }
 if grep -niE '"[^"]*(connection|internet|network)[^"]*"' "$LOGIN" "$ROOT/InterviewCopilot/InterviewCopilot/Models/GoogleSignIn.swift" | grep -v 'dlog(' ; then echo "SIGN IN CHECK FAILED: sign-in words blame the connection"; exit 1; fi
 echo "SIGN IN CHECK: labels for VoiceOver, a closed window reports nothing, no connection words"
+
+# Settings Save starts from the stored settings, never a blank object (Windows bug round 6).
+grep -q 'obj.merge(current) { _, new in new }' "$VM" || { echo "SETTINGS CHECK FAILED: Save does not start from the stored settings"; exit 1; }
+echo "SETTINGS CHECK: Save keeps what it does not write"
