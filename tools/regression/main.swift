@@ -1207,5 +1207,20 @@ check(evil == .notUsed("no reason given"), "minutes: an address that is not Stri
 check(MinutesBalance.outcome(fromAddResponse: Data(#"{"added":0,"reason":"auto add is off"}"#.utf8)) == .notUsed("auto add is off"), "minutes: auto add off, the reason is kept for the log")
 check(MinutesBalance.balance(from: ["minutesBalance": -3]) == 0 && MinutesBalance.balance(from: ["minutesBalance": 12]) == 12 && MinutesBalance.balance(from: [:]) == nil, "minutes: the balance is read, never below zero")
 
+
+// ── Answer path parity (Windows MAC_CATCHUP 2026-11-02 to 2026-11-07) ──────────────────────────────────────────────────────
+let longBrief = String(repeating: "The platform takes payments from many shops. ", count: 120) + "So how would you design the backend for that?"
+let cutBrief = PromptBuilder.truncateKeepingEnd(longBrief)
+check(cutBrief.hasPrefix("[earlier part cut]\n") && cutBrief.hasSuffix("So how would you design the backend for that?"), "a long question keeps its end, marked [earlier part cut]")
+check(cutBrief.count <= PromptBuilder.maxQuestionChars + "[earlier part cut]\n".count && PromptBuilder.maxQuestionChars == 4_000, "a long question is capped at 4,000 characters")
+check(longBrief.hasSuffix(" " + cutBrief.dropFirst("[earlier part cut]\n".count)), "a cut question starts on a whole word")
+check(PromptBuilder.truncateKeepingEnd("What is Kafka?") == "What is Kafka?", "a short question is never cut")
+let cappedMessages = PromptBuilder.shared.buildMessages(resumeFacts: "", currentQuestion: longBrief)
+check((cappedMessages.last?["content"] ?? "").hasSuffix("QUESTION: " + cutBrief), "the question sent to the model is the capped one, with its end")
+PromptBuilder.shared.addToHistory(question: longBrief, answer: "I would split it into services.")
+let historyMessages = PromptBuilder.shared.buildMessages(resumeFacts: "", currentQuestion: "And the database?")
+check(historyMessages.contains { $0["role"] == "user" && $0["content"] == cutBrief }, "history keeps the capped question, with its end")
+PromptBuilder.shared.clearHistory()
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)
