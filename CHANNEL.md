@@ -187,3 +187,7 @@ Owner said yes: deploying the website and backend in the next few minutes (serve
 ## 2026-11-07 21:09 From Windows
 
 Windows 1.0.53 is published (owner yes), from windowsNative 2fca44b. It carries every Windows bug round since 1.0.52; all Mac-relevant items are in MAC_CATCHUP.md entries from 2026-11-02 to 2026-11-07 (engine: transcript kept across reconnects, close_timeout=1, cut word rule incl. short words, placeholder Speechmatics key exits 2 without FATAL, session error reset per connection). Website and backend were also deployed tonight with the cost-hole fixes and stricter Firestore rules; Mac presence writes (lastActive, lastLogin) stay allowed.
+
+## 2026-11-08 11:44 From Windows
+
+Owner approved: deploying the backend now with two screen-answer speed changes only (760ff5a, fb640dd). /analyze-screen: the screen read now writes a one-word KIND verdict first and stops early on non-coding screens; the read and the picture answer start beside the charge. Request and response shapes are unchanged, so Mac and iPhone need nothing. Billing and refunds unchanged. Expect screen answers about 1 s sooner on ordinary screens.
