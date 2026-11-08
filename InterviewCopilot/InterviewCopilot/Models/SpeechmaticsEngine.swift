@@ -54,6 +54,10 @@ class SpeechmaticsEngine {
     private(set) var engineBuildId = "unknown"
 
     private(set) var lastAudioActivityAt = Date.distantPast
+    /// When the engine last printed that the speech provider refused it or failed (HTTP 402, 403, 429, 5xx).
+    private(set) var lastProviderFaultAt = Date.distantPast
+    /// The provider refused or failed within the last 45 s: the window says the service is unavailable, not a network problem.
+    var providerAtFault: Bool { Date().timeIntervalSince(lastProviderFaultAt) < ListeningProblems.providerFaultWindow }
     private(set) var lastWordsAt = Date.distantPast
 
     /// Audio in the last 3s, and no words for 12s.
@@ -622,6 +626,9 @@ class SpeechmaticsEngine {
             }
             if ListeningProblems.isConnectionTrouble(line) {
                 Task { @MainActor [weak self] in self?.noteConnectionTrouble() }
+            }
+            if ListeningProblems.isProviderFaultLine(line) {
+                Task { @MainActor [weak self] in self?.lastProviderFaultAt = Date() }
             }
             if Self.isNoSpeechKeyExit(line) {
                 Task { @MainActor [weak self] in self?.handleNoSpeechKeyExit() }

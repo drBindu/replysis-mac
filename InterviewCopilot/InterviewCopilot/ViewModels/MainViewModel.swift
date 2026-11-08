@@ -4891,7 +4891,8 @@ class MainViewModel {
             connectionStalled: stalled,
             noNetwork: !network.isUp,
             anotherDevice: engine.accountBusy,
-            poorConnection: network.isUp && engine.connectionIsPoor)
+            poorConnection: network.isUp && engine.connectionIsPoor,
+            providerFault: engine.providerAtFault)
         currentProblem = problem
         if let problem {
             showProblemOnce(problem)

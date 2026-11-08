@@ -433,6 +433,33 @@ check(ListeningProblems.isConnectionTrouble(">>> [DEEPGRAM] error: timed out dur
 check(ListeningProblems.isConnectionTrouble(">>> [DEEPGRAM] HTTP 408: server rejected WebSocket connection: HTTP 408"), "an HTTP 408 is connection trouble")
 check(ListeningProblems.isConnectionTrouble(">>> [DEEPGRAM] error: received 1011 (internal error) Deepgram did not receive audio data or a text message"), "a drop for want of audio is connection trouble")
 check(!ListeningProblems.isConnectionTrouble(">>> STATUS: ONLINE"), "being online is not trouble")
+// Windows MAC_CATCHUP 2026-11-02: no problem ever blames the network, a VPN or a hotspot, or names Interview or Practice mode.
+for kind in ListeningProblems.Kind.allCases {
+    let d = ListeningProblems.describe(kind)
+    let words = (d.title + " " + d.body).lowercased()
+    check(!["network", "internet", "vpn", "hotspot", "wi-fi", "wifi"].contains(where: { words.contains($0) }), "problem \(kind) never blames the network")
+    check(!words.contains("practice mode") && !words.contains("interview mode"), "problem \(kind) names no listening mode")
+}
+check(ListeningProblems.describe(.noSpeechService).title == "Still connecting to speech", "stalled speech: Windows title")
+check(ListeningProblems.describe(.noSpeechService).body == "Replysis is connecting to the speech service and keeps trying on its own. It starts listening by itself as soon as it connects.", "stalled speech: Windows words")
+func detectFault(status: Int = 0, net: Bool = false, stalled: Bool = true, fault: Bool = true) -> ListeningProblems.Kind? {
+    ListeningProblems.detect(engineOnline: false, speechStatusCode: status, outOfListeningTime: false, outOfAnswers: false,
+                             waitingToRetry: true, fatalNoMicrophone: false, connectionStalled: stalled, noNetwork: net,
+                             anotherDevice: false, poorConnection: true, providerFault: fault)
+}
+check(detectFault() == .serviceUnavailable, "a speech provider refusal reads as the service unavailable, not reconnecting or the network")
+check(detectFault(fault: false) == .poorConnection, "without a provider refusal the old reading stands")
+check(detectFault(status: 401) == .signInExpired, "a provider refusal never hides an expired sign in")
+for code in ["402", "403", "429"] {
+    check(ListeningProblems.isProviderFaultLine(">>> [DEEPGRAM] Refused with \(code); Speechmatics takes over."), "provider refusal \(code) is a provider fault")
+}
+check(ListeningProblems.isProviderFaultLine(">>> [DEEPGRAM] HTTP 503: server rejected WebSocket connection: HTTP 503"), "a provider 5xx is a provider fault")
+check(!ListeningProblems.isProviderFaultLine(">>> [DEEPGRAM] Refused with 401; Speechmatics takes over."), "a 401 is a token to renew, not a provider fault")
+check(!ListeningProblems.isProviderFaultLine(">>> [DEEPGRAM] HTTP 408: server rejected WebSocket connection: HTTP 408"), "a 408 is the line, not the provider")
+check(!ListeningProblems.isProviderFaultLine(">>> STATUS: ONLINE"), "being online is not a provider fault")
+check(ListeningProblems.reportKind(.noAnswers) == "listening-noAnswers-minor" && ListeningProblems.reportKind(.noListeningTime) == "listening-noListeningTime-minor"
+      && ListeningProblems.reportKind(.noMicrophone) == "listening-noMicrophone-minor", "the customer's own state is reported as minor")
+check(ListeningProblems.reportKind(.serviceUnavailable) == "listening-serviceUnavailable" && ListeningProblems.reportKind(.noSpeechService) == "listening-noSpeechService", "a real speech problem is reported by kind, not minor")
 check(detectBusy() == .anotherDevice, "a full account reads as another device using it")
 check(detectBusy(waiting: true) == .anotherDevice, "...and the retry wait that follows does not turn it into reconnecting")
 check(detectBusy(online: true) == nil, "...and it clears the moment listening works")

@@ -104,21 +104,54 @@ enum ListeningProblems {
             return Description(
                 label: "NO MICROPHONE",
                 title: "No microphone found",
-                body: "Practice mode needs a microphone. Plug one in, or allow microphone access in System Settings, under Privacy and Security, then Microphone. Interview mode does not need a microphone.",
+                // No mode names (Windows 2026-11-02: Interview and Practice are gone from every hint).
+                body: "Replysis listens to your microphone too, and cannot open it. Plug one in, or allow microphone access in System Settings, under Privacy and Security, then Microphone.",
                 step: .none)
         case .noSpeechService:
             return Description(
                 label: "NO SPEECH SERVICE",
-                title: "Cannot reach the speech service",
-                body: "Replysis cannot reach the speech service right now and keeps trying by itself. If you use a VPN, try turning it off.",
+                // Never about the customer's network, VPN or hotspot (Windows 2026-11-02, same words).
+                title: "Still connecting to speech",
+                body: "Replysis is connecting to the speech service and keeps trying on its own. It starts listening by itself as soon as it connects.",
                 step: .none)
         case .noNetwork:
             return Description(
-                label: "NO NETWORK",
-                title: "No internet connection",
-                body: "Replysis cannot reach the internet, so it cannot hear or answer. It will carry on by itself as soon as the connection is back.",
+                // The Mac has no network path. Said without blaming the customer's internet (owner's copy rule).
+                label: "WAITING",
+                title: "Waiting to connect",
+                body: "Replysis cannot connect right now, so it cannot hear or answer. It carries on by itself as soon as it connects.",
                 step: .none)
         }
+    }
+
+    /// The kind sent to admin for a problem shown (Windows ListeningProblems.ReportKind). A customer's own state (out of
+    /// answers, this month's limit, no microphone) ends in "-minor", so it shows in admin but never counts towards the
+    /// "apps are reporting errors" email. Reported by kind, never by title.
+    static func reportKind(_ kind: Kind) -> String {
+        let minor: Bool
+        switch kind {
+        case .noAnswers, .noListeningTime, .noMicrophone: minor = true
+        default: minor = false
+        }
+        return "listening-" + String(describing: kind) + (minor ? "-minor" : "")
+    }
+
+    /// How long after the engine's last provider refusal it still counts (Windows: 45 s). The engine keeps trying every
+    /// few seconds, so a refusal stops counting soon after the last one.
+    static let providerFaultWindow: TimeInterval = 45
+
+    /// The engine's own line saying the speech provider refused it (no credit, forbidden, too many requests) or failed
+    /// (5xx). A 401 is not one: that is an expired token, and the app renews it. Windows SpeechHealth.IsProviderFaultLine.
+    static func isProviderFaultLine(_ line: String) -> Bool {
+        let refused = ">>> [DEEPGRAM] Refused with "
+        if let r = line.range(of: refused) {
+            return !line[r.upperBound...].hasPrefix("401")
+        }
+        let http = ">>> [DEEPGRAM] HTTP "
+        if let r = line.range(of: http) {
+            return line[r.upperBound...].first == "5"
+        }
+        return false
     }
 
     /// A line from the speech engine describing the connection failing for the usual reasons of a
@@ -135,7 +168,8 @@ enum ListeningProblems {
     static func detect(engineOnline: Bool, speechStatusCode: Int, outOfListeningTime: Bool,
                        outOfAnswers: Bool, waitingToRetry: Bool, fatalNoMicrophone: Bool,
                        connectionStalled: Bool, noNetwork: Bool = false,
-                       anotherDevice: Bool = false, poorConnection: Bool = false) -> Kind? {
+                       anotherDevice: Bool = false, poorConnection: Bool = false,
+                       providerFault: Bool = false) -> Kind? {
         if engineOnline { return nil }
         // A definite refusal outlives whatever the server said most recently. After a "no
         // listening time" the app kept asking, hit the hourly request limit, and the latest
@@ -149,6 +183,9 @@ enum ListeningProblems {
         // that follows it must not turn it into "reconnecting".
         if anotherDevice { return .anotherDevice }
         if speechStatusCode == 502 || speechStatusCode == 503 { return .serviceUnavailable }
+        // The speech provider itself refused (402, 403, 429) or failed (5xx), seen in the engine's own lines. That is
+        // the service being unavailable, never the customer's network (Windows 2026-11-02, SpeechProviderAtFault).
+        if providerFault { return .serviceUnavailable }
         if noNetwork { return .noNetwork }
         // Specific beats generic: repeated connection failures with the network up say more than
         // "reconnecting" does.
