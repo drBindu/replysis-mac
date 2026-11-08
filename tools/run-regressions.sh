@@ -51,3 +51,7 @@ grep -q 'mkfifo(path, 0o600)' "$SRC/SystemAudioTapper.swift" || { echo "SECURITY
 grep -q 'posixPermissions: 0o700], ofItemAtPath: dir.path' "$SRC/SpeechmaticsEngine.swift" || { echo "SECURITY CHECK FAILED: the engine folder is not the user's only"; exit 1; }
 if grep -nE '"/tmp/|NSTemporaryDirectory\(\)' "$SRC/SpeechmaticsEngine.swift" "$SRC/SystemAudioTapper.swift"; then echo "SECURITY CHECK FAILED: engine audio or words pass through /tmp"; exit 1; fi
 echo "SECURITY CHECK: audio FIFO 0600 in a folder that is the user's only"
+
+# A crash on the last run is said to admin once on the next launch (Windows bug round 39).
+grep -q 'SentrySDK.lastRunStatus == .didCrash' "$SRC/CrashReporter.swift" && grep -q '"previous-run-crashed"' "$SRC/CrashReporter.swift" || { echo "CRASH CHECK FAILED: the next launch does not report a crash"; exit 1; }
+echo "CRASH CHECK: previous-run-crashed is reported on the next launch"

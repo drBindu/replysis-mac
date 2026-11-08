@@ -36,7 +36,21 @@ enum CrashReporter {
                 return event
             }
         }
+        reportPreviousCrashLater()
         #endif
+    }
+
+    /// The crash itself reaches Sentry, which writes it to disk as the app dies and sends it on the next launch; nothing
+    /// is posted from a dying process. Admin's own diagnostics only heard of a crash through Sentry, so the next launch
+    /// now also says "previous-run-crashed" once (Windows bug round 39, which reads its crash.flag the same way). Sentry's
+    /// own record of the last run is the marker, so nothing new is written or read here. A few seconds after launch, when
+    /// Sentry has read it and the sign-in is loaded.
+    private static func reportPreviousCrashLater() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            guard SentrySDK.lastRunStatus == .didCrash else { return }
+            dlog("CRASH: the previous run crashed; reported once", tag: "SENTRY")
+            ClientErrorReporter.reportProblem(kind: "previous-run-crashed", message: "The previous run of the app crashed (details in Sentry)")
+        }
     }
 
     /// Reports a significant HANDLED failure (not a crash) as a tracked Sentry event —
