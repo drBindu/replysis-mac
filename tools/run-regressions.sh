@@ -44,3 +44,10 @@ echo "SIGN IN CHECK: labels for VoiceOver, a closed window reports nothing, no c
 # Settings Save starts from the stored settings, never a blank object (Windows bug round 6).
 grep -q 'obj.merge(current) { _, new in new }' "$VM" || { echo "SETTINGS CHECK FAILED: Save does not start from the stored settings"; exit 1; }
 echo "SETTINGS CHECK: Save keeps what it does not write"
+
+# Local security (Windows bug round 18): the FIFO carrying the computer's sound to the engine is the user's only, and so is the
+# folder holding it and the transcript.
+grep -q 'mkfifo(path, 0o600)' "$SRC/SystemAudioTapper.swift" || { echo "SECURITY CHECK FAILED: the audio FIFO is not 0600"; exit 1; }
+grep -q 'posixPermissions: 0o700], ofItemAtPath: dir.path' "$SRC/SpeechmaticsEngine.swift" || { echo "SECURITY CHECK FAILED: the engine folder is not the user's only"; exit 1; }
+if grep -nE '"/tmp/|NSTemporaryDirectory\(\)' "$SRC/SpeechmaticsEngine.swift" "$SRC/SystemAudioTapper.swift"; then echo "SECURITY CHECK FAILED: engine audio or words pass through /tmp"; exit 1; fi
+echo "SECURITY CHECK: audio FIFO 0600 in a folder that is the user's only"

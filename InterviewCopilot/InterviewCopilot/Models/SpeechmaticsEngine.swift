@@ -152,6 +152,10 @@ class SpeechmaticsEngine {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let dir = DeveloperOverrides.dataFolder.map { URL(fileURLWithPath: $0) } ?? support.appendingPathComponent("InterviewCopilot")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // The system sound FIFO (sysaudio.pcm, made 0600), the transcript the engine writes (latest.txt) and the flags all
+        // live here. The folder is the current user's only, so nothing passing audio or words to the engine can be read by
+        // another account even if a file in it is created with the default mode (Windows bug round 18). Nothing is deleted.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
         return dir
     }()
 
