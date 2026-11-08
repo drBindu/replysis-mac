@@ -602,12 +602,18 @@ class NetworkClient {
     // interview over accounting loses the thing the user actually paid for. The gate that
     // protects the money is server-side already.
 
-    /// Report `minutes` of listening. Returns minutes remaining this month, or nil if the
-    /// report did not land. `-1` means the plan is unlimited.
+    /// How a listening report went: landed, with minutes remaining this month (`-1` means the plan is unlimited), or
+    /// failed, with its HTTP status or the URL error when no answer came back (see ListeningReport.keepFailedReport).
+    enum ListeningReportReply {
+        case reported(remaining: Int, minutesBalance: Int?)
+        case failed(status: Int?, error: URLError.Code?)
+    }
+
+    /// Report `minutes` of listening.
     @discardableResult
-    func reportListeningMinutes(_ minutes: Int) async -> (remaining: Int, minutesBalance: Int?)? {
+    func reportListeningMinutes(_ minutes: Int) async -> ListeningReportReply {
         guard minutes > 0,
-              let url = URL(string: "\(AppConfig.backendUrl)/api/v1/usage/listening") else { return nil }
+              let url = URL(string: "\(AppConfig.backendUrl)/api/v1/usage/listening") else { return .failed(status: nil, error: nil) }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -618,12 +624,16 @@ class NetworkClient {
         do {
             let (data, response) = try await shortSession.data(for: AppIdentity.label(req))
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                return nil
+                return .failed(status: http.statusCode, error: nil)
             }
             guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let remaining = obj["remainingMinutes"] as? Int else { return nil }
-            return (remaining, MinutesBalance.balance(from: obj))
-        } catch { return nil }
+                  let remaining = obj["remainingMinutes"] as? Int else {
+                return .failed(status: (response as? HTTPURLResponse)?.statusCode, error: nil)
+            }
+            return .reported(remaining: remaining, minutesBalance: MinutesBalance.balance(from: obj))
+        } catch {
+            return .failed(status: nil, error: (error as? URLError)?.code)
+        }
     }
 
     /// Asks the website to auto add 15 minutes on the saved card (India, pay by the minute). See MinutesBalance.

@@ -4350,6 +4350,19 @@ class MainViewModel {
     private var listeningSince: Date?
     private var lastSpeechHeardAt = Date()
     private var unreportedListeningSeconds: Double = 0
+    /// The account the unreported seconds were heard under. Another account (or a guest) starts at zero.
+    private var unreportedListeningOwner = ""
+
+    /// Seconds kept for another account are dropped, never sent with this one (Windows ClaimListeningSeconds).
+    private func claimListeningSeconds() {
+        let who = session.userId
+        let kept = ListeningReport.secondsForOwner(unreportedListeningSeconds, owner: unreportedListeningOwner, current: who)
+        if kept != unreportedListeningSeconds {
+            dlog("METER: dropped \(Int(unreportedListeningSeconds)) s kept for another account", tag: "METER")
+        }
+        unreportedListeningSeconds = kept
+        unreportedListeningOwner = who
+    }
     private var lastRawTranscript = ""
     /// -1 = unlimited, or not yet known. Never a count.
     var audioMinutesRemaining = -1
@@ -4415,6 +4428,7 @@ class MainViewModel {
     private func stopListeningMeter() {
         listeningMeterTimer?.invalidate(); listeningMeterTimer = nil
         if let since = listeningSince {
+            claimListeningSeconds()
             unreportedListeningSeconds += ListeningBilling.countableSeconds(
                 start: since, now: Date(), lastWords: heardAnythingThisSession ? lastSpeechHeardAt : nil)
             listeningSince = nil
@@ -4484,6 +4498,7 @@ class MainViewModel {
         }
 
         if let since = listeningSince {
+            claimListeningSeconds()
             unreportedListeningSeconds += ListeningBilling.countableSeconds(
                 start: since, now: now, lastWords: heardAnythingThisSession ? lastSpeechHeardAt : nil)
             listeningSince = now
@@ -4542,6 +4557,7 @@ class MainViewModel {
         if let since = listeningSince {
             // Speech time here too. This is the last place the wall clock was still being
             // billed, so an app quit while listening to a silent room charged for the wait.
+            claimListeningSeconds()
             unreportedListeningSeconds += ListeningBilling.countableSeconds(
                 start: since, now: Date(), lastWords: heardAnythingThisSession ? lastSpeechHeardAt : nil)
             listeningSince = nil
@@ -4561,12 +4577,13 @@ class MainViewModel {
     /// call. The gate that protects the money is server-side already.
     private func reportListeningMinutes(_ minutes: Int) {
         guard minutes > 0, session.isLoggedIn else { return }
+        let owner = session.userId
         Task { @MainActor [weak self] in
             guard let self else { return }
-            if let report = await NetworkClient.shared.reportListeningMinutes(minutes) {
-                let remaining = report.remaining
+            switch await NetworkClient.shared.reportListeningMinutes(minutes) {
+            case .reported(let remaining, let minutesBalance):
                 self.audioMinutesRemaining = remaining
-                if let balance = report.minutesBalance {
+                if let balance = minutesBalance {
                     let hadMinutes = self.minutesBalance > 0
                     self.minutesBalance = balance
                     if MinutesBalance.shouldAskForMore(hadMinutes: hadMinutes, balance: balance,
@@ -4576,10 +4593,29 @@ class MainViewModel {
                 self.updateCreditsUI(credits: self.session.credits, plan: self.session.plan,
                                      isUnlimited: self.session.isUnlimited)
                 self.warnIfListeningTimeLow()
-            } else {
-                dlog("METER: report of \(minutes) min did not land — carrying on", tag: "METER")
+            case .failed(let status, let error):
+                self.keepUnreportedMinutes(minutes, owner: owner, failure: (status, error))
             }
         }
+    }
+
+    /// Minutes the server cannot have counted go back into the meter and ride along with the next report, at most an hour
+    /// in all, and only for the account they were heard under (Windows 2026-11-07, round 55).
+    private func keepUnreportedMinutes(_ minutes: Int, owner: String, failure: (status: Int?, error: URLError.Code?)) {
+        let how = failure.status.map { "HTTP \($0)" } ?? failure.error.map { "error \($0.rawValue)" } ?? "no readable reply"
+        guard ListeningReport.keepFailedReport(status: failure.status, error: failure.error) else {
+            dlog("METER: report of \(minutes) min did not land (\(how)); not kept, the server may have counted it", tag: "METER")
+            return
+        }
+        // The account changed while the report was out (a 401 is often followed by a sign out): those minutes were
+        // heard under the old account and are not added to the new one.
+        guard session.userId == owner, unreportedListeningOwner == owner || unreportedListeningSeconds == 0 else {
+            dlog("METER: report of \(minutes) min did not land (\(how)); dropped, the account changed", tag: "METER")
+            return
+        }
+        unreportedListeningOwner = owner
+        unreportedListeningSeconds = ListeningReport.keptSeconds(unreported: unreportedListeningSeconds, minutes: minutes)
+        dlog("METER: report of \(minutes) min did not land (\(how)); kept to send with the next report", tag: "METER")
     }
 
     /// Bought minutes are nearly gone (Windows item 57). Asks the website to auto add 15 on the saved card, when the person switched auto add

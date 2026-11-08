@@ -57,3 +57,30 @@ enum MinutesBalance {
         return max(0, value)
     }
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// A listening report (POST /api/v1/usage/listening) that failed (Windows 2026-11-07, round 55). Its minutes are kept for the
+// next report only when the server cannot have counted them: the connection never opened (or the name lookup failed), or
+// the server answered 401, 429, 502 or 503. A 504, a timeout or a reset after the request went out is not kept: the server
+// may have counted it already, and charging twice is worse than missing a minute. Kept seconds never pass an hour, and they
+// belong to the account they were heard under.
+// ══════════════════════════════════════════════════════════════════════════
+enum ListeningReport {
+    static let maxKeptSeconds: Double = 3600
+
+    static func keepFailedReport(status: Int?, error: URLError.Code?) -> Bool {
+        if let status, [401, 429, 502, 503].contains(status) { return true }
+        guard status == nil, let error else { return false }
+        return [.cannotFindHost, .dnsLookupFailed, .cannotConnectToHost, .notConnectedToInternet].contains(error)
+    }
+
+    /// Seconds put back into the meter, never more than an hour in all.
+    static func keptSeconds(unreported: Double, minutes: Int) -> Double {
+        min(maxKeptSeconds, unreported + Double(max(0, minutes)) * 60)
+    }
+
+    /// Unreported seconds count only for the account they were heard under; another account starts at zero.
+    static func secondsForOwner(_ seconds: Double, owner: String, current: String) -> Double {
+        owner == current ? seconds : 0
+    }
+}
