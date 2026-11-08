@@ -55,3 +55,11 @@ echo "SECURITY CHECK: audio FIFO 0600 in a folder that is the user's only"
 # A crash on the last run is said to admin once on the next launch (Windows bug round 39).
 grep -q 'SentrySDK.lastRunStatus == .didCrash' "$SRC/CrashReporter.swift" && grep -q '"previous-run-crashed"' "$SRC/CrashReporter.swift" || { echo "CRASH CHECK FAILED: the next launch does not report a crash"; exit 1; }
 echo "CRASH CHECK: previous-run-crashed is reported on the next launch"
+
+# A custom date format that is written or sent uses en_US_POSIX (Windows round 16: a Thai Windows sent the year 2569).
+# Display-only formats (Sessions list, debug log time) follow the person's own settings and are not checked.
+for f in "$VM" "$SRC/NetworkClient.swift"; do
+  if grep -n 'dateFormat = "' "$f" | while IFS=: read -r n _; do sed -n "$((n-4)),$((n))p" "$f" | grep -q 'en_US_POSIX' || echo "$f:$n"; done | grep .; then
+    echo "DATE CHECK FAILED: a custom date format without en_US_POSIX"; exit 1; fi
+done
+echo "DATE CHECK: custom date formats use en_US_POSIX"

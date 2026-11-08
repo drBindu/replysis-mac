@@ -4730,6 +4730,9 @@ class MainViewModel {
         // Everything the write needs is read HERE, on the main actor; the queue touches none of it.
         let header: String = {
             let fmt = DateFormatter()
+            // A fixed calendar: a Mac set to the Buddhist calendar wrote the year 2569 (Windows round 16).
+            fmt.locale = Locale(identifier: "en_US_POSIX")
+            fmt.calendar = Calendar(identifier: .gregorian)
             fmt.dateFormat = "yyyy-MM-dd HH:mm"
             return "SESSION \(sessionNumber) | ai | \(fmt.string(from: Date())) | RESUME: \(ResumeParser.extractName(resumeText))\n\n"
         }()
