@@ -5452,9 +5452,10 @@ class MainViewModel {
             // chose Interview (microphone off) is moved to it once; after that the person's choice is kept.
             micCaptureEnabled = obj["micCaptureEnabled"] as? Bool ?? true
             if obj["oneListeningMode"] == nil { micCaptureEnabled = true; movedToOneMode = true }
-            transcriptLanguage = obj["transcriptLanguage"] as? String ?? "en"
             cloudSyncEnabled = obj["cloudSyncEnabled"] as? Bool ?? true
             sarvamApiKey = obj["sarvamApiKey"] as? String ?? ""
+            // A saved Telugu (or other Sarvam language) with no key starts in English (Windows round 53).
+            transcriptLanguage = LanguageRules.engineLanguage(saved: obj["transcriptLanguage"] as? String, sarvamKey: sarvamApiKey)
             isWatchMode = obj["screenAnswers"] as? Bool ?? true
             listeningMode = ListeningMode.fromStored(obj["listeningMode"] as? String)
                 ?? ((obj["autoModeEnabled"] as? Bool ?? false) ? .auto : .manual)
@@ -5537,24 +5538,16 @@ class MainViewModel {
     // The engine hears ONLY this language (--language), so it has to match the interview:
     // speech in another language comes back as garbled words in this one. Same list and
     // codes as Windows, so a transcript is the same on both. Telugu and the other Indian
-    // languages Speechmatics cannot do are routed by the engine to Sarvam AI, which needs
-    // a key in Settings; without one they stay unavailable and the picker says so.
-    static let interviewLanguages: [(name: String, code: String)] = [
-        ("English", "en"), ("Hindi", "hi"), ("Tamil", "ta"), ("Telugu (Sarvam AI)", "te"),
-        ("Bengali", "bn"), ("Marathi", "mr"), ("Urdu", "ur"), ("Spanish", "es"),
-        ("French", "fr"), ("German", "de"), ("Portuguese", "pt"), ("Italian", "it"),
-        ("Mandarin Chinese", "cmn"), ("Japanese", "ja"), ("Korean", "ko"),
-        ("Arabic", "ar"), ("Russian", "ru"),
-    ]
-    /// Codes the engine routes to Sarvam AI. Keep in sync with SARVAM_LANG_MAP in
-    /// speechmatics_engine.py and with Windows _sarvamLangs.
-    static let sarvamLanguages: Set<String> = ["te", "kn", "ml", "gu", "pa", "or", "as"]
+    // languages Speechmatics cannot do need a Sarvam AI key no customer has, so they are not
+    // offered (Windows round 53, LanguageRules); one kept from an older version with its own key still works.
+    static var interviewLanguages: [(name: String, code: String)] { LanguageRules.offered }
+    static var sarvamLanguages: Set<String> { LanguageRules.sarvamLanguages }
 
     var transcriptLanguage = "en"
     var sarvamApiKey = ""
 
     var interviewLanguageName: String {
-        Self.interviewLanguages.first { $0.code == transcriptLanguage }?.name ?? "English"
+        LanguageRules.pickerList(current: transcriptLanguage).first { $0.code == transcriptLanguage }?.name ?? "English"
     }
 
     func setInterviewLanguage(_ code: String) {

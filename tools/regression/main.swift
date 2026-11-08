@@ -1267,5 +1267,13 @@ check(UpdateNoticeRules.afterCheckEnds(.ready("1.0.300")) == .ready("1.0.300"), 
 check(UpdateNoticeRules.afterCheckEnds(.none) == .none, "update: nothing stays nothing")
 check(UpdateNoticeRules.downloadFailedKind.hasSuffix("-minor"), "update: a failed download is reported as minor")
 
+// ── Interview language (Windows MAC_CATCHUP 2026-11-07 round 53) ──────────────────────────────────────────────────────────
+check(!LanguageRules.offered.contains(where: { LanguageRules.sarvamLanguages.contains($0.code) || $0.name.contains("Sarvam") }), "language: no Sarvam language is offered")
+check(LanguageRules.offered.first?.code == "en" && LanguageRules.offered.contains(where: { $0.code == "hi" }), "language: English first, Hindi still offered")
+check(LanguageRules.engineLanguage(saved: "te", sarvamKey: "") == "en" && LanguageRules.engineLanguage(saved: "te", sarvamKey: nil) == "en", "language: a saved Telugu with no key starts in English")
+check(LanguageRules.engineLanguage(saved: "te", sarvamKey: "sk_x") == "te", "language: a Telugu with its own key keeps working")
+check(LanguageRules.engineLanguage(saved: "hi", sarvamKey: "") == "hi" && LanguageRules.engineLanguage(saved: nil, sarvamKey: nil) == "en", "language: other languages unchanged, nothing saved is English")
+check(LanguageRules.pickerList(current: "en").count == LanguageRules.offered.count && LanguageRules.pickerList(current: "te").last?.code == "te", "language: a kept Telugu still shows in the picker")
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

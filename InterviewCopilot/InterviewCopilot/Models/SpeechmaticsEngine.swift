@@ -372,8 +372,9 @@ class SpeechmaticsEngine {
         let micCaptureEnabled = savedSettings["micCaptureEnabled"] as? Bool ?? false
         // The engine hears ONLY this language, so it has to match the interview. Speech in
         // another language comes back as garbled words in this one.
-        let language = (savedSettings["transcriptLanguage"] as? String ?? "en")
-            .trimmingCharacters(in: .whitespaces)
+        // A Sarvam language with no key is started in English: without the key the engine exits at once (round 53).
+        let language = LanguageRules.engineLanguage(saved: savedSettings["transcriptLanguage"] as? String,
+                                                    sarvamKey: savedSettings["sarvamApiKey"] as? String)
         // The saved preference AND the active mode must both permit the mic.
         let micAllowed = micCaptureEnabled && micCaptureAllowed
         let micGranted = micAllowed && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
