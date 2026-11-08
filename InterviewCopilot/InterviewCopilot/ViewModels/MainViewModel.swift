@@ -4126,6 +4126,9 @@ class MainViewModel {
         guard autoModeEnabled, session.isLoggedIn, !isProcessing else { return }
         // Setup is not an interview. Picking Auto there must not open the microphone.
         guard appStep == .interview else { return }
+        // Finish waits for an answer still being written; that answer ending must not open the microphone again
+        // (Windows 2026-11-02: Finish in Auto no longer restarts listening). New session or Start interview resumes it.
+        guard !finishing else { return }
         // The mic gave up on a silent room. Re-arming here would reopen it seconds later
         // and spend the time the stop just saved — and the message on screen says Space.
         guard !stoppedForIdle else {
