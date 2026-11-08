@@ -623,7 +623,9 @@ class SpeechmaticsEngine {
             if ListeningProblems.isConnectionTrouble(line) {
                 Task { @MainActor [weak self] in self?.noteConnectionTrouble() }
             }
-            if Self.isConcurrencyLimit(line) {
+            if Self.isNoSpeechKeyExit(line) {
+                Task { @MainActor [weak self] in self?.handleNoSpeechKeyExit() }
+            } else if Self.isConcurrencyLimit(line) {
                 Task { @MainActor [weak self] in self?.handleConcurrencyLimit() }
             } else if Self.isAuthFailure(line) {
                 let exhausted = Self.isBalanceExhausted(line)
@@ -830,6 +832,43 @@ class SpeechmaticsEngine {
         startRetryTimer(interval: 60)
     }
 
+    /// The server had no speech key for us this time (it sent the placeholder, or the engine
+    /// exited saying so). That is the server's state, never the customer's: fetch a new key and
+    /// start again in 3, 10, 30 s, then every minute, with no KEY ERROR. From the second try the
+    /// cached tokens are renewed in case they are what was refused.
+    private func restartWithFreshSpeechKey(reason: String) {
+        backupOffRestarts += 1
+        let waits: [TimeInterval] = [3, 10, 30]
+        let wait = backupOffRestarts <= waits.count ? waits[backupOffRestarts - 1] : 60
+        let renew = backupOffRestarts >= 2
+        dlog("SM: \(reason) in \(Int(wait))s", tag: "SM")
+        engineCancelled = true
+        monitorTimer?.invalidate(); monitorTimer = nil
+        killAndDispose()
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+            guard let self, !self.isRunning, !self.stoppedByUser else { return }
+            if await UserSession.shared.fetchSpeechmaticsKeyAsync(forceRefresh: renew), !self.isRunning, !self.stoppedByUser {
+                self.start(smKey: UserSession.shared.speechmaticsKey)
+            }
+        }
+    }
+
+    /// The shared engine (Windows, MAC_CATCHUP 2026-11-07) prints this and exits with code 2,
+    /// no FATAL, when the key it was given is the server's placeholder.
+    nonisolated static func isNoSpeechKeyExit(_ line: String) -> Bool {
+        line.contains("No speech key from the server right now")
+    }
+
+    private func handleNoSpeechKeyExit() {
+        guard !authErrorHandled else { return }
+        authErrorHandled = true
+        // The exit can be seen by checkEngine first, which takes a dead engine for a refused
+        // system audio grant. This exit is about the key, so keep system audio on.
+        sysAudioCrashed = false
+        restartWithFreshSpeechKey(reason: "the server had no speech key; fetching a new one")
+    }
+
     private func handleAuthError(balanceExhausted: Bool = false) {
         guard !authErrorHandled else { return }   // report once per engine start
         authErrorHandled = true
@@ -841,23 +880,7 @@ class SpeechmaticsEngine {
         // ten minute wait.
         if UserSession.shared.speechmaticsKey == Self.backupUnavailableKey,
            !UserSession.shared.deepgramToken.isEmpty {
-            backupOffRestarts += 1
-            // 3, 10, 30 seconds, then every minute. From the second try a fresh Deepgram token,
-            // in case the cached one is what Deepgram refused.
-            let waits: [TimeInterval] = [3, 10, 30]
-            let wait = backupOffRestarts <= waits.count ? waits[backupOffRestarts - 1] : 60
-            let renew = backupOffRestarts >= 2
-            dlog("SM: the backup service is off (placeholder key); back to Deepgram in \(Int(wait))s", tag: "SM")
-            engineCancelled = true
-            monitorTimer?.invalidate(); monitorTimer = nil
-            killAndDispose()
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
-                guard let self, !self.isRunning, !self.stoppedByUser else { return }
-                if await UserSession.shared.fetchSpeechmaticsKeyAsync(forceRefresh: renew), !self.isRunning, !self.stoppedByUser {
-                    self.start(smKey: UserSession.shared.speechmaticsKey)
-                }
-            }
+            restartWithFreshSpeechKey(reason: "the backup service is off (placeholder key); back to Deepgram")
             return
         }
         self.balanceExhausted = balanceExhausted
