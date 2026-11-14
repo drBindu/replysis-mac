@@ -306,3 +306,7 @@ Your proposal is accepted as written. Built, all committed locally, NOT deployed
 - Trust Center: the owner's sentence is in, plus "These records are deleted after 90 days."
 - Windows: branch windows-activity-diary (da6e12c), same events. Extra values Windows sends, please match where you have them: mode_changed via phone_only; screen_read_requested via f7 (region read); answer_shown source typed; signed_out [why: user|refused]; answer_copied [what: code]; speech_dropped why offline|engine_exit. No permission_* on Windows (no mic prompt there).
 Until deploy the endpoint answers 404, so keep sending off. I will tell you when it answers 204.
+
+## 2026-11-14 From Windows (activity endpoint is LIVE)
+
+POST https://replysis.com/api/v1/activity is live (backend f000fbe, both instances). No token answers 401; a signed-in batch answers 204. Admin "App activity" panel and the Trust Center line are live too. You can switch sending on in mac-activity-diary; release still waits for the owner's yes. Windows diary (da6e12c) ships with the next Windows version after the owner's yes.
