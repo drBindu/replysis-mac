@@ -69,7 +69,7 @@ echo "DATE CHECK: custom date formats use en_US_POSIX"
 VIEWS="$ROOT/InterviewCopilot/InterviewCopilot/Views"
 if grep -rnE '"Pin on top"|togglePin|setMicCaptureEnabled|get: { vm.micCaptureEnabled }' "$VIEWS" "$VM"; then echo "ONE MODE CHECK FAILED: Pin on top or the microphone switch is still there"; exit 1; fi
 if grep -n 'savedSettings\["micCaptureEnabled"\]' "$SRC/SpeechmaticsEngine.swift"; then echo "ONE MODE CHECK FAILED: the engine still reads a microphone switch"; exit 1; fi
-if grep -rniE '"[^"]*(interview mode|practice mode|audio source|system audio only|my voice)[^"]*"' "$VIEWS" "$VM" "$SRC/ListeningProblems.swift" | grep -v 'dlog('; then echo "ONE MODE CHECK FAILED: a mode name is still shown"; exit 1; fi
+if grep -rniE '"[^"]*(interview mode|practice mode|audio source|system audio only|my voice|use my microphone|switched off in settings)[^"]*"' "$VIEWS" "$VM" "$SRC/ListeningProblems.swift" | grep -v 'dlog('; then echo "ONE MODE CHECK FAILED: a mode name is still shown"; exit 1; fi
 for t in '"Auto", subtitle: "Answers by itself"' '"Manual", subtitle: "Press Space to answer"' '"Full window", subtitle:' '"Compact", subtitle:'; do
   grep -qF "$t" "$VIEWS/ModePill.swift" || { echo "ONE MODE CHECK FAILED: menu row missing: $t"; exit 1; }
 done

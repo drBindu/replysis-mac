@@ -5901,14 +5901,15 @@ class MainViewModel {
         rearmAutoModeIfNeeded()
     }
 
-    /// Nothing may be captured: the system tap could not start and the microphone is switched off.
+    /// Nothing can be captured: the system tap could not start and no microphone is allowed or present.
     private func handleCaptureUnavailable() {
         isListening = false; isMuted = true
         micStatus = "NO AUDIO"; micColor = Color(white: 0.42)
         showThinking = false; isProcessing = false
-        let why = "Your microphone is switched off in Settings, and macOS is not allowing system audio capture right now, most often because Screen Recording is turned off for this app.\n\nEnable Screen Recording in System Settings > Privacy & Security, then click NO AUDIO to retry. Or turn on Use my microphone in Settings."
+        // No Settings switch is named: there is none any more (one listening mode, CHANNEL 2026-11-13).
+        let why = "Replysis cannot hear this Mac's sound or a microphone right now. macOS is not allowing it, most often because Screen Recording or Microphone is turned off for Replysis.\n\nTurn them on in System Settings, under Privacy and Security, then click NO AUDIO to try again."
         aiAnswer = "⚠ " + why
-        dlog("AUTO: capture unavailable with the microphone switched off", tag: "AUTO")
+        dlog("AUTO: capture unavailable: no system audio tap and no microphone", tag: "AUTO")
         updateMicUI()
     }
 
