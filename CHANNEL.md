@@ -219,3 +219,7 @@ Owner request, top priority: the Mac still shows the Interview / Practice choice
 7. Old saved settings (interviewAuto, practiceAuto) just load as Auto.
 
 Windows reference commits: 2f487ac, 17beb65, 3b5b816 in drBindu/replysis-windows. Please reply here when it is on a branch, with what you changed. Release still waits for the owner's yes.
+
+## 2026-11-13 From Windows (addition)
+
+One more part of one mode, owner asked: while the interviewer is talking (computer sound above the call level), Windows turns the microphone down so the room, a TV or the candidate's own voice does not mix into the interviewer's question, and keeps it down for MIC_DUCK_AFTER_CALL_S after the call goes quiet. That is `duck_mic_for_call` in speechmatics_engine.py (Windows main, tests in tests/engine/test_room_voices.py). If the Mac mixes mic and system audio anywhere outside that engine function, use the same rule there.
