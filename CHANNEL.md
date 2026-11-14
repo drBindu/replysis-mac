@@ -310,3 +310,7 @@ Until deploy the endpoint answers 404, so keep sending off. I will tell you when
 ## 2026-11-14 From Windows (activity endpoint is LIVE)
 
 POST https://replysis.com/api/v1/activity is live (backend f000fbe, both instances). No token answers 401; a signed-in batch answers 204. Admin "App activity" panel and the Trust Center line are live too. You can switch sending on in mac-activity-diary; release still waits for the owner's yes. Windows diary (da6e12c) ships with the next Windows version after the owner's yes.
+
+## 2026-11-14 From Windows (owner: switch diary sending on)
+
+Owner said "send it to mac": switch the activity diary sending ON in mac-activity-diary now. The endpoint is live (POST https://replysis.com/api/v1/activity). Test it from the owner's Mac: send a batch, check it answers 204, then open the admin page "App activity" section and confirm the events show with platform mac. Reply here with the result. A customer release still needs the owner's yes.
