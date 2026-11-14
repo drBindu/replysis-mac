@@ -1780,6 +1780,7 @@ class MainViewModel {
         problemsShown.removeAll()
         stoppedForIdle = false
         heardEverThisRun = false; interviewSilentTipShown = false
+        tailMergesThisInterview = 0
         if needsFreshSession { prepareSession() }
         beginInterviewClock()
         aiAnswerHint = idleHintForCurrentMode
@@ -3005,7 +3006,7 @@ class MainViewModel {
         CompanionLink.shared.heard(lastTurnSource == "candidate" ? "" : transcript)
         tickListeningProblem()
         tickPreparedShots()
-        checkAudioSourceTip()
+        applyPendingSettings()
         renewSpeechTokenIfExpiring()
         // THE ROOM IS NOT QUIET ANY MORE. The microphone is shut, but the system-audio tap
         // keeps running, so the interviewer starting to talk in Zoom is visible even now.
@@ -3125,6 +3126,11 @@ class MainViewModel {
             if autoModeEnabled, isListening, micCaptureActive, !isProcessing, !isScreenAnalyzing,
                !autoTurnSubmitting, engine.isReady,
                !(pendingSpeechStartedAt != nil && pendingSpeechBeganBeforeAnswer),
+               // The candidate's own words are never a question while an interviewer is present (one listening mode). This
+               // path answers before the engine's ">>> SOURCE" for the turn exists, so who is speaking is judged here: with an
+               // interviewer heard in the last 10 minutes, only words with computer sound in the last 3 s count. It answered
+               // room speech in a live test, 2026-11-14 11:18 (Mac bug round 11).
+               !(interviewerPresent && secondsSinceComputerSound > 3),
                let question = AutoTurnDetector.questionBeforeCandidateTail(remainingSpeech(raw)) {
                 commitBeforeCandidateTail(question)
             }
@@ -3207,6 +3213,19 @@ class MainViewModel {
         if text != transcript {
             dlog("Transcript updated: '\(text.prefix(80))'", tag: "TX")
             transcript = text
+            transcriptChangedAt = Date()
+        }
+        // No end of turn from the speech service (see AutoTurnDetector.quietFallbackDue). Once per text, through the same
+        // path as the service's own signal, and stamped like the early signal so a late end of turn finds nothing left.
+        if autoModeEnabled, isListening, !isProcessing, !isScreenAnalyzing, !autoTurnSubmitting, engine.isReady,
+           text != quietFallbackFiredFor,
+           AutoTurnDetector.quietFallbackDue(text: text, now: Date(), textChangedAt: transcriptChangedAt,
+                                             lastWordsAt: engine.lastWordsAt, lastTurnSignalAt: lastTurnSignalAt,
+                                             interviewerPresent: interviewerPresent, secondsSinceComputerSound: secondsSinceComputerSound) {
+            quietFallbackFiredFor = text
+            dlog("AUTO: no end of turn from the speech service; the words have been still for 2.8 s — answering: '\(text.suffix(40))'", tag: "AUTO")
+            lastEarlyAnswerAt = Date()
+            handleUtteranceEnd()
         }
         // AUTO MODE: the same polled text that drives the on-screen transcript also tells
         // us when the interviewer stopped talking. No extra timer, no extra file read.
@@ -3227,9 +3246,9 @@ class MainViewModel {
             }
             autoBlockLogTick += 1
         }
-        // NOTE: turns are driven by handleUtteranceEnd(), from the recogniser's own
-        // acoustic silence detection. No text-timing fallback runs here: two independent
-        // triggers would race and double-answer, and the text one is the guess we removed.
+        // NOTE: turns are driven by handleUtteranceEnd(), from the recogniser's own acoustic silence detection. The one
+        // text-timing path above runs only when no turn signal came after the last change, and goes through
+        // handleUtteranceEnd itself, so the two cannot both answer one question.
     }
 
     /// The recogniser reported real acoustic silence — the speaker has finished.
@@ -3279,6 +3298,16 @@ class MainViewModel {
     /// When the recogniser last said the speaker stopped. The user's wait starts here, not
     /// when the request goes out — everything before it is time they are already spending.
     var lastUtteranceEndAt = Date.distantPast
+    /// When the shown transcript last changed, the last end-of-turn signal of any kind, and the text the quiet fallback
+    /// last answered (so it fires once per text).
+    private var transcriptChangedAt = Date.distantPast
+    private var lastTurnSignalAt = Date.distantPast
+    private var quietFallbackFiredFor = ""
+    /// Seconds since the computer last made sound (the interviewer, when one is on a call).
+    private var secondsSinceComputerSound: TimeInterval {
+        if #available(macOS 14.2, *) { return SystemAudioTapper.shared.secondsSinceAudio }
+        return .greatestFiniteMagnitude
+    }
 
     private var continuationChainStartedAt = Date.distantPast
     private var continuationCount = 0
@@ -3436,33 +3465,37 @@ class MainViewModel {
         longestMidTurnGap = 0
     }
 
-    /// Auto on the early signal: answer a plainly finished question 650 ms after the recogniser says
+    /// Auto on the early signal: answer a plainly finished question 250 ms (650 ms after a split question) after the recogniser says
     /// the speaker stopped, instead of waiting for the end-of-utterance line that follows about a
     /// second later (Windows measured this as most of the wait between the last word and the first
     /// word of the answer). Only if nothing more was said in those 650 ms; a tail that does arrive
     /// goes through the continuation logic as always. Statements and unclear endings are left
     /// alone and wait for the later signal exactly as before.
-    private static let speechFinalDelay: UInt64 = 650_000_000
+    /// Questions that arrived in two parts this interview (a tail joined after the first answer); slows the early signal.
+    private var tailMergesThisInterview = 0
     @ObservationIgnored private var speechFinalTask: Task<Void, Never>?
     private var lastEarlyAnswerAt = Date.distantPast
 
     private func handleSpeechFinal() {
+        lastTurnSignalAt = Date()
         guard autoModeEnabled, isListening, !isScreenAnalyzing, !autoTurnSubmitting, engine.isReady else { return }
         let heardAtSignal = engine.readLatestTxt()
         let text = remainingSpeech(heardAtSignal)
         guard AutoTurnDetector.isPlainlyFinished(text) else { return }
         speechFinalTask?.cancel()
         speechFinalTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: Self.speechFinalDelay)
+            let wait = AutoTurnDetector.speechFinalWaitNanos(tailMergesThisInterview: self?.tailMergesThisInterview ?? 0)
+            try? await Task.sleep(nanoseconds: wait)
             guard let self, !Task.isCancelled else { return }
             guard self.engine.readLatestTxt() == heardAtSignal else { return }   // more was said: wait
-            dlog("AUTO: speaker stopped (early signal) — answering after 650ms: '\(text.suffix(40))'", tag: "AUTO")
+            dlog("AUTO: speaker stopped (early signal) — answering after \(wait / 1_000_000)ms: '\(text.suffix(40))'", tag: "AUTO")
             self.lastEarlyAnswerAt = Date()
             self.handleUtteranceEnd()
         }
     }
 
     private func handleUtteranceEnd() {
+        lastTurnSignalAt = Date()
         guard autoModeEnabled, isListening, !isScreenAnalyzing, !autoTurnSubmitting, engine.isReady else { return }
         // The late signal for a question already answered on the early one finds nothing left. That
         // is not a desync, so it must not count toward the resynchronise rule below.
@@ -3638,6 +3671,7 @@ class MainViewModel {
             }
             continuationCount += 1
             let merged = mergedCandidate
+            tailMergesThisInterview += 1
             dlog("AUTO: continuation\(saidBeforeAnswer ? ", said before the answer was up" : "") — re-answering the full question: '\(merged.prefix(90))'", tag: "AUTO")
             // Say WHY the answer just changed. Without this the replacement looks like the
             // app glitched and lost the answer, right when the user is reading it.
@@ -5793,12 +5827,16 @@ class MainViewModel {
         alertTitle = ""; alertBody = ""; alertActionLabel = ""; alertAction = nil
     }
 
-    /// Settings changes that wait for the current question: applied once it is over.
-    private func checkAudioSourceTip() {
+    /// Settings changes that wait for the current question: applied once it is over. Checked every second (it was every
+    /// 20 s, a leftover of the Interview/Practice tips that used to share this function).
+    private func applyPendingSettings() {
         let now = Date()
-        guard now.timeIntervalSince(lastAudioSourceTipCheck) >= 20 else { return }
+        guard now.timeIntervalSince(lastAudioSourceTipCheck) >= 1 else { return }
         lastAudioSourceTipCheck = now
-        if languageChangePending, !isListening, !isProcessing {
+        if languageChangePending,
+           LanguageRules.canApplyPendingChange(listening: isListening, processing: isProcessing,
+                                               unansweredText: remainingSpeech(engine.readLatestTxt()),
+                                               secondsSinceSpeech: now.timeIntervalSince(lastSpeechHeardAt)) {
             languageChangePending = false
             restartEngineForSettingChange()
             dlog("Interview language applied now the question is over", tag: "SETTINGS")
@@ -5882,14 +5920,15 @@ class MainViewModel {
         rearmAutoModeIfNeeded()
     }
 
-    /// Nothing may be captured: the system tap could not start and the microphone is switched off.
+    /// Nothing can be captured: the system tap could not start and no microphone is allowed or present.
     private func handleCaptureUnavailable() {
         isListening = false; isMuted = true
         micStatus = "NO AUDIO"; micColor = Color(white: 0.42)
         showThinking = false; isProcessing = false
-        let why = "Your microphone is switched off in Settings, and macOS is not allowing system audio capture right now, most often because Screen Recording is turned off for this app.\n\nEnable Screen Recording in System Settings > Privacy & Security, then click NO AUDIO to retry. Or turn on Use my microphone in Settings."
+        // No Settings switch is named: there is none any more (one listening mode, CHANNEL 2026-11-13).
+        let why = "Replysis cannot hear this Mac's sound or a microphone right now. macOS is not allowing it, most often because Screen Recording or Microphone is turned off for Replysis.\n\nTurn them on in System Settings, under Privacy and Security, then click NO AUDIO to try again."
         aiAnswer = "⚠ " + why
-        dlog("AUTO: capture unavailable with the microphone switched off", tag: "AUTO")
+        dlog("AUTO: capture unavailable: no system audio tap and no microphone", tag: "AUTO")
         updateMicUI()
     }
 

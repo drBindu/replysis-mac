@@ -98,7 +98,16 @@ nonisolated final class SystemAudioTapper {
     /// Begin capturing system audio into the FIFO at `path`. Returns true on success.
     @discardableResult
     func start(fifoPath path: String) -> Bool {
-        guard !running else { return true }
+        if running {
+            // Running, but the device was lost (a move to a new output failed): build it again now rather than
+            // reporting a tap that hears nothing. The FIFO and its writer are still there.
+            if aggID == kAudioObjectUnknown, path == fifoPath {
+                let ok = buildDevice()
+                dlog("in-app tap: had no device; rebuilt on start: \(ok)", tag: "TAP")
+                return ok
+            }
+            return true
+        }
         fifoPath = path
         setStop(false)
 
@@ -170,6 +179,9 @@ nonisolated final class SystemAudioTapper {
 
     /// On the main queue. Waits a moment (Bluetooth devices announce themselves before they can play), then rebuilds,
     /// trying again a few times if the new device is not ready yet.
+    /// 1 s between the first five tries, then 5 s, for as long as the tap runs.
+    static func retryDelay(afterTry n: Int) -> TimeInterval { n < 5 ? 1.0 : 5.0 }
+
     private func defaultOutputChanged() {
         guard running else { return }
         rebuildGeneration += 1
@@ -182,10 +194,11 @@ nonisolated final class SystemAudioTapper {
             if buildDevice() {
                 outputSwitches += 1
                 dlog("in-app tap: the default output changed; now hearing '\(newUID)'", tag: "TAP")
-            } else if n < 5 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { attempt(n + 1) }
             } else {
-                dlog("in-app tap: could not move to the new output device after 5 tries", tag: "TAP")
+                // Never give up while listening: without a device the interviewer is not heard at all. Quick tries
+                // first (Bluetooth announces itself before it can play), then every 5 s.
+                if n == 5 { dlog("in-app tap: could not move to the new output device after 5 tries; still trying every 5 s", tag: "TAP") }
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.retryDelay(afterTry: n)) { attempt(n + 1) }
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { attempt(1) }

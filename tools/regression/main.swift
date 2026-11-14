@@ -1304,5 +1304,50 @@ check(AnswerLayout.depthBullets("- one\n-  two\n\n• three") == "• one\n• t
 let indentedFirst = AnswerLayout.split("Here it is.\n```python\n\n    return x\n```")
 check(indentedFirst.code == "    return x", "split: the first code line keeps its indentation")
 
+// ── Quiet fallback (Windows RecognitionSettled + 2.8 s): a finished sentence with no end of turn from the service ──
+do {
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+    let q = "What is a hash map and when would you use it?"
+    check(AutoTurnDetector.quietFallbackDue(text: q, now: t0.addingTimeInterval(3.0), textChangedAt: t0, lastWordsAt: t0.addingTimeInterval(0.5), lastTurnSignalAt: .distantPast),
+          "quiet fallback: a finished question, still for 3 s, no words for 2.5 s, no turn signal: answered")
+    check(!AutoTurnDetector.quietFallbackDue(text: q, now: t0.addingTimeInterval(2.0), textChangedAt: t0, lastWordsAt: t0, lastTurnSignalAt: .distantPast),
+          "quiet fallback: not before 2.8 s")
+    check(!AutoTurnDetector.quietFallbackDue(text: q, now: t0.addingTimeInterval(3.0), textChangedAt: t0, lastWordsAt: t0.addingTimeInterval(1.5), lastTurnSignalAt: .distantPast),
+          "quiet fallback: not while the service sent words in the last 2 s")
+    check(!AutoTurnDetector.quietFallbackDue(text: q, now: t0.addingTimeInterval(5.0), textChangedAt: t0, lastWordsAt: t0, lastTurnSignalAt: t0.addingTimeInterval(1.0)),
+          "quiet fallback: never when the service already signalled the end after the last change")
+    check(!AutoTurnDetector.quietFallbackDue(text: "How would you design a", now: t0.addingTimeInterval(9.0), textChangedAt: t0, lastWordsAt: t0, lastTurnSignalAt: .distantPast),
+          "quiet fallback: an unfinished sentence keeps waiting")
+    check(!AutoTurnDetector.quietFallbackDue(text: "   ", now: t0.addingTimeInterval(9.0), textChangedAt: t0, lastWordsAt: t0, lastTurnSignalAt: .distantPast),
+          "quiet fallback: nothing said, nothing answered")
+}
+
+
+// ── Early answer wait matches Windows: 250 ms, 650 ms once a question came in two parts this interview ──
+check(AutoTurnDetector.speechFinalWaitNanos(tailMergesThisInterview: 0) == 250_000_000, "early signal: a plainly finished question is answered 250 ms after the speaker stops (Windows SpeechFinalConfirmMs)")
+check(AutoTurnDetector.speechFinalWaitNanos(tailMergesThisInterview: 1) == 650_000_000, "early signal: 650 ms once a question arrived in two parts (Windows SpeechFinalConfirmAfterTailMs)")
+
+// ── Quiet fallback never answers the candidate's own pause while an interviewer is present ──
+do {
+    let t0 = Date(timeIntervalSince1970: 2_000_000)
+    let said = "I built the payments service at my last job."
+    check(!AutoTurnDetector.quietFallbackDue(text: said, now: t0.addingTimeInterval(3.0), textChangedAt: t0, lastWordsAt: t0, lastTurnSignalAt: .distantPast,
+                                             interviewerPresent: true, secondsSinceComputerSound: 40),
+          "quiet fallback: with an interviewer present and no computer sound near the words, the candidate's pause is not answered")
+    check(AutoTurnDetector.quietFallbackDue(text: "Tell me about a time you led a project.", now: t0.addingTimeInterval(3.0), textChangedAt: t0, lastWordsAt: t0, lastTurnSignalAt: .distantPast,
+                                            interviewerPresent: true, secondsSinceComputerSound: 3.5),
+          "quiet fallback: computer sound up to the end of the words is the interviewer, answered")
+    check(AutoTurnDetector.quietFallbackDue(text: "What is a closure?", now: t0.addingTimeInterval(3.0), textChangedAt: t0, lastWordsAt: t0, lastTurnSignalAt: .distantPast,
+                                            interviewerPresent: false, secondsSinceComputerSound: 600),
+          "quiet fallback: practising alone (no interviewer), the candidate's question is answered")
+}
+
+// ── A language change made during an interview applies once the question is over, in Auto too ──
+check(LanguageRules.canApplyPendingChange(listening: true, processing: false, unansweredText: "", secondsSinceSpeech: 2), "language: in Auto (always listening) it applies once nobody has spoken for 1.5 s")
+check(!LanguageRules.canApplyPendingChange(listening: true, processing: false, unansweredText: "What is a", secondsSinceSpeech: 5), "language: never with words still unanswered")
+check(!LanguageRules.canApplyPendingChange(listening: true, processing: false, unansweredText: "", secondsSinceSpeech: 0.5), "language: never while someone is speaking")
+check(!LanguageRules.canApplyPendingChange(listening: false, processing: true, unansweredText: "", secondsSinceSpeech: 9), "language: never while an answer is being written")
+check(LanguageRules.canApplyPendingChange(listening: false, processing: false, unansweredText: "x", secondsSinceSpeech: 0), "language: Manual with the mic shut applies at once")
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

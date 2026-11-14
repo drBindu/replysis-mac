@@ -446,6 +446,34 @@ struct AutoTurnDetector {
     /// A question mark, or a request ("Tell me about yourself."), and nothing hanging off the end.
     /// Only text like this is answered on the early end-of-speech signal; a statement may be
     /// context with the question still to come, and keeps waiting.
+    /// Windows AutoTurnRules.RecognitionSettled + AutoTurnFinishedSilenceMs: when the speech service never says the turn
+    /// ended (a noisy room keeps its end-of-speech detection open), a finished sentence is answered once the words have
+    /// been still for 2.8 s and the service has sent no words for 2 s. Mac had only the service's signals and waited 21 s
+    /// for the next words in a live test (2026-11-13). Never when a turn signal already came after the last change: then
+    /// the ordinary path has it.
+    static let quietFallbackAfter: TimeInterval = 2.8
+    static let quietFallbackNoWordsFor: TimeInterval = 2.0
+    /// Without the service's turn end there is no ">>> SOURCE" for these words either, so who said them is judged here:
+    /// with an interviewer heard in the last 10 minutes, the words count only if the computer made sound up to 2 s
+    /// before they stopped. Otherwise it is the candidate answering out loud, and their pause must not be answered.
+    static func quietFallbackDue(text: String, now: Date, textChangedAt: Date, lastWordsAt: Date, lastTurnSignalAt: Date,
+                                 interviewerPresent: Bool = false, secondsSinceComputerSound: TimeInterval = .greatestFiniteMagnitude) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, classifyTurnEnding(t) == .finished else { return false }
+        guard lastTurnSignalAt < textChangedAt else { return false }
+        if interviewerPresent, secondsSinceComputerSound > now.timeIntervalSince(textChangedAt) + 2 { return false }
+        return now.timeIntervalSince(textChangedAt) >= quietFallbackAfter
+            && now.timeIntervalSince(lastWordsAt) >= quietFallbackNoWordsFor
+    }
+
+    /// Windows AutoTurnRules.SpeechFinalConfirmMs / SpeechFinalConfirmAfterTailMs: after the recogniser's early "speaker
+    /// stopped", a plainly finished question is answered 250 ms later, and 650 ms only once this interview has already had
+    /// a question arrive in two parts (a slow speaker). The Mac waited 650 ms every time: 0.4 s slower than Windows on
+    /// every answer (2026-11-13).
+    static func speechFinalWaitNanos(tailMergesThisInterview: Int) -> UInt64 {
+        tailMergesThisInterview > 0 ? 650_000_000 : 250_000_000
+    }
+
     static func isPlainlyFinished(_ text: String) -> Bool {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, classifyTurnEnding(t) == .finished else { return false }

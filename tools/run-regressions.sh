@@ -69,10 +69,24 @@ echo "DATE CHECK: custom date formats use en_US_POSIX"
 VIEWS="$ROOT/InterviewCopilot/InterviewCopilot/Views"
 if grep -rnE '"Pin on top"|togglePin|setMicCaptureEnabled|get: { vm.micCaptureEnabled }' "$VIEWS" "$VM"; then echo "ONE MODE CHECK FAILED: Pin on top or the microphone switch is still there"; exit 1; fi
 if grep -n 'savedSettings\["micCaptureEnabled"\]' "$SRC/SpeechmaticsEngine.swift"; then echo "ONE MODE CHECK FAILED: the engine still reads a microphone switch"; exit 1; fi
-if grep -rniE '"[^"]*(interview mode|practice mode|audio source|system audio only|my voice)[^"]*"' "$VIEWS" "$VM" "$SRC/ListeningProblems.swift" | grep -v 'dlog('; then echo "ONE MODE CHECK FAILED: a mode name is still shown"; exit 1; fi
+if grep -rniE '"[^"]*(interview mode|practice mode|audio source|system audio only|my voice|use my microphone|switched off in settings|which audio)[^"]*"' "$VIEWS" "$VM" "$SRC/ListeningProblems.swift" | grep -v 'dlog('; then echo "ONE MODE CHECK FAILED: a mode name is still shown"; exit 1; fi
 for t in '"Auto", subtitle: "Answers by itself"' '"Manual", subtitle: "Press Space to answer"' '"Full window", subtitle:' '"Compact", subtitle:'; do
   grep -qF "$t" "$VIEWS/ModePill.swift" || { echo "ONE MODE CHECK FAILED: menu row missing: $t"; exit 1; }
 done
 grep -q 'kAudioHardwarePropertyDefaultOutputDevice' "$SRC/SystemAudioTapper.swift" && grep -q 'AudioObjectAddPropertyListenerBlock' "$SRC/SystemAudioTapper.swift" || { echo "ONE MODE CHECK FAILED: the tap does not follow the default output"; exit 1; }
 grep -q 'fatalNoMicrophone: false' "$VM" || { echo "ONE MODE CHECK FAILED: no microphone can still block listening"; exit 1; }
 echo "ONE MODE CHECK: mic and computer sound always, Windows menu, no Pin on top, follows headphones and AirPods"
+
+# The app is named Replysis AI everywhere macOS shows a name (owner, 2026-11-13): Xcode overwrites CFBundleName, so the release
+# build sets it before signing.
+grep -q 'Set :CFBundleName Replysis AI' "$ROOT/.github/workflows/build-mac-dmg.yml" || { echo "NAME CHECK FAILED: the release build does not name the app Replysis AI"; exit 1; }
+echo "NAME CHECK: the release build names the app Replysis AI before signing"
+
+# The tap never gives up on a new output device while it runs, and a start finds a lost device and rebuilds it (Mac bug round 3).
+grep -q 'n < 5 ? 1.0 : 5.0' "$SRC/SystemAudioTapper.swift" && grep -q 'had no device; rebuilt on start' "$SRC/SystemAudioTapper.swift" && ! grep -q 'after 5 tries", tag' "$SRC/SystemAudioTapper.swift" \
+  || { echo "TAP CHECK FAILED: the tap can stop following the output device for good"; exit 1; }
+echo "TAP CHECK: keeps trying a new output device, and a start rebuilds a lost one"
+
+# The early "candidate has started talking" answer never answers the candidate while an interviewer is present (Mac bug round 11).
+grep -q '!(interviewerPresent && secondsSinceComputerSound > 3),' "$VM" || { echo "EARLY ANSWER CHECK FAILED: the early answer can answer the candidate"; exit 1; }
+echo "EARLY ANSWER CHECK: never answers the candidate while an interviewer is present"

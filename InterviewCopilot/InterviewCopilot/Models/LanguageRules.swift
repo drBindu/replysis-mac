@@ -34,4 +34,14 @@ enum LanguageRules {
         guard sarvamLanguages.contains(current), !offered.contains(where: { $0.code == current }) else { return offered }
         return offered + [(sarvamNames[current] ?? current, current)]
     }
+
+    /// A language change made mid-interview waits for the question (the engine restart takes about a second). In Auto
+    /// the microphone never closes, so "not listening" never came and the change waited for the end of the interview
+    /// (Mac bug round 7). It applies once no answer is being written and nobody has spoken for 1.5 s with nothing
+    /// unanswered on screen.
+    static func canApplyPendingChange(listening: Bool, processing: Bool, unansweredText: String, secondsSinceSpeech: TimeInterval) -> Bool {
+        if processing { return false }
+        if !listening { return true }
+        return unansweredText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && secondsSinceSpeech >= 1.5
+    }
 }
