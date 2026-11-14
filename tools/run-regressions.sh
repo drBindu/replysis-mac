@@ -81,3 +81,8 @@ echo "ONE MODE CHECK: mic and computer sound always, Windows menu, no Pin on top
 # build sets it before signing.
 grep -q 'Set :CFBundleName Replysis AI' "$ROOT/.github/workflows/build-mac-dmg.yml" || { echo "NAME CHECK FAILED: the release build does not name the app Replysis AI"; exit 1; }
 echo "NAME CHECK: the release build names the app Replysis AI before signing"
+
+# The tap never gives up on a new output device while it runs, and a start finds a lost device and rebuilds it (Mac bug round 3).
+grep -q 'n < 5 ? 1.0 : 5.0' "$SRC/SystemAudioTapper.swift" && grep -q 'had no device; rebuilt on start' "$SRC/SystemAudioTapper.swift" && ! grep -q 'after 5 tries", tag' "$SRC/SystemAudioTapper.swift" \
+  || { echo "TAP CHECK FAILED: the tap can stop following the output device for good"; exit 1; }
+echo "TAP CHECK: keeps trying a new output device, and a start rebuilds a lost one"
