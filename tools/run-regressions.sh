@@ -7,7 +7,7 @@ trap 'rm -rf "$BUILD"' EXIT
 xcrun swiftc -module-cache-path "$BUILD/cache" \
   "$SRC/AutoTurnDetector.swift" "$SRC/PromptBuilder.swift" "$SRC/PlanFacts.swift" "$SRC/ListeningProblems.swift" "$SRC/RecoveryPolicy.swift" "$SRC/Gzip.swift" "$SRC/TranscriptTyping.swift" "$SRC/VocabTerms.swift" "$SRC/AccountScope.swift" "$SRC/SessionInsights.swift" "$SRC/UplinkGovernor.swift" "$SRC/OcrLayout.swift" "$SRC/AnswerClosers.swift" "$SRC/AnswerLayout.swift" "$SRC/CaptureTarget.swift" "$SRC/Clipboard.swift" "$SRC/ScreenOcr.swift" "$SRC/OAuthLoopback.swift" "$SRC/ClosingMarker.swift" "$SRC/AppIdentity.swift" "$SRC/PresencePing.swift" "$SRC/ClientErrorReporter.swift" "$SRC/ScreeningOptions.swift" "$SRC/MinutesBalance.swift" \
   "$SRC/GlobalHotkey.swift" "$SRC/AppNotifications.swift" \
-  "$SRC/AudioInputRoute.swift" "$SRC/StealthSelfTestRules.swift" "$SRC/ListeningMode.swift" "$SRC/ResumeParser.swift" "$SRC/SignInMessages.swift" "$SRC/UpdateNoticeRules.swift" "$SRC/LanguageRules.swift" \
+  "$SRC/AudioInputRoute.swift" "$SRC/StealthSelfTestRules.swift" "$SRC/ListeningMode.swift" "$SRC/ResumeParser.swift" "$SRC/SignInMessages.swift" "$SRC/UpdateNoticeRules.swift" "$SRC/LanguageRules.swift" "$SRC/ActivityLog.swift" \
   "$ROOT/tools/regression/main.swift" -o "$BUILD/regressions"
 "$BUILD/regressions"
 
@@ -97,3 +97,14 @@ grep -q 'engine.onFinalWords = { \[weak self\] in self?.handleSpeechFinal() }' "
   && grep -q '!AutoTurnDetector.isPlainlyFinished(me.remainingSpeech(me.engine.readLatestTxt()))' "$VM" \
   || { echo "SPEED CHECK FAILED: a finished question waits for the late signal or the drain"; exit 1; }
 echo "SPEED CHECK: a finished question is answered on its FINAL, with no drain"
+
+# The activity diary (CHANNEL 2026-11-14) carries no text: every ActivityLog.record( call site is scanned, with its string literals
+# taken out, for the variables that hold what was said, answered, read or typed. Sending stays off for real users.
+APPSRC="$ROOT/InterviewCopilot/InterviewCopilot"
+CALLS=$(grep -rn 'ActivityLog\.record(' "$APPSRC" --include='*.swift' | grep -v '^\S*ActivityLog\(Send\)\?\.swift:')
+[ "$(echo "$CALLS" | grep -c .)" -ge 25 ] || { echo "DIARY CHECK FAILED: fewer than 25 diary call sites ($(echo "$CALLS" | grep -c .))"; exit 1; }
+BADCALLS=$(echo "$CALLS" | sed -E 's/"([^"\\]|\\.)*"//g' | grep -E '\b(transcript|transcriptForDisplay|aiAnswer|aiAnswerHint|answer|resumeText|resumeFacts|jobContext|jobDescription|liveHints|question|lastQuestionShown|q|accumulated|final|screenWords|screenText|email|name|title|body|message|err|error|text|label|header|cleanEmail|password|fullName)\b' || true)
+if [ -n "$BADCALLS" ]; then echo "DIARY CHECK FAILED: a diary event may carry text:"; echo "$BADCALLS" | cut -c1-220; exit 1; fi
+grep -q 'nonisolated(unsafe) static var sendingEnabled = false' "$SRC/ActivityLog.swift" || { echo "DIARY CHECK FAILED: sending is not off by default"; exit 1; }
+grep -q 'posixPermissions: 0o600' "$SRC/ActivityLogSend.swift" || { echo "DIARY CHECK FAILED: the diary file is not 0600"; exit 1; }
+echo "DIARY CHECK: $(echo "$CALLS" | grep -c .) call sites, none carries text; sending off by default; the queue file is 0600"
