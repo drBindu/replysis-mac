@@ -3006,7 +3006,7 @@ class MainViewModel {
         CompanionLink.shared.heard(lastTurnSource == "candidate" ? "" : transcript)
         tickListeningProblem()
         tickPreparedShots()
-        checkAudioSourceTip()
+        applyPendingSettings()
         renewSpeechTokenIfExpiring()
         // THE ROOM IS NOT QUIET ANY MORE. The microphone is shut, but the system-audio tap
         // keeps running, so the interviewer starting to talk in Zoom is visible even now.
@@ -5822,12 +5822,16 @@ class MainViewModel {
         alertTitle = ""; alertBody = ""; alertActionLabel = ""; alertAction = nil
     }
 
-    /// Settings changes that wait for the current question: applied once it is over.
-    private func checkAudioSourceTip() {
+    /// Settings changes that wait for the current question: applied once it is over. Checked every second (it was every
+    /// 20 s, a leftover of the Interview/Practice tips that used to share this function).
+    private func applyPendingSettings() {
         let now = Date()
-        guard now.timeIntervalSince(lastAudioSourceTipCheck) >= 20 else { return }
+        guard now.timeIntervalSince(lastAudioSourceTipCheck) >= 1 else { return }
         lastAudioSourceTipCheck = now
-        if languageChangePending, !isListening, !isProcessing {
+        if languageChangePending,
+           LanguageRules.canApplyPendingChange(listening: isListening, processing: isProcessing,
+                                               unansweredText: remainingSpeech(engine.readLatestTxt()),
+                                               secondsSinceSpeech: now.timeIntervalSince(lastSpeechHeardAt)) {
             languageChangePending = false
             restartEngineForSettingChange()
             dlog("Interview language applied now the question is over", tag: "SETTINGS")

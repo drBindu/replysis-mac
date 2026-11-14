@@ -1342,5 +1342,12 @@ do {
           "quiet fallback: practising alone (no interviewer), the candidate's question is answered")
 }
 
+// ── A language change made during an interview applies once the question is over, in Auto too ──
+check(LanguageRules.canApplyPendingChange(listening: true, processing: false, unansweredText: "", secondsSinceSpeech: 2), "language: in Auto (always listening) it applies once nobody has spoken for 1.5 s")
+check(!LanguageRules.canApplyPendingChange(listening: true, processing: false, unansweredText: "What is a", secondsSinceSpeech: 5), "language: never with words still unanswered")
+check(!LanguageRules.canApplyPendingChange(listening: true, processing: false, unansweredText: "", secondsSinceSpeech: 0.5), "language: never while someone is speaking")
+check(!LanguageRules.canApplyPendingChange(listening: false, processing: true, unansweredText: "", secondsSinceSpeech: 9), "language: never while an answer is being written")
+check(LanguageRules.canApplyPendingChange(listening: false, processing: false, unansweredText: "x", secondsSinceSpeech: 0), "language: Manual with the mic shut applies at once")
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)
