@@ -186,7 +186,7 @@ class MainViewModel {
     /// On by default and remembered, as on Windows (AppConfig.KeepOnTop). It only takes effect during an interview. Stealth keeps the
     /// window out of the Dock and ⌘Tab, so once another window covered it an unpinned window
     /// had no way back — ⌃⌥R now brings it back too.
-    var isPinnedOnTop = true
+    let isPinnedOnTop = true
     /// Settings, "Screen keys work in every app". See GlobalHotkey.isScreenKey.
     var screenKeysEverywhere = true
     /// "Real interview? Mic off in Settings", shown in place of AUTO | MANUAL for four seconds
@@ -419,8 +419,7 @@ class MainViewModel {
         // loadSettings() restored the mode in init(), so the mic veto must be in force before
         // the engine's first start — otherwise a relaunch straight into Interview Auto could
         // open the mic on the very first spawn.
-        // No mode vetoes the microphone any more. Whether it is used is the Settings switch
-        // (micCaptureEnabled), which the engine reads when it starts.
+        // No mode vetoes the microphone any more, and there is no switch: it is always opened with the computer's sound.
         engine.micCaptureAllowed = true
         // THE turn signal. The recogniser has the waveform and tells us when the speaker
         // actually stopped; we no longer infer it from how the text is punctuated.
@@ -1007,13 +1006,8 @@ class MainViewModel {
             return
         }
 
-        // Lazy microphone permission — ONLY when the user has opted into it from Settings
-        // (Audio Capture: "System audio + my voice"). With the default "System audio only"
-        // mode, the mic is never touched and never prompted for, so the app stays fully
-        // invisible (no orange indicator, nothing in the mic list if checked).
-        // Gated on the EFFECTIVE rule, not the saved preference: in Interview Auto this used
-        // to fire the macOS microphone prompt, and route the user to the mic privacy pane,
-        // for a device that mode never opens.
+        // Lazy microphone permission, asked on the first listen. The microphone is always part of listening now (one mode);
+        // refused, listening carries on with the computer's sound alone.
         if micCaptureActive {
             let micAuth = AVCaptureDevice.authorizationStatus(for: .audio)
             if micAuth == .notDetermined {
@@ -1705,8 +1699,6 @@ class MainViewModel {
         case "updateready": AppUpdater.shared.state = .ready("9.9.9")
         case "key-a":     handleModeShortcut(.answerMode)     // ⌃⇧A
         case "space":     handleSpacePress(source: "FLOW")   // the Space key: listen, or send what was heard
-        case "practice":  setMicCaptureEnabled(true)      // at once, the way a switch made between questions is applied: the engine restarts now
-        case "interviewaudio": setMicCaptureEnabled(false)
         case "stallstart": StallMonitor.start(); StallMonitor.reset()
         case "stallreport": dlog("STALL: \(StallMonitor.summary)\nSTALL timeline: \(StallMonitor.timeline)", tag: "FLOW")
         #endif
@@ -1793,7 +1785,7 @@ class MainViewModel {
         aiAnswerHint = idleHintForCurrentMode
         refreshHotkeyGate()
         updateMicUI()
-        dlog("INTERVIEW: started (\(autoModeEnabled ? "Auto" : "Manual"), microphone \(micCaptureEnabled ? "on" : "off in Settings"))", tag: "FLOW")
+        dlog("INTERVIEW: started (\(autoModeEnabled ? "Auto" : "Manual"), microphone and computer sound)", tag: "FLOW")
         if phoneOnly {
             DispatchQueue.main.async { [weak self] in self?.setPhoneOnlyHidden(true, why: "Start with phone only on") }
         }
@@ -4996,7 +4988,9 @@ class MainViewModel {
             // No "Reconnecting" flash for a wait that is over in a moment (Windows item 43b): only once speech has
             // been down for a few seconds.
             waitingToRetry: (now < session.speechRetryAfter || session.speechKeyRetrying) && now.timeIntervalSince(speechDownSince ?? now) >= Self.reconnectNoticeAfter,
-            fatalNoMicrophone: micCaptureEnabled && micStatus == "NO MIC" && AVCaptureDevice.authorizationStatus(for: .audio) == .denied,
+            // Never a blocking problem (CHANNEL 2026-11-13 item 6): with no microphone, or none allowed, listening runs on the
+            // computer's sound alone. The engine's NO_MICROPHONE line shows the gentle notice instead (handleNoMicrophone).
+            fatalNoMicrophone: false,
             connectionStalled: stalled,
             noNetwork: !network.isUp,
             anotherDevice: engine.accountBusy,
@@ -5259,19 +5253,10 @@ class MainViewModel {
         mainPanel?.makeKeyAndOrderFront(nil)
     }
 
-    // Pin on top: when ON the window floats above other apps (for the interview);
-    // when OFF it's a normal window that goes behind apps you switch to.
-    // Pin is an interview control, not a permanent desktop behaviour (owner, 2026-10-09, as on Windows: Topmost = interview started && pinned):
-    // on the Setup page the window is a normal one, and the pin button is only shown during an interview.
+    // The window floats above other apps during an interview and is a normal window on the Setup page (owner, 2026-10-09, as on
+    // Windows: Topmost = interview started). There is no Pin on top choice any more (CHANNEL 2026-11-13: Windows has none).
     func applyKeepOnTop() {
         mainPanel?.level = (appStep == .interview && isPinnedOnTop) ? .floating : .normal
-    }
-
-    func togglePin() {
-        isPinnedOnTop.toggle()
-        applyKeepOnTop()
-        saveSettings()
-        dlog("Pin-on-top \(isPinnedOnTop ? "ON" : "OFF")", tag: "WINDOW")
     }
 
     func setScreenKeysEverywhere(_ on: Bool) {
@@ -5553,14 +5538,10 @@ class MainViewModel {
             // saved "concise" choice simply becomes Short.
             answerDetailed = (obj["answerLength"] as? String) == "detailed"
             PromptBuilder.shared.detailedAnswers = answerDetailed
-            // Default ON: system audio + the user's own voice, so Space captures both out
-            // of the box. Users who want to stay fully invisible in a real interview can
-            // switch to system-audio-only in Settings.
-            // ONE LISTENING MODE (Windows 1.0.45, 2026-10-22): the microphone and the computer's sound are always heard, and who spoke
-            // is decided per turn by the engine (">>> SOURCE"). The microphone stays a Settings switch, on by default. Every copy that
-            // chose Interview (microphone off) is moved to it once; after that the person's choice is kept.
-            micCaptureEnabled = obj["micCaptureEnabled"] as? Bool ?? true
-            if obj["oneListeningMode"] == nil { micCaptureEnabled = true; movedToOneMode = true }
+            // ONE LISTENING MODE (Windows 1.0.45, CHANNEL 2026-11-13): the microphone and the computer's sound are always heard
+            // together, and who spoke is decided per turn by the engine (">>> SOURCE"). There is no switch: a saved
+            // "micCaptureEnabled": false from an older copy is ignored.
+            if obj["oneListeningMode"] == nil { movedToOneMode = true }
             cloudSyncEnabled = obj["cloudSyncEnabled"] as? Bool ?? true
             sarvamApiKey = obj["sarvamApiKey"] as? String ?? ""
             // A saved Telugu (or other Sarvam language) with no key starts in English (Windows round 53).
@@ -5571,7 +5552,6 @@ class MainViewModel {
             // Default ON: hidden from screen sharing/recording out of the box. Settings
             // can turn it off for anyone who wants the window visible in a recording.
             stealthModeEnabled = obj["stealthModeEnabled"] as? Bool ?? true
-            isPinnedOnTop = obj["keepOnTop"] as? Bool ?? true
             screenKeysEverywhere = obj["screenKeysEverywhere"] as? Bool ?? true
             phoneOnly = obj["phoneOnly"] as? Bool ?? false
             applyKeepOnTop()
@@ -5631,7 +5611,8 @@ class MainViewModel {
     /// Off = system-audio-only: only the interviewer is transcribed, the mic is NEVER
     /// opened, so there's no orange indicator — fully invisible, for users who want to
     /// stay hidden in a real interview with nothing to reveal if the mic icon is checked.
-    var micCaptureEnabled = true
+    /// Always on (one listening mode). Kept as a name so logs and reports still say "microphone on".
+    let micCaptureEnabled = true
     /// Set while loading an older settings file: saved once with the one-mode marker.
     private var movedToOneMode = false
 
@@ -5699,13 +5680,7 @@ class MainViewModel {
         engine.start(smKey: session.speechmaticsKey)
     }
 
-    // ── Interview / Practice ──────────────────────────────────────────────────
-    //
-    // The same preference the Settings switch writes, so the two can never disagree.
-    // Practice means the microphone is open too. Ported from Windows (2026-09-20).
-    var practiceAudioOn: Bool { micCaptureEnabled }
     private var lastAudioSourceTipCheck = Date.distantPast
-    /// An alert that can carry one action, for the two tips below.
     /// The update notice (Windows 1.0.46): "on its way" as soon as one is found, "ready" with Restart once staged. Its own line, so a
     /// problem notice never hides it, and never shown while listening (an interview is never interrupted).
     var updateState: AppUpdater.State = .none
@@ -5828,39 +5803,6 @@ class MainViewModel {
             restartEngineForSettingChange()
             dlog("Interview language applied now the question is over", tag: "SETTINGS")
         }
-    }
-
-    /// Called from Settings when the user switches audio-capture mode. Applies immediately:
-    /// requests the native mic permission if needed, and restarts the engine so the change
-    /// takes effect without waiting for the next launch.
-    func setMicCaptureEnabled(_ enabled: Bool) {
-        guard micCaptureEnabled != enabled else { return }
-        micCaptureEnabled = enabled
-        saveSettings()
-        dlog("Audio capture mode changed → micCaptureEnabled=\(enabled)", tag: "SETTINGS")
-
-        if enabled && AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-            requestMicrophonePermission()   // native popup; engine restart below picks it up
-        } else if enabled && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized {
-            // BUG FIX: re-warm the mic hardware the moment the user switches BACK to
-            // "+ my voice". MicPrimer.stop() (below, other branch) tears down the AVAudioEngine
-            // that keeps the mic hardware warm — without a counterpart here, switching back on
-            // left the engine restart below to open the mic cold, paying the ~18-20s one-time
-            // OS hardware wake-up cost itself (see MicPrimer.swift) with nothing transcribed
-            // from the mic in the meantime. Looked exactly like "the mic is broken" until it
-            // silently recovered on its own a bit later.
-            primeMicIfPermitted()
-        } else if !enabled {
-            // BUG FIX: MicPrimer may already be running from earlier in this session (it
-            // starts as soon as mic is authorized, before the user ever touches Settings).
-            // Without this, switching to "System audio only" correctly changed what the
-            // Python engine does, but the already-warmed AVAudioEngine kept running — mic
-            // stayed open and the orange indicator stayed on regardless of the new setting.
-            MicPrimer.shared.stop()
-        }
-        guard session.isLoggedIn, engine.isRunning else { return }
-        engine.stop()
-        engine.start(smKey: session.speechmaticsKey)
     }
 
     // MARK: - Auto Mode

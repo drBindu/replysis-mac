@@ -236,7 +236,7 @@ struct MainView: View {
               : "Read the screen now (F8). Automatic screen answers are off. Turn them on in Settings.")
     }
 
-    /// The mic notice and the Interview / Practice tips, on their own line under the header.
+    /// The mic notice and other notices, on their own line under the header.
     @ViewBuilder
     var transientMessageRow: some View {
         if !vm.alertTitle.isEmpty || !vm.listeningNotice.isEmpty || !vm.updateNoticeText.isEmpty {
@@ -445,7 +445,7 @@ struct MainView: View {
             .padding(.horizontal, 2)
     }
 
-    /// An in-app alert that can carry one action, for the Interview / Practice tips.
+    /// An in-app alert that can carry one action.
     /// One click does the thing it suggests, so nobody has to find a setting mid-call.
     var audioSourceAlert: some View {
         HStack(alignment: alertExpanded ? .top : .center, spacing: 10) {

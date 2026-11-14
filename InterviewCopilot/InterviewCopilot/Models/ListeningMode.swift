@@ -12,8 +12,8 @@ import Foundation
 //
 // Both sources are now always open. That is only safe because read-back detection
 // (AutoTurnDetector.isEchoOfPrevious) stops the app answering the candidate reading an
-// answer aloud. The microphone survives as one Settings switch, micCaptureEnabled, which
-// is a preference rather than a mode. Matches Windows 178fe36.
+// answer aloud, and the engine's ">>> SOURCE" label plus the 10 minute interviewer rule
+// (AutoTurnDetector.ignoreCandidateTurn). No Settings switch either (CHANNEL 2026-11-13).
 // ══════════════════════════════════════════════════════════════════════════
 
 enum ListeningMode: String, CaseIterable, Identifiable {

@@ -107,7 +107,92 @@ nonisolated final class SystemAudioTapper {
         if mkfifo(path, 0o600) != 0 && errno != EEXIST {
             dlog("in-app tap: mkfifo failed errno=\(errno)", tag: "TAP"); return false
         }
+        guard buildDevice() else { return false }
 
+        // FIFO writer thread. It outlives a device rebuild: only the tap and the aggregate are replaced.
+        startWriter()
+        running = true
+        watchDefaultOutput()
+        dlog("in-app tap: STARTED — capturing system audio → \(path)", tag: "TAP")
+        return true
+    }
+
+    func stop() {
+        setStop(true)
+        teardown()
+        dlog("in-app tap: stopped", tag: "TAP")
+    }
+
+    private func teardown() {
+        unwatchDefaultOutput()
+        teardownDevice()
+        running = false
+        pcmQueue.clear()
+    }
+
+    // MARK: - Following the output device (Windows MAC_CATCHUP / CHANNEL 2026-11-13)
+    //
+    // Windows hears whatever the default output plays and follows a device plugged in mid session. Here the aggregate is
+    // clocked by the output device that was the default when listening started, so headphones, earphones or AirPods
+    // connected later, or the device the tap started on going away, could leave the interviewer unheard. When the
+    // default output changes, the tap and the aggregate are rebuilt on the new device; the FIFO and its writer stay,
+    // so the engine never notices beyond a short gap.
+
+    nonisolated(unsafe) private var outputListener: AudioObjectPropertyListenerBlock?
+    nonisolated(unsafe) private var rebuildGeneration = 0
+    private static var defaultOutputAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain)
+
+    /// The output device the current aggregate is clocked by.
+    nonisolated(unsafe) private(set) var currentOutputUID = ""
+    /// How many times the tap moved to a new output device this run. For tests and the log.
+    nonisolated(unsafe) private(set) var outputSwitches = 0
+
+    private func watchDefaultOutput() {
+        guard outputListener == nil else { return }
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.defaultOutputChanged()
+        }
+        var addr = Self.defaultOutputAddress
+        if AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main, block) == noErr {
+            outputListener = block
+        }
+    }
+
+    private func unwatchDefaultOutput() {
+        guard let block = outputListener else { return }
+        var addr = Self.defaultOutputAddress
+        AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main, block)
+        outputListener = nil
+    }
+
+    /// On the main queue. Waits a moment (Bluetooth devices announce themselves before they can play), then rebuilds,
+    /// trying again a few times if the new device is not ready yet.
+    private func defaultOutputChanged() {
+        guard running else { return }
+        rebuildGeneration += 1
+        let generation = rebuildGeneration
+        func attempt(_ n: Int) {
+            guard running, !shouldStop(), generation == rebuildGeneration else { return }
+            let newUID = Self.deviceUID(Self.sysObjectID(kAudioHardwarePropertyDefaultOutputDevice)) ?? ""
+            if !newUID.isEmpty, newUID == currentOutputUID, aggID != kAudioObjectUnknown { return }
+            teardownDevice()
+            if buildDevice() {
+                outputSwitches += 1
+                dlog("in-app tap: the default output changed; now hearing '\(newUID)'", tag: "TAP")
+            } else if n < 5 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { attempt(n + 1) }
+            } else {
+                dlog("in-app tap: could not move to the new output device after 5 tries", tag: "TAP")
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { attempt(1) }
+    }
+
+    /// The tap, the aggregate on the current default output, and the IO proc. False (with nothing left behind) on failure.
+    private func buildDevice() -> Bool {
         // 1. Global mono process tap; keep playback audible.
         let tapDesc = CATapDescription(monoGlobalTapButExcludeProcesses: [])
         tapDesc.isPrivate = true
@@ -126,14 +211,14 @@ nonisolated final class SystemAudioTapper {
                                                  mScope: kAudioObjectPropertyScopeGlobal,
                                                  mElement: kAudioObjectPropertyElementMain)
         guard AudioObjectGetPropertyData(tid, &fmtAddr, 0, nil, &asz, &asbd) == noErr, asbd.mSampleRate > 0 else {
-            dlog("in-app tap: read format failed", tag: "TAP"); teardown(); return false
+            dlog("in-app tap: read format failed", tag: "TAP"); teardownDevice(); return false
         }
         dlog("in-app tap: format \(Int(asbd.mSampleRate))Hz \(asbd.mChannelsPerFrame)ch", tag: "TAP")
 
         // 3. Private aggregate device (output device provides the clock, tap the audio).
         let outDev = Self.sysObjectID(kAudioHardwarePropertyDefaultOutputDevice)
         guard let outUID = Self.deviceUID(outDev) else {
-            dlog("in-app tap: no default output device", tag: "TAP"); teardown(); return false
+            dlog("in-app tap: no default output device", tag: "TAP"); teardownDevice(); return false
         }
         let desc: [String: Any] = [
             kAudioAggregateDeviceNameKey as String: "Replysis Audio",
@@ -151,7 +236,7 @@ nonisolated final class SystemAudioTapper {
         var aid = AudioObjectID(kAudioObjectUnknown)
         let ags = AudioHardwareCreateAggregateDevice(desc as CFDictionary, &aid)
         guard ags == noErr, aid != kAudioObjectUnknown else {
-            dlog("in-app tap: aggregate failed status=\(ags)", tag: "TAP"); teardown(); return false
+            dlog("in-app tap: aggregate failed status=\(ags)", tag: "TAP"); teardownDevice(); return false
         }
         aggID = aid
 
@@ -160,12 +245,8 @@ nonisolated final class SystemAudioTapper {
         guard let inFmt = AVAudioFormat(streamDescription: &asbdVar),
               let outFmt = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: TARGET_RATE, channels: 1, interleaved: true),
               let converter = AVAudioConverter(from: inFmt, to: outFmt) else {
-            dlog("in-app tap: converter failed", tag: "TAP"); teardown(); return false
+            dlog("in-app tap: converter failed", tag: "TAP"); teardownDevice(); return false
         }
-
-        // 5. FIFO writer thread.
-        startWriter()
-
         // 6. IO proc (runs on Core Audio's realtime thread; keep it lean).
         let q = pcmQueue
         let tRate = asbd.mSampleRate
@@ -202,25 +283,18 @@ nonisolated final class SystemAudioTapper {
         var pid: AudioDeviceIOProcID?
         let ps = AudioDeviceCreateIOProcIDWithBlock(&pid, aid, nil, ioBlock)
         guard ps == noErr, let proc = pid else {
-            dlog("in-app tap: IOProc failed status=\(ps)", tag: "TAP"); teardown(); return false
+            dlog("in-app tap: IOProc failed status=\(ps)", tag: "TAP"); teardownDevice(); return false
         }
         procID = proc
         let ss = AudioDeviceStart(aid, proc)
         guard ss == noErr else {
-            dlog("in-app tap: AudioDeviceStart failed status=\(ss)", tag: "TAP"); teardown(); return false
+            dlog("in-app tap: AudioDeviceStart failed status=\(ss)", tag: "TAP"); teardownDevice(); return false
         }
-        running = true
-        dlog("in-app tap: STARTED — capturing system audio → \(path)", tag: "TAP")
+        currentOutputUID = outUID
         return true
     }
 
-    func stop() {
-        setStop(true)
-        teardown()
-        dlog("in-app tap: stopped", tag: "TAP")
-    }
-
-    private func teardown() {
+    private func teardownDevice() {
         if let proc = procID, aggID != kAudioObjectUnknown {
             AudioDeviceStop(aggID, proc)
             AudioDeviceDestroyIOProcID(aggID, proc)
@@ -228,8 +302,7 @@ nonisolated final class SystemAudioTapper {
         if aggID != kAudioObjectUnknown { AudioHardwareDestroyAggregateDevice(aggID); aggID = kAudioObjectUnknown }
         if tapID != kAudioObjectUnknown { AudioHardwareDestroyProcessTap(tapID); tapID = kAudioObjectUnknown }
         procID = nil
-        running = false
-        pcmQueue.clear()
+        currentOutputUID = ""
     }
 
     // MARK: - FIFO writer

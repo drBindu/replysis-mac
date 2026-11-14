@@ -5,7 +5,7 @@ SRC="$ROOT/InterviewCopilot/InterviewCopilot/Models"
 BUILD="$(mktemp -d /private/tmp/replysis-regression.XXXXXX)"
 trap 'rm -rf "$BUILD"' EXIT
 xcrun swiftc -module-cache-path "$BUILD/cache" \
-  "$SRC/AutoTurnDetector.swift" "$SRC/PromptBuilder.swift" "$SRC/AudioSourceRules.swift" "$SRC/PlanFacts.swift" "$SRC/ListeningProblems.swift" "$SRC/RecoveryPolicy.swift" "$SRC/Gzip.swift" "$SRC/TranscriptTyping.swift" "$SRC/VocabTerms.swift" "$SRC/AccountScope.swift" "$SRC/SessionInsights.swift" "$SRC/UplinkGovernor.swift" "$SRC/OcrLayout.swift" "$SRC/AnswerClosers.swift" "$SRC/AnswerLayout.swift" "$SRC/CaptureTarget.swift" "$SRC/Clipboard.swift" "$SRC/ScreenOcr.swift" "$SRC/OAuthLoopback.swift" "$SRC/ClosingMarker.swift" "$SRC/AppIdentity.swift" "$SRC/PresencePing.swift" "$SRC/ClientErrorReporter.swift" "$SRC/ScreeningOptions.swift" "$SRC/MinutesBalance.swift" \
+  "$SRC/AutoTurnDetector.swift" "$SRC/PromptBuilder.swift" "$SRC/PlanFacts.swift" "$SRC/ListeningProblems.swift" "$SRC/RecoveryPolicy.swift" "$SRC/Gzip.swift" "$SRC/TranscriptTyping.swift" "$SRC/VocabTerms.swift" "$SRC/AccountScope.swift" "$SRC/SessionInsights.swift" "$SRC/UplinkGovernor.swift" "$SRC/OcrLayout.swift" "$SRC/AnswerClosers.swift" "$SRC/AnswerLayout.swift" "$SRC/CaptureTarget.swift" "$SRC/Clipboard.swift" "$SRC/ScreenOcr.swift" "$SRC/OAuthLoopback.swift" "$SRC/ClosingMarker.swift" "$SRC/AppIdentity.swift" "$SRC/PresencePing.swift" "$SRC/ClientErrorReporter.swift" "$SRC/ScreeningOptions.swift" "$SRC/MinutesBalance.swift" \
   "$SRC/GlobalHotkey.swift" "$SRC/AppNotifications.swift" \
   "$SRC/AudioInputRoute.swift" "$SRC/StealthSelfTestRules.swift" "$SRC/ListeningMode.swift" "$SRC/ResumeParser.swift" "$SRC/SignInMessages.swift" "$SRC/UpdateNoticeRules.swift" "$SRC/LanguageRules.swift" \
   "$ROOT/tools/regression/main.swift" -o "$BUILD/regressions"
@@ -63,3 +63,16 @@ for f in "$VM" "$SRC/NetworkClient.swift"; do
     echo "DATE CHECK FAILED: a custom date format without en_US_POSIX"; exit 1; fi
 done
 echo "DATE CHECK: custom date formats use en_US_POSIX"
+
+# One listening mode exactly as Windows (CHANNEL 2026-11-13): mic and computer sound always together, no switch, no Interview or
+# Practice anywhere, the menu is Auto, Manual, Full window, Compact (no Pin on top), and the tap follows the default output.
+VIEWS="$ROOT/InterviewCopilot/InterviewCopilot/Views"
+if grep -rnE '"Pin on top"|togglePin|setMicCaptureEnabled|get: { vm.micCaptureEnabled }' "$VIEWS" "$VM"; then echo "ONE MODE CHECK FAILED: Pin on top or the microphone switch is still there"; exit 1; fi
+if grep -n 'savedSettings\["micCaptureEnabled"\]' "$SRC/SpeechmaticsEngine.swift"; then echo "ONE MODE CHECK FAILED: the engine still reads a microphone switch"; exit 1; fi
+if grep -rniE '"[^"]*(interview mode|practice mode|audio source|system audio only|my voice)[^"]*"' "$VIEWS" "$VM" "$SRC/ListeningProblems.swift" | grep -v 'dlog('; then echo "ONE MODE CHECK FAILED: a mode name is still shown"; exit 1; fi
+for t in '"Auto", subtitle: "Answers by itself"' '"Manual", subtitle: "Press Space to answer"' '"Full window", subtitle:' '"Compact", subtitle:'; do
+  grep -qF "$t" "$VIEWS/ModePill.swift" || { echo "ONE MODE CHECK FAILED: menu row missing: $t"; exit 1; }
+done
+grep -q 'kAudioHardwarePropertyDefaultOutputDevice' "$SRC/SystemAudioTapper.swift" && grep -q 'AudioObjectAddPropertyListenerBlock' "$SRC/SystemAudioTapper.swift" || { echo "ONE MODE CHECK FAILED: the tap does not follow the default output"; exit 1; }
+grep -q 'fatalNoMicrophone: false' "$VM" || { echo "ONE MODE CHECK FAILED: no microphone can still block listening"; exit 1; }
+echo "ONE MODE CHECK: mic and computer sound always, Windows menu, no Pin on top, follows headphones and AirPods"

@@ -254,21 +254,6 @@ check(AutoTurnDetector.classifyTurnEnding("What is the difference between an abs
 check(AutoTurnDetector.classifyTurnEnding("What is the difference between an abstract class and an interface?") == .finished, "two-sided comparison is finished")
 check(AutoTurnDetector.classifyTurnEnding("What's the difference between REST vs GraphQL?") == .finished, "vs comparison is finished")
 // Interview / Practice rules, ported from Windows AudioSourceTests (suite 18).
-check(AudioSourceRules.isMeetingApp(bundleId: "us.zoom.xos", name: "zoom.us"), "zoom is a meeting app")
-check(AudioSourceRules.isMeetingApp(bundleId: "com.microsoft.teams2", name: "Microsoft Teams"), "teams is a meeting app")
-check(AudioSourceRules.isMeetingApp(bundleId: nil, name: "Webex"), "webex by name")
-check(!AudioSourceRules.isMeetingApp(bundleId: "com.apple.Safari", name: "Safari"), "a browser is not a meeting app")
-check(!AudioSourceRules.isMeetingApp(bundleId: nil, name: ""), "nothing is not a meeting app")
-check(AudioSourceRules.shouldSuggestInterview(practiceOn: true, meetingAppRunning: true, alreadySuggested: false), "practice + meeting suggests Interview")
-check(!AudioSourceRules.shouldSuggestInterview(practiceOn: true, meetingAppRunning: true, alreadySuggested: true), "suggested once only")
-check(!AudioSourceRules.shouldSuggestInterview(practiceOn: false, meetingAppRunning: true, alreadySuggested: false), "already in Interview says nothing")
-check(!AudioSourceRules.shouldSuggestInterview(practiceOn: true, meetingAppRunning: false, alreadySuggested: false), "no meeting app says nothing")
-check(AudioSourceRules.shouldSuggestPractice(interviewOn: true, listening: true, meetingAppRunning: false, quietFor: 200, alreadySuggested: false), "quiet Interview suggests Practice")
-check(!AudioSourceRules.shouldSuggestPractice(interviewOn: true, listening: true, meetingAppRunning: false, quietFor: 100, alreadySuggested: false), "a short quiet stretch says nothing")
-check(!AudioSourceRules.shouldSuggestPractice(interviewOn: true, listening: false, meetingAppRunning: false, quietFor: 600, alreadySuggested: false), "not listening says nothing")
-check(!AudioSourceRules.shouldSuggestPractice(interviewOn: true, listening: true, meetingAppRunning: true, quietFor: 600, alreadySuggested: false), "a real meeting stays in Interview")
-check(AudioSourceRules.hearingLine(practiceOn: false) == "Hearing the meeting only", "interview hearing line")
-check(AudioSourceRules.hearingLine(practiceOn: true) == "Hearing the meeting and your microphone", "practice hearing line")
 
 // An addition belongs to the last question only when it is a tail or points back at it.
 check(AutoTurnDetector.isFollowUpAddition("With an example from Spring."), "example request is an addition")

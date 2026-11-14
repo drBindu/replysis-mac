@@ -360,27 +360,22 @@ class SpeechmaticsEngine {
         //
         // Mic permission is requested lazily on the first Space press. Until it's granted
         // the engine runs system-only; once granted it restarts in BOTH mode.
-        // Read the Settings toggle (System audio only vs. + my voice) directly from disk so
-        // every start() call site picks it up without threading state through MainViewModel.
-        // Default OFF (system-audio-only) — a fresh install stays fully invisible until the
-        // user explicitly opts in to their own voice being transcribed too.
+        // One listening mode (Windows 1.0.45, CHANNEL 2026-11-13): the computer's sound and the microphone are ALWAYS
+        // opened together. There is no "System audio only" setting any more; who spoke is decided per turn by the
+        // engine (">>> SOURCE"), and the engine turns the microphone down while the call is talking (duck_mic_for_call).
         let settingsPath = appDataFolder.appendingPathComponent("settings.json")
         let savedSettings: [String: Any] = {
             guard let data = try? Data(contentsOf: settingsPath),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
             return obj
         }()
-        // Interview is the default for a new install, here as well as in the view model:
-        // this file is read by the engine launch, and disagreeing defaults would open the
-        // microphone on a machine whose UI says Interview.
-        let micCaptureEnabled = savedSettings["micCaptureEnabled"] as? Bool ?? false
         // The engine hears ONLY this language, so it has to match the interview. Speech in
         // another language comes back as garbled words in this one.
         // A Sarvam language with no key is started in English: without the key the engine exits at once (round 53).
         let language = LanguageRules.engineLanguage(saved: savedSettings["transcriptLanguage"] as? String,
                                                     sarvamKey: savedSettings["sarvamApiKey"] as? String)
-        // The saved preference AND the active mode must both permit the mic.
-        let micAllowed = micCaptureEnabled && micCaptureAllowed
+        // No microphone permission yet, or no microphone at all: listening runs on the computer's sound alone.
+        let micAllowed = micCaptureAllowed
         let micGranted = micAllowed && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         capturesMicrophone = micGranted
         if !language.isEmpty, language != "en" {

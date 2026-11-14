@@ -33,27 +33,14 @@ struct SettingsView: View {
                 ScrollView {
                     VStack(spacing: 20) {
 
-                        // One listening mode (Windows 1.0.45): the meeting and the microphone are always heard, and the interviewer is the
-                        // one answered. The microphone stays a preference, on by default.
+                        // One listening mode (Windows 1.0.45, CHANNEL 2026-11-13): the meeting and the microphone are always heard, and the
+                        // interviewer is the one answered. No switch and no system audio only choice.
                         settingsSection("LISTENING") {
                             VStack(alignment: .leading, spacing: 10) {
-                                Text("Replysis hears the meeting through this Mac's sound and you through the microphone, and answers the interviewer. Your own words are not answered while an interviewer is speaking; practising alone, your questions are.")
+                                Text("Replysis hears the meeting through this Mac's sound and you through the microphone, and answers the interviewer. Your own words are not answered while an interviewer is speaking; practising alone, your questions are. Headphones, earphones and AirPods work, even when you connect them during an interview.")
                                     .font(.system(size: 11))
                                     .foregroundColor(Color(hex: "#8b9bb0"))
                                     .fixedSize(horizontal: false, vertical: true)
-                                Toggle(isOn: Binding(get: { vm.micCaptureEnabled },
-                                                     set: { vm.setMicCaptureEnabled($0) })) {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Use my microphone")
-                                            .font(.system(size: 13, weight: .medium))
-                                            .foregroundColor(.white)
-                                        Text("On by default. Off hears the meeting only. Replysis follows your Mac’s default input and reconnects when it changes.")
-                                            .font(.system(size: 11))
-                                            .foregroundColor(Color(hex: "#8b9bb0"))
-                                            .fixedSize(horizontal: false, vertical: true)
-                                    }
-                                }
-                                .toggleStyle(.switch)
                             }
                         }
 
