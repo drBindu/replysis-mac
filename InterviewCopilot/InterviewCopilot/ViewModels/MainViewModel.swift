@@ -425,6 +425,7 @@ class MainViewModel {
         // actually stopped; we no longer infer it from how the text is punctuated.
         engine.onUtteranceEnd = { [weak self] in self?.speechFinalTask?.cancel(); self?.handleUtteranceEnd() }
         engine.onSpeechFinal = { [weak self] in self?.handleSpeechFinal() }
+        engine.onFinalWords = { [weak self] in self?.handleSpeechFinal() }
         AppUpdater.shared.onStateChange = { [weak self] state in self?.updateState = state }
         CompanionLink.shared.onStopRequested = { [weak self] in self?.stopFromPhone() }
         CompanionLink.shared.onAnswerRequested = { [weak self] in self?.handleSpacePress(source: "PHONE") }
@@ -4094,7 +4095,11 @@ class MainViewModel {
             defer { self?.autoTurnSubmitting = false }
             // Brief drain: recognition runs behind live speech, so the tail is still
             // arriving at the moment we decided the turn was over.
-            try? await Task.sleep(nanoseconds: 150_000_000)
+            // Not for a plainly finished question ("...a thread?"): its last word is in, and the 150 ms was paid on every
+            // answer for nothing (2026-11-14, owner: "make it more faster"). The loop below still waits for an unfinished one.
+            if let me = self, !AutoTurnDetector.isPlainlyFinished(me.remainingSpeech(me.engine.readLatestTxt())) {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+            }
             guard let self, self.autoModeEnabled else { return }
             // STILL MID-SENTENCE? Then the rest is on its way. Recognition runs behind live
             // speech, and one fixed 150ms was not always enough: measured, the model was asked

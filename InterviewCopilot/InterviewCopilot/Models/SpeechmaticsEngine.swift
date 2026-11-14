@@ -25,6 +25,10 @@ class SpeechmaticsEngine {
     /// second before UTTERANCE END). Only a newer engine prints it; with an older one this never
     /// fires and everything works from UTTERANCE END as before.
     var onSpeechFinal: (() -> Void)?
+    /// A FINAL with words in it. The service does not always send its early "speech final" for a finished question
+    /// (2026-11-14: "...process and a thread?" came as a FINAL with no early signal, and Auto waited 0.9 s for the
+    /// later utterance end). The app treats a FINAL like the early signal; the same plainly-finished rule applies.
+    var onFinalWords: (() -> Void)?
     /// The engine could not get the voice out for a few seconds ("audio upload stalled"): whatever else uses the line
     /// (screenshots sent ahead) must give way (Windows, 2026-10-22).
     var onUploadStalled: (() -> Void)?
@@ -678,6 +682,9 @@ class SpeechmaticsEngine {
             // the sentence, so there is no literal at this call site to extract.
             if let n = Self.charCount(in: line), n > 0 {
                 Task { @MainActor [weak self] in self?.lastWordsAt = Date() }
+                if line.contains("FINAL received") {
+                    Task { @MainActor [weak self] in self?.onFinalWords?() }
+                }
             }
             // The microphone read stopped returning. See handleMicHang — this line is printed
             // ONCE per process, so it is a signal, never something to count.

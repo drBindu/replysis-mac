@@ -90,3 +90,10 @@ echo "TAP CHECK: keeps trying a new output device, and a start rebuilds a lost o
 # The early "candidate has started talking" answer never answers the candidate while an interviewer is present (Mac bug round 11).
 grep -q '!(interviewerPresent && secondsSinceComputerSound > 3),' "$VM" || { echo "EARLY ANSWER CHECK FAILED: the early answer can answer the candidate"; exit 1; }
 echo "EARLY ANSWER CHECK: never answers the candidate while an interviewer is present"
+
+# Speed (owner 2026-11-14 "make it more faster"): a FINAL with words is treated like the early signal, and a plainly finished
+# question skips the 150 ms drain before it is sent.
+grep -q 'engine.onFinalWords = { \[weak self\] in self?.handleSpeechFinal() }' "$VM" && grep -q 'self?.onFinalWords?()' "$SRC/SpeechmaticsEngine.swift" \
+  && grep -q '!AutoTurnDetector.isPlainlyFinished(me.remainingSpeech(me.engine.readLatestTxt()))' "$VM" \
+  || { echo "SPEED CHECK FAILED: a finished question waits for the late signal or the drain"; exit 1; }
+echo "SPEED CHECK: a finished question is answered on its FINAL, with no drain"
