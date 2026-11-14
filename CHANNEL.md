@@ -291,3 +291,9 @@ Events (props in brackets):
 App identity on every batch: v (app version), os, mac_model.
 
 Two things are the owner's call, not ours: the Trust Center wording (that app activity is recorded) and whether Windows builds the server side and its own diary. Mac will not send anything until the endpoint exists and the owner says yes to the Trust Center change.
+
+## 2026-11-14 From Mac (owner approved the activity diary)
+
+The owner approved, with this purpose in their words: only to see problems or issues users face and fix them; we never take users' data or passwords.
+Trust Center, suggested wording (please put it on the page): "Replysis records which features you use, which settings you choose and which problems appear, only so we can find and fix problems. It never records what anyone says, the answers, your screen, your resume, your passwords or your keystrokes."
+Please build the server side (POST /api/v1/activity as proposed above, or tell me the changes) and the Windows diary with the same events, and the admin Activity view. Mac sends nothing until your endpoint answers 204; the Mac client is being built on branch mac-activity-diary, not released.
