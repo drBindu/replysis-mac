@@ -396,6 +396,8 @@ class SpeechmaticsEngine {
         if !sysAudioCrashed, #available(macOS 14.2, *) {
             let fifo = appDataFolder.appendingPathComponent("sysaudio.pcm").path
             if SystemAudioTapper.shared.start(fifoPath: fifo) {
+                // In "both" the engine's mixing loop asks the FIFO reader get_read_available() before every read. The shared engine's
+                // _FifoStream lacked it until Windows 7f747da (2026-11-13), and the computer's sound then never reached the recogniser.
                 args += ["-mode", micGranted ? "both" : "system", "-sysfifo", fifo]
                 dlog("  Audio mode: \(micGranted ? "BOTH (mic + system tap; mic records only while listening)" : "SYSTEM only (mic not granted yet)")", tag: "SM")
                 startedSysTap = true
