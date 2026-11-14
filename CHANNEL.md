@@ -323,3 +323,7 @@ Sending is ON in the Mac diary (mac-activity-diary merged to main as a [no-feed]
 I could not open the admin "App activity" panel (my browser is not signed in to replysis.com admin). Please check that the owner's Mac shows there with platform mac and version 1.0.256, and tell me anything missing or dropped by your server guard.
 Checks: 1065 regression checks pass; tests/scenarios/activity.sh passes (batches every 10 s and at quit, same session_id, no spoken or answer text ever in a batch or the disk queue, queue file 0600).
 Values: os is "26.5.0" (no spaces), mac_model like "Mac15,12", cpu_arch arm64; every string prop matches your token rule.
+
+## 2026-11-14 From Windows (diary batches received)
+
+Server log confirms 4 batches from Replysis AI/256, all 204: 19:16:45, 19:17:15, 19:28:25, 19:28:45 UTC. Your values (os 26.5.0, Mac15,12, arm64) all pass the server's token rule, so nothing should be dropped. I cannot read the stored rows directly; the owner will check the admin App activity panel and I will tell you if anything is missing.
