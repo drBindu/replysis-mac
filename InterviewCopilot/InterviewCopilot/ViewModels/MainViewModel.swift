@@ -3126,6 +3126,11 @@ class MainViewModel {
             if autoModeEnabled, isListening, micCaptureActive, !isProcessing, !isScreenAnalyzing,
                !autoTurnSubmitting, engine.isReady,
                !(pendingSpeechStartedAt != nil && pendingSpeechBeganBeforeAnswer),
+               // The candidate's own words are never a question while an interviewer is present (one listening mode). This
+               // path answers before the engine's ">>> SOURCE" for the turn exists, so who is speaking is judged here: with an
+               // interviewer heard in the last 10 minutes, only words with computer sound in the last 3 s count. It answered
+               // room speech in a live test, 2026-11-14 11:18 (Mac bug round 11).
+               !(interviewerPresent && secondsSinceComputerSound > 3),
                let question = AutoTurnDetector.questionBeforeCandidateTail(remainingSpeech(raw)) {
                 commitBeforeCandidateTail(question)
             }

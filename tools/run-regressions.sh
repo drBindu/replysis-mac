@@ -86,3 +86,7 @@ echo "NAME CHECK: the release build names the app Replysis AI before signing"
 grep -q 'n < 5 ? 1.0 : 5.0' "$SRC/SystemAudioTapper.swift" && grep -q 'had no device; rebuilt on start' "$SRC/SystemAudioTapper.swift" && ! grep -q 'after 5 tries", tag' "$SRC/SystemAudioTapper.swift" \
   || { echo "TAP CHECK FAILED: the tap can stop following the output device for good"; exit 1; }
 echo "TAP CHECK: keeps trying a new output device, and a start rebuilds a lost one"
+
+# The early "candidate has started talking" answer never answers the candidate while an interviewer is present (Mac bug round 11).
+grep -q '!(interviewerPresent && secondsSinceComputerSound > 3),' "$VM" || { echo "EARLY ANSWER CHECK FAILED: the early answer can answer the candidate"; exit 1; }
+echo "EARLY ANSWER CHECK: never answers the candidate while an interviewer is present"
