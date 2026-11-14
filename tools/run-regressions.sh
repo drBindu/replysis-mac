@@ -76,3 +76,8 @@ done
 grep -q 'kAudioHardwarePropertyDefaultOutputDevice' "$SRC/SystemAudioTapper.swift" && grep -q 'AudioObjectAddPropertyListenerBlock' "$SRC/SystemAudioTapper.swift" || { echo "ONE MODE CHECK FAILED: the tap does not follow the default output"; exit 1; }
 grep -q 'fatalNoMicrophone: false' "$VM" || { echo "ONE MODE CHECK FAILED: no microphone can still block listening"; exit 1; }
 echo "ONE MODE CHECK: mic and computer sound always, Windows menu, no Pin on top, follows headphones and AirPods"
+
+# The app is named Replysis AI everywhere macOS shows a name (owner, 2026-11-13): Xcode overwrites CFBundleName, so the release
+# build sets it before signing.
+grep -q 'Set :CFBundleName Replysis AI' "$ROOT/.github/workflows/build-mac-dmg.yml" || { echo "NAME CHECK FAILED: the release build does not name the app Replysis AI"; exit 1; }
+echo "NAME CHECK: the release build names the app Replysis AI before signing"

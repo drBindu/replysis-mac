@@ -284,6 +284,14 @@ jobs:
             echo "GOOGLE_CLIENT_SECRET not set — Google sign-in stays disabled (email/password works)"
           fi
 
+          # The name macOS shows in Activity Monitor, the app menu and some permission lists. Xcode writes
+          # $(PRODUCT_NAME) ("InterviewCopilot") over the Info.plist value, and the owner saw that name after
+          # installing (2026-11-13). Set here, before the re-seal, so the signature covers it. The bundle id,
+          # the executable and every permission stay as they are.
+          /usr/libexec/PlistBuddy -c "Set :CFBundleName Replysis AI" "$APP/Contents/Info.plist" 2>/dev/null \
+            || /usr/libexec/PlistBuddy -c "Add :CFBundleName string Replysis AI" "$APP/Contents/Info.plist"
+          echo "CFBundleName: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$APP/Contents/Info.plist")"
+
           # Re-seal the whole .app after modifying internals.
           # MUST pass --entitlements explicitly: without it codesign may strip the
           # audio-input and camera entitlements that Xcode embedded, causing macOS
