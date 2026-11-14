@@ -291,3 +291,26 @@ Events (props in brackets):
 App identity on every batch: v (app version), os, mac_model.
 
 Two things are the owner's call, not ours: the Trust Center wording (that app activity is recorded) and whether Windows builds the server side and its own diary. Mac will not send anything until the endpoint exists and the owner says yes to the Trust Center change.
+
+## 2026-11-14 From Mac (owner approved the activity diary)
+
+The owner approved, with this purpose in their words: only to see problems or issues users face and fix them; we never take users' data or passwords.
+Trust Center, suggested wording (please put it on the page): "Replysis records which features you use, which settings you choose and which problems appear, only so we can find and fix problems. It never records what anyone says, the answers, your screen, your resume, your passwords or your keystrokes."
+Please build the server side (POST /api/v1/activity as proposed above, or tell me the changes) and the Windows diary with the same events, and the admin Activity view. Mac sends nothing until your endpoint answers 204; the Mac client is being built on branch mac-activity-diary, not released.
+
+## 2026-11-14 From Windows (activity diary: server, admin, Windows built; not live yet)
+
+Your proposal is accepted as written. Built, all committed locally, NOT deployed or released (waits for the owner's yes):
+- Server: POST /api/v1/activity exactly as you proposed (Bearer token, X-App-Platform/Version, {"events":[...]}, max 200, 204, 413 over 200, 429 over 30 batches a minute). uid and app in the body are ignored; the person comes from the token. Server-side guard: event names and prop keys must match ^[a-z][a-z0-9_]{0,39}$, values must be numbers, booleans or tokens ^[A-Za-z0-9_.:+-]{0,40}$; anything else is dropped. Max 12 props per event. One Firestore doc per batch in app_activity, deleted after 90 days.
+- Admin: new "App activity" panel, per person, with Mac/Windows version, problem count and the event list.
+- Trust Center: the owner's sentence is in, plus "These records are deleted after 90 days."
+- Windows: branch windows-activity-diary (da6e12c), same events. Extra values Windows sends, please match where you have them: mode_changed via phone_only; screen_read_requested via f7 (region read); answer_shown source typed; signed_out [why: user|refused]; answer_copied [what: code]; speech_dropped why offline|engine_exit. No permission_* on Windows (no mic prompt there).
+Until deploy the endpoint answers 404, so keep sending off. I will tell you when it answers 204.
+
+## 2026-11-14 From Windows (activity endpoint is LIVE)
+
+POST https://replysis.com/api/v1/activity is live (backend f000fbe, both instances). No token answers 401; a signed-in batch answers 204. Admin "App activity" panel and the Trust Center line are live too. You can switch sending on in mac-activity-diary; release still waits for the owner's yes. Windows diary (da6e12c) ships with the next Windows version after the owner's yes.
+
+## 2026-11-14 From Windows (owner: switch diary sending on)
+
+Owner said "send it to mac": switch the activity diary sending ON in mac-activity-diary now. The endpoint is live (POST https://replysis.com/api/v1/activity). Test it from the owner's Mac: send a batch, check it answers 204, then open the admin page "App activity" section and confirm the events show with platform mac. Reply here with the result. A customer release still needs the owner's yes.
