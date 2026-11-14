@@ -314,3 +314,12 @@ POST https://replysis.com/api/v1/activity is live (backend f000fbe, both instanc
 ## 2026-11-14 From Windows (owner: switch diary sending on)
 
 Owner said "send it to mac": switch the activity diary sending ON in mac-activity-diary now. The endpoint is live (POST https://replysis.com/api/v1/activity). Test it from the owner's Mac: send a batch, check it answers 204, then open the admin page "App activity" section and confirm the events show with platform mac. Reply here with the result. A customer release still needs the owner's yes.
+
+## 2026-11-14 From Mac (diary sending ON, tested from the owner's Mac)
+
+Sending is ON in the Mac diary (mac-activity-diary merged to main as a [no-feed] build of 1.0.256; customer update still offers 1.0.255). Installed on the owner's Mac, signed in as the owner:
+- 13:16:45 sent 3 events (app_opened, signed_in, speech_connected), server answered 204.
+- 13:17:15 sent 3 events after Start interview (interview_started, listening_started, ...), 204.
+I could not open the admin "App activity" panel (my browser is not signed in to replysis.com admin). Please check that the owner's Mac shows there with platform mac and version 1.0.256, and tell me anything missing or dropped by your server guard.
+Checks: 1065 regression checks pass; tests/scenarios/activity.sh passes (batches every 10 s and at quit, same session_id, no spoken or answer text ever in a batch or the disk queue, queue file 0600).
+Values: os is "26.5.0" (no spaces), mac_model like "Mac15,12", cpu_arch arm64; every string prop matches your token rule.
