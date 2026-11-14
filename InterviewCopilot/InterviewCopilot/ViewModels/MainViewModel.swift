@@ -12,7 +12,7 @@ class MainViewModel {
 
     // MARK: - Mic State
     var isMuted = true
-    var isListening = false
+    var isListening = false { didSet { if isListening != oldValue { noteListeningForDiary() } } }
     var isProcessing = false
     var isRecording = false
     var micStatus = "READY"
@@ -274,6 +274,7 @@ class MainViewModel {
             return
         }
         hasPromptedAccessibility = true
+        ActivityLog.record("permission_asked", ["which": "accessibility"])
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(opts)
     }
@@ -324,6 +325,7 @@ class MainViewModel {
             return
         }
         screenRecordingAsked = true
+        ActivityLog.record("permission_asked", ["which": "screen"])
         // BUG FIX: this used to call CGRequestScreenCaptureAccess() — a DIFFERENT Apple API
         // than the one Analyze actually uses (ScreenCaptureKit's SCShareableContent, in
         // captureScreen() below). Confirmed live: real capture succeeded via
@@ -336,9 +338,11 @@ class MainViewModel {
             do {
                 _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
                 self.permScreenRecording = true
+                ActivityLog.record("permission_result", ["which": "screen", "result": "granted"])
                 dlog("Screen recording permission request (via ScreenCaptureKit) → granted", tag: "PERM")
             } catch {
                 self.permScreenRecording = false
+                ActivityLog.record("permission_result", ["which": "screen", "result": "denied"])
                 dlog("Screen recording permission request (via ScreenCaptureKit) → denied/error: \(error.localizedDescription)", tag: "PERM")
             }
         }
@@ -386,6 +390,8 @@ class MainViewModel {
         engine.warmUpFiles()   // the engine's files opened and cached now, not while somebody waits for "connecting"
         guard !didAppear else { return }
         didAppear = true
+        ActivityLog.start()
+        ActivityLog.record("app_opened", ActivityLog.machineProps())
         // Apply the persisted Stealth Mode setting to the window immediately — default is
         // ON, so a fresh install is invisible to screen sharing/recording from the first
         // frame, not just after the user finds a toggle somewhere.
@@ -684,7 +690,9 @@ class MainViewModel {
     }
 
     func requestMicrophonePermission() {
+        ActivityLog.record("permission_asked", ["which": "mic"])
         AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+            ActivityLog.record("permission_result", ["which": "mic", "result": granted ? "granted" : "denied"])
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.permMicrophone = granted
@@ -781,6 +789,7 @@ class MainViewModel {
         // why the setup screen offers an explicit Quit & Reopen once a request has been
         // made and not landed: the user knows they granted it, and the app cannot.
         // Accessibility does flip live, so this still does its job for that one.
+        if !prevAX && self.permAccessibility { ActivityLog.record("permission_result", ["which": "accessibility", "result": "granted"]) }
         let newlyGranted = (!prevAX && self.permAccessibility) || (!prevScreenRec && self.permScreenRecording)
         if newlyGranted {
             dlog("Accessibility=\(self.permAccessibility) ScreenRecording=\(self.permScreenRecording) newly granted — relaunching so both take effect", tag: "PERM")
@@ -910,8 +919,8 @@ class MainViewModel {
                             secondsSinceTyping: GlobalHotkey.instance?.secondsSinceTyping ?? .infinity) else { return event }
                     if !event.isARepeat { self.handleSpacePress(source: "LOCAL") }
                     return nil
-                case 100: self.runScreenAnalysis(wholeScreen: false);  return nil   // F8 — this window
-                case 101: self.runScreenAnalysis(wholeScreen: true);   return nil   // F9 — main screen
+                case 100: self.runScreenAnalysis(wholeScreen: false, via: "f8");  return nil   // F8 — this window
+                case 101: self.runScreenAnalysis(wholeScreen: true, via: "f9");   return nil   // F9 — main screen
                 default:        return event
                 }
             }
@@ -928,8 +937,8 @@ class MainViewModel {
         dlog("setupHotkeys: creating new GlobalHotkey instance", tag: "HOTKEY")
         hotkey = GlobalHotkey(
             onSpacePressed: { [weak self] in self?.handleSpacePress(source: "GLOBAL") },
-            onF8Pressed:    { [weak self] in self?.runScreenAnalysis(wholeScreen: false) },
-            onF9Pressed:    { [weak self] in self?.runScreenAnalysis(wholeScreen: true) },
+            onF8Pressed:    { [weak self] in self?.runScreenAnalysis(wholeScreen: false, via: "f8") },
+            onF9Pressed:    { [weak self] in self?.runScreenAnalysis(wholeScreen: true, via: "f9") },
             onF12Pressed:   { },
             onKillPressed:  {
                 // ⌃⇧F4 exists for "someone just walked in", so it stays instant and
@@ -958,8 +967,8 @@ class MainViewModel {
     func handleModeShortcut(_ shortcut: GlobalHotkey.ModeShortcut) {
         guard appStep == .interview, session.isLoggedIn else { return }
         switch shortcut {
-        case .answerMode:  setListeningMode(listeningMode == .auto ? .manual : .auto)
-        case .compact:     toggleCamera()
+        case .answerMode:  setListeningMode(listeningMode == .auto ? .manual : .auto, via: "shortcut")
+        case .compact:     toggleCamera(via: "shortcut")
         }
         dlog("Shortcut \(shortcut) used", tag: "HOTKEY")
     }
@@ -1016,7 +1025,9 @@ class MainViewModel {
                 // second call would requestAccess again → callback calls handleSpacePress again.
                 guard !isMicPermissionRequesting else { return }
                 isMicPermissionRequesting = true
+                ActivityLog.record("permission_asked", ["which": "mic"])
                 AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                    ActivityLog.record("permission_result", ["which": "mic", "result": granted ? "granted" : "denied"])
                     Task { @MainActor [weak self] in
                         guard let self else { return }
                         self.isMicPermissionRequesting = false
@@ -1226,7 +1237,9 @@ class MainViewModel {
     func askManually(_ text: String) {
         let q = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty, !isProcessing else { return }
+        diaryNextTyped = true
         if isListening {                       // a typed question takes over from listening
+            listenStopWhy = "user"
             isListening = false; isMuted = true
             engine.writePauseFlag(); updateMicUI()
         }
@@ -1245,6 +1258,8 @@ class MainViewModel {
 
     /// - Parameter balanceRechecked: an empty balance has just been asked for again, so it is now believed.
     private func startAI(manualQuestion: String? = nil, balanceRechecked: Bool = false) {
+        let diarySource = diaryNextTyped ? "typed" : "voice"
+        diaryNextTyped = false
         let q = manualQuestion ?? extractLatestQuestion(from: transcript)
         if !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { lastQuestionShown = q }
         // WATCH MODE: the interviewer is sharing their screen, so every question is about
@@ -1400,6 +1415,7 @@ class MainViewModel {
         // three have completely different fixes and look identical from the outside.
         let askedAt = Date()
         let heardEndAt = lastUtteranceEndAt
+        var firstWordsMs = -1
 
         NetworkClient.shared.streamAnswer(
             question: q, resume: resumeText, provider: provider, messages: msgArr,
@@ -1417,6 +1433,7 @@ class MainViewModel {
                                 toFirst,
                                 sinceSpeech < 0 ? "" : String(format: ", %.2fs after they stopped speaking", sinceSpeech)),
                          tag: "PERF")
+                    firstWordsMs = Int(((sinceSpeech < 0) ? toFirst : sinceSpeech) * 1000)
                 }
                 if tokenCount % 3 == 0 || token.contains("\n") {
                     // The same cleaning the finished answer gets, so a hand-back ("let me know if you want
@@ -1432,6 +1449,8 @@ class MainViewModel {
                 let final = AnswerLayout.composeSpokenAnswer(self.cleanAIOutput(accumulated), allowClosingQuestion: allowClosingQuestion)
                 self.finishAI(question: q, answer: final, prefix: "Q: \(q)\n\n\(lowBanner)",
                               historyAnswer: accumulated)
+                let wordsShown = ActivityLog.wordCount(final)
+                ActivityLog.record("answer_shown", ["ms_to_first_words": firstWordsMs, "ms_total": Int(Date().timeIntervalSince(askedAt) * 1000), "source": diarySource, "words": wordsShown])
                 Task { [weak self] in await self?.fetchCredits() }
             },
             onError: { [weak self] err in
@@ -1788,6 +1807,8 @@ class MainViewModel {
         refreshHotkeyGate()
         updateMicUI()
         dlog("INTERVIEW: started (\(autoModeEnabled ? "Auto" : "Manual"), microphone and computer sound)", tag: "FLOW")
+        diaryTurnPause = false
+        ActivityLog.record("interview_started", ["mode": autoModeEnabled ? "auto" : "manual"])
         if phoneOnly {
             DispatchQueue.main.async { [weak self] in self?.setPhoneOnlyHidden(true, why: "Start with phone only on") }
         }
@@ -1800,11 +1821,13 @@ class MainViewModel {
         stopListeningForSetup()
         appStep = .setup
         refreshHotkeyGate()
+        ActivityLog.record("back_to_setup")
         dlog("INTERVIEW: back to Setup (session kept)", tag: "FLOW")
     }
 
     private func stopListeningForSetup() {
         guard isListening else { return }
+        listenStopWhy = "finish"
         stopListeningMeter()
         isListening = false; isMuted = true
         autoTurnSubmitting = false
@@ -1833,6 +1856,7 @@ class MainViewModel {
         }
         let hadSession = isRecording
         let number = sessionNumber
+        let diaryMinutes = sessionSeconds / 60, diaryAnswers = answerHistory.count
         endSession()
         // Wait off the main thread so Past sessions never opens on a file whose final answer
         // is still queued behind the writer.
@@ -1845,6 +1869,7 @@ class MainViewModel {
         sessionsOpen = true
         refreshHotkeyGate()
         if hadSession { dlog("INTERVIEW: session \(number) finished and opened in Past sessions", tag: "FLOW") }
+        ActivityLog.record("interview_finished", ["minutes": diaryMinutes, "answers": diaryAnswers])
         return nil
     }
 
@@ -1988,12 +2013,13 @@ class MainViewModel {
     ///   distinction, so the two badges in the header described a difference that did not
     ///   exist. They differ now, which also gives an explicit way to grab a whole monitor
     ///   without turning watch mode on.
-    func runScreenAnalysis(wholeScreen: Bool = false) {
+    func runScreenAnalysis(wholeScreen: Bool = false, via: String = "button") {
         guard !isProcessing && !isScreenAnalyzing else { return }
         // Same gate as Space: signed-out → take them to sign-in, not a dead-end message.
         guard session.isLoggedIn else {
             NotificationCenter.default.post(name: .showLogin, object: nil); return
         }
+        ActivityLog.record("screen_read_requested", ["via": via])
 
         // A screen read is the person using Replysis: the "Nothing heard yet" tip must not follow it (a paying customer in a
         // coding round saw it twice on Windows, CHANNEL.md 2026-10-28).
@@ -2119,6 +2145,7 @@ class MainViewModel {
         aiAnswer = "\(header)\n\n"
         showThinking = true
         var accumulated = ""; var tokenCount = 0
+        var firstWordsMs = -1
         let epoch = answerEpoch   // ignore stale callbacks if the answer is replaced
         _ = label
 
@@ -2140,6 +2167,7 @@ class MainViewModel {
                     self.showThinking = false
                     dlog(String(format: "LATENCY: screen first word %.2fs after the question reached the screen path (%.2fs of it before the request, %.2fs waiting on the server)",
                                 Date().timeIntervalSince(askedAt), requestAt.timeIntervalSince(askedAt), Date().timeIntervalSince(requestAt)), tag: "PERF")
+                    firstWordsMs = Int(Date().timeIntervalSince(askedAt) * 1000)
                 }
                 // Paint the first few tokens the moment they land, then settle into batches of three. What
                 // shows while it streams is cleaned with the same pipeline the finished answer gets, so
@@ -2157,6 +2185,8 @@ class MainViewModel {
                     return
                 }
                 self.finishScreenAnswer(header: header, answer: final)
+                let wordsShown = ActivityLog.wordCount(final)
+                ActivityLog.record("answer_shown", ["ms_to_first_words": firstWordsMs, "ms_total": Int(Date().timeIntervalSince(askedAt) * 1000), "source": "screen", "words": wordsShown])
                 dlog("Screen analysis complete — \(final.count) chars", tag: "SCREEN")
                 // The answer said part of the problem was off-screen. Watch for them to
                 // scroll and read the rest by ourselves, rather than telling them to scroll
@@ -4550,6 +4580,7 @@ class MainViewModel {
     /// to the app would speak into a microphone they believed was on.
     private func stopForIdle() {
         stopListeningMeter()
+        listenStopWhy = "idle"
         stoppedForIdle = true
         isListening = false; isMuted = true
         engine.writePauseFlag()
@@ -5270,7 +5301,8 @@ class MainViewModel {
     // NSApplication.shared.windows is unreliable with .accessory activation policy.
     weak var mainPanel: NSWindow?
 
-    func toggleCamera() {
+    func toggleCamera(via: String = "menu") {
+        ActivityLog.record("window_changed", ["to": showCameraOverlay ? "full" : "compact", "via": via])
         if showCameraOverlay {
             exitCamera()
         } else {
@@ -5326,7 +5358,7 @@ class MainViewModel {
             phoneOnlyHidden = true
             if showCameraOverlay, let overlay = AnswerOverlayWindow.shared { overlay.orderOut(nil) }
             mainPanel?.orderOut(nil)
-            if !autoModeEnabled { setListeningMode(.auto) }
+            if !autoModeEnabled { setListeningMode(.auto, via: "phone") }
         } else {
             phoneOnlyHidden = false
             showWindowsAgain()
@@ -5363,6 +5395,8 @@ class MainViewModel {
     }
 
     func signOut() {
+        ActivityLog.record("signed_out")
+        ActivityLog.setUser("")
         PresenceTracker.shared.stop()
         // Stop eye-mode overlay so its NSPanel and timers don't outlive the session.
         if showCameraOverlay { exitCamera() }
@@ -5380,6 +5414,7 @@ class MainViewModel {
     private func adoptAccount() {
         let current = session.userId
         guard !current.isEmpty, !session.isGuestSession else { return }
+        ActivityLog.setUser(current)   // the diary's uid from here on
         let file = engine.appDataFolder.appendingPathComponent("account.id")
         let previous = try? String(contentsOf: file, encoding: .utf8)
         if AccountScope.isDifferentPerson(previous: previous, current: current) {
@@ -5612,6 +5647,7 @@ class MainViewModel {
                 dlog("SETTINGS: moved to one listening mode: the microphone is on (it can be turned off in Settings)", tag: "SETTINGS")
             }
         }
+        ActivityLog.noteSettings(diarySettings)   // what is loaded is the starting point, not a change
     }
 
     private var opacityDefaultV2Applied = false
@@ -5639,6 +5675,14 @@ class MainViewModel {
         obj.merge(current) { _, new in new }
         try? JSONSerialization.data(withJSONObject: obj).write(to: path)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
+        ActivityLog.noteSettings(diarySettings)
+    }
+
+    /// The fixed-choice settings the diary records a change of (never free text: no keys, no names).
+    private var diarySettings: [String: String] {
+        ["language": transcriptLanguage, "answer_length": answerDetailed ? "detailed" : "short", "stealth": String(stealthModeEnabled),
+         "screen_keys": String(screenKeysEverywhere), "cloud_sync": String(cloudSyncEnabled), "phone_only": String(phoneOnly),
+         "screen_answers": String(isWatchMode)]
     }
 
     // MARK: - Audio capture mode (Settings toggle)
@@ -5806,6 +5850,7 @@ class MainViewModel {
     /// Windows MAC_CATCHUP, 2026-10-19: every problem a person hits is reported to admin, once per kind per run, with the situation it
     /// happened in appended. See ClientErrorReporter for what is and is not sent.
     func reportProblem(_ kind: String, _ message: String) {
+        ActivityLog.record("problem_shown", ["kind": String(kind.prefix(ActivityLog.maxStringLength))])
         let situation = "[microphone \(micCaptureEnabled ? "on" : "off"), \(autoModeEnabled ? "Auto" : "Manual"), \(appStep == .interview ? "in interview" : "setup")]"
         ClientErrorReporter.reportProblem(kind: kind, message: "\(message) \(situation)")
     }
@@ -5856,8 +5901,9 @@ class MainViewModel {
     /// Switch how questions start. Applies immediately: Interview Auto and Practice Auto
     /// begin listening straight away, because waiting for the user to ALSO press Space
     /// would defeat the entire point of an automatic mode.
-    func setListeningMode(_ mode: ListeningMode) {
+    func setListeningMode(_ mode: ListeningMode, via: String = "menu") {
         guard listeningMode != mode else { return }
+        ActivityLog.record("mode_changed", ["to": mode.isAutomatic ? "auto" : "manual", "via": via])
         let previous = listeningMode
         listeningMode = mode
         saveSettings()
@@ -5896,6 +5942,7 @@ class MainViewModel {
         guard mode.isAutomatic else {
             // Back to manual: stop listening rather than leaving the mic silently open.
             if isListening {
+                listenStopWhy = "user"
                 isListening = false; isMuted = true
                 engine.writePauseFlag()
                 updateMicUI()
@@ -5925,8 +5972,30 @@ class MainViewModel {
         rearmAutoModeIfNeeded()
     }
 
+    // ── The activity diary (ActivityLog): listening started and stopped, without a pair for every Auto turn ──
+    /// Why listening is about to stop; nil is a turn being answered.
+    @ObservationIgnored private var listenStopWhy: String?
+    /// Auto paused listening to answer a turn: its re-arm is not a new start.
+    @ObservationIgnored private var diaryTurnPause = false
+    /// The next answer is for a typed question.
+    @ObservationIgnored private var diaryNextTyped = false
+
+    private func noteListeningForDiary() {
+        if isListening {
+            if diaryTurnPause { diaryTurnPause = false; return }
+            ActivityLog.record("listening_started", ["mode": autoModeEnabled ? "auto" : "manual"])
+        } else {
+            let why = listenStopWhy ?? "answer"
+            listenStopWhy = nil
+            if why == "answer" && autoModeEnabled { diaryTurnPause = true; return }
+            diaryTurnPause = false
+            ActivityLog.record("listening_stopped", ["why": why])
+        }
+    }
+
     /// Nothing can be captured: the system tap could not start and no microphone is allowed or present.
     private func handleCaptureUnavailable() {
+        listenStopWhy = "error"
         isListening = false; isMuted = true
         micStatus = "NO AUDIO"; micColor = Color(white: 0.42)
         showThinking = false; isProcessing = false
@@ -6037,6 +6106,7 @@ class MainViewModel {
         // muted app showing a warning about a service that has already come back.
         wasListeningBeforeKeyError = isListening || (autoModeEnabled && !stoppedForIdle)
         keyErrorNoticeShowing = true
+        listenStopWhy = "error"
         isListening = false; isMuted = true
         micStatus = "NO MIC"; micColor = Color(white: 0.42)
         // Two different failures arrive down this path and they are not the user's to
