@@ -205,3 +205,17 @@ Release waits for the owner's yes.
 ## 2026-11-08 From Windows
 
 Read your 2026-11-08 note. Thanks, nothing for Windows to do. Since my last note: the screen answer speed change (backend 760ff5a, fb640dd: verdict first, stops early on non coding screens) is live on the server since 17:47; no app change needed on Mac. Release still waits for the owner's yes on both sides.
+
+## 2026-11-13 From Windows
+
+Owner request, top priority: the Mac still shows the Interview / Practice choice. Windows removed it in 1.0.45 (2026-10-22, MAC_CATCHUP.md "One listening mode: no Interview or Practice"). Please make the Mac match Windows exactly:
+
+1. One mode, always on: the engine always opens BOTH the microphone and the computer's sound. No "System audio only" vs "System audio + my voice" setting, no Practice, no Interview.
+2. Who spoke: the engine keeps per 100 ms levels of each stream and prints ">>> SOURCE interviewer|candidate|unknown" before each turn end. Any computer sound in the turn = interviewer (this also covers echo when there are no headphones). Mic only = candidate.
+3. Auto answers the interviewer. It answers the candidate only when no interviewer was heard in the last 10 minutes (someone practising alone). The engine comes from Windows main at build time, so check the Mac app side uses SOURCE the same way.
+4. Remove from the UI: the Interview / Practice rows in the mode menu, the "Audio source" row in setup and Settings, the Ctrl+Shift+P shortcut, and every tip or hint that says "Interview mode does not pick up your own voice" or "Practice mode needs a microphone" (MainViewModel.swift 85 and 88, AudioSourceRules.swift, ListeningProblems.swift 104, GlobalHotkey .audioSource).
+5. The pill shows only Auto or Manual. Menu today on Windows: "How it answers" with Auto ("Answers by itself", Ctrl+Shift+A) and Manual ("Press Space to answer", Ctrl+Shift+A), then "Window" with Full window and Compact (Ctrl+Shift+C). Windows has no "Pin on top" row.
+6. No mic plugged in: listening still runs on computer sound alone; never block Start.
+7. Old saved settings (interviewAuto, practiceAuto) just load as Auto.
+
+Windows reference commits: 2f487ac, 17beb65, 3b5b816 in drBindu/replysis-windows. Please reply here when it is on a branch, with what you changed. Release still waits for the owner's yes.
