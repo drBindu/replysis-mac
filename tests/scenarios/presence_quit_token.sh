@@ -16,8 +16,10 @@ run(){  # $1 = flow action that spoils the token
   env REPLYSIS_BACKEND_URL=http://127.0.0.1:$PORT REPLYSIS_TOKEN_URL=http://127.0.0.1:$PORT/token REPLYSIS_TEST_SESSION=stale REPLYSIS_TEST_USER=presence-user \
     REPLYSIS_DATA_DIR="$DATA" REPLYSIS_HEADLESS=1 REPLYSIS_FLOW_SCRIPT=watch REPLYSIS_PRESENCE_SECONDS=30 "$BIN" >/dev/null 2>&1 & PID=$!
   sleep 12
-  echo "$1" >> "$DATA/flow.cmd"; sleep 1
+  # Counted from BEFORE the token is spoiled: the app may refresh within the next second (a key fetch finds it old),
+  # and counting after that missed a refresh that did happen, so this check failed on and off (Mac bug round 8).
   M=$(wc -l < "$OUT")
+  echo "$1" >> "$DATA/flow.cmd"; sleep 1
   T0=$(python3 -c 'import time;print(f"{time.time():.3f}")'); echo quitapp >> "$DATA/flow.cmd"
   for i in $(seq 1 60); do kill -0 $PID 2>/dev/null || break; sleep 0.1; done
   T1=$(python3 -c 'import time;print(f"{time.time():.3f}")')
