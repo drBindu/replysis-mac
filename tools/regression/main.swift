@@ -1323,5 +1323,9 @@ do {
 }
 
 
+// ── Early answer wait matches Windows: 250 ms, 650 ms once a question came in two parts this interview ──
+check(AutoTurnDetector.speechFinalWaitNanos(tailMergesThisInterview: 0) == 250_000_000, "early signal: a plainly finished question is answered 250 ms after the speaker stops (Windows SpeechFinalConfirmMs)")
+check(AutoTurnDetector.speechFinalWaitNanos(tailMergesThisInterview: 1) == 650_000_000, "early signal: 650 ms once a question arrived in two parts (Windows SpeechFinalConfirmAfterTailMs)")
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

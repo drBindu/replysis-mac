@@ -1780,6 +1780,7 @@ class MainViewModel {
         problemsShown.removeAll()
         stoppedForIdle = false
         heardEverThisRun = false; interviewSilentTipShown = false
+        tailMergesThisInterview = 0
         if needsFreshSession { prepareSession() }
         beginInterviewClock()
         aiAnswerHint = idleHintForCurrentMode
@@ -3453,13 +3454,14 @@ class MainViewModel {
         longestMidTurnGap = 0
     }
 
-    /// Auto on the early signal: answer a plainly finished question 650 ms after the recogniser says
+    /// Auto on the early signal: answer a plainly finished question 250 ms (650 ms after a split question) after the recogniser says
     /// the speaker stopped, instead of waiting for the end-of-utterance line that follows about a
     /// second later (Windows measured this as most of the wait between the last word and the first
     /// word of the answer). Only if nothing more was said in those 650 ms; a tail that does arrive
     /// goes through the continuation logic as always. Statements and unclear endings are left
     /// alone and wait for the later signal exactly as before.
-    private static let speechFinalDelay: UInt64 = 650_000_000
+    /// Questions that arrived in two parts this interview (a tail joined after the first answer); slows the early signal.
+    private var tailMergesThisInterview = 0
     @ObservationIgnored private var speechFinalTask: Task<Void, Never>?
     private var lastEarlyAnswerAt = Date.distantPast
 
@@ -3471,10 +3473,11 @@ class MainViewModel {
         guard AutoTurnDetector.isPlainlyFinished(text) else { return }
         speechFinalTask?.cancel()
         speechFinalTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: Self.speechFinalDelay)
+            let wait = AutoTurnDetector.speechFinalWaitNanos(tailMergesThisInterview: self?.tailMergesThisInterview ?? 0)
+            try? await Task.sleep(nanoseconds: wait)
             guard let self, !Task.isCancelled else { return }
             guard self.engine.readLatestTxt() == heardAtSignal else { return }   // more was said: wait
-            dlog("AUTO: speaker stopped (early signal) — answering after 650ms: '\(text.suffix(40))'", tag: "AUTO")
+            dlog("AUTO: speaker stopped (early signal) — answering after \(wait / 1_000_000)ms: '\(text.suffix(40))'", tag: "AUTO")
             self.lastEarlyAnswerAt = Date()
             self.handleUtteranceEnd()
         }
@@ -3657,6 +3660,7 @@ class MainViewModel {
             }
             continuationCount += 1
             let merged = mergedCandidate
+            tailMergesThisInterview += 1
             dlog("AUTO: continuation\(saidBeforeAnswer ? ", said before the answer was up" : "") — re-answering the full question: '\(merged.prefix(90))'", tag: "AUTO")
             // Say WHY the answer just changed. Without this the replacement looks like the
             // app glitched and lost the answer, right when the user is reading it.
