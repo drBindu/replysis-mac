@@ -216,7 +216,7 @@ struct AnswerOverlayView: View {
                 .background(Capsule().fill(Color.white.opacity(0.05)))
             }
 
-            Button(action: { vm.runScreenAnalysis() }) {
+            Button(action: { ActivityLog.record("button_clicked", ["id": "read_screen"]); vm.runScreenAnalysis() }) {
                 ReadScreenButtonLabel(busy: vm.isScreenAnalyzing)
             }
             .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
@@ -225,6 +225,7 @@ struct AnswerOverlayView: View {
 
             Button {
                 NSPasteboard.general.clearContents()
+                ActivityLog.record("answer_copied")
                 NSPasteboard.general.setString(AnswerLayout.copyText(vm.aiAnswer), forType: .string)
             } label: {
                 Image(systemName: "doc.on.doc").foregroundColor(Color(hex: "#94a3b8"))

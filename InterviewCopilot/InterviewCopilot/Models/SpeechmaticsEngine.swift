@@ -694,6 +694,10 @@ class SpeechmaticsEngine {
             // CONTRACT:RUNTIME — see ENGINE_CONTRACT.md and verify_engine_contract.py
             if line.contains("STATUS: ONLINE") || line.contains("ENGINE: READY") {
                 Task { @MainActor [weak self] in
+                    if let self, !self.isReady {
+                        if let since = self.offlineSince { ActivityLog.record("speech_reconnected", ["ms": Int(Date().timeIntervalSince(since) * 1000)]) }
+                        else { ActivityLog.record("speech_connected", ["ms": Int(Date().timeIntervalSince(self.startedAt ?? Date()) * 1000)]) }
+                    }
                     self?.isReady = true
                     self?.offlineSince = nil      // live again; the offline clock stops
                     self?.offlineRestarts = 0
@@ -731,6 +735,7 @@ class SpeechmaticsEngine {
             // test found it by asking the engine for a line no engine ever emitted.
             if line.contains("STATUS: OFFLINE") {
                 Task { @MainActor [weak self] in
+                    if self?.isReady == true { ActivityLog.record("speech_dropped", ["why": "offline"]) }
                     self?.isReady = false
                     if self?.offlineSince == nil { self?.offlineSince = Date() }
                     dlog("SM: session dropped — transcription is no longer live", tag: "SM")
@@ -742,6 +747,7 @@ class SpeechmaticsEngine {
             // A minute of that in an interview is the whole interview.
             if line.contains("All endpoints failed") {
                 Task { @MainActor [weak self] in
+                    if self?.isReady == true { ActivityLog.record("speech_dropped", ["why": "all_endpoints_failed"]) }
                     self?.isReady = false
                     if self?.offlineSince == nil { self?.offlineSince = Date() }
                 }

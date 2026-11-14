@@ -74,16 +74,19 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
     // the log now does too, so a report can say which one happened.
     func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
         dlog("AppUpdater: check finished — up to date", tag: "UPDATE")
+        ActivityLog.record("update_checked", ["result": "none"])
     }
 
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         dlog("AppUpdater: update available — \(item.displayVersionString) (build \(item.versionString))", tag: "UPDATE")
         // Said the moment it is found, not after the download (Windows 1.0.46): people opened the app, saw nothing, and closed it.
         state = .onItsWay(item.displayVersionString)
+        ActivityLog.record("update_checked", ["result": "found", "to_version": AppIdentity.plainVersion(item.displayVersionString) ?? ""])
     }
 
     func updater(_ updater: SPUUpdater, didDownloadUpdate item: SUAppcastItem) {
         dlog("AppUpdater: update \(item.displayVersionString) downloaded", tag: "UPDATE")
+        ActivityLog.record("update_checked", ["result": "downloaded", "to_version": AppIdentity.plainVersion(item.displayVersionString) ?? ""])
     }
 
     /// Downloaded and staged: it installs when the app is quit, or now from the notice's Restart button.
@@ -105,12 +108,14 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
     func restartToUpdate() {
         guard let installNow else { return }
         dlog("AppUpdater: Restart to update pressed", tag: "UPDATE")
+        ActivityLog.closingForUpdate = true
         installNow()
     }
 
     /// The download failed: the notice must not keep saying it is on its way (Windows bug round 8). Reported as minor.
     func updater(_ updater: SPUUpdater, failedToDownloadUpdate item: SUAppcastItem, error: Error) {
         dlog("AppUpdater: download of \(item.displayVersionString) FAILED — \(error.localizedDescription) (code \((error as NSError).code))", tag: "UPDATE")
+        ActivityLog.record("update_checked", ["result": "failed", "to_version": AppIdentity.plainVersion(item.displayVersionString) ?? ""])
         ClientErrorReporter.reportProblem(kind: UpdateNoticeRules.downloadFailedKind,
                                           message: "Update \(item.displayVersionString) download failed (code \((error as NSError).code))")
         state = UpdateNoticeRules.afterCheckEnds(state)
@@ -132,6 +137,7 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
         // SUNoUpdateError (1001) is how Sparkle reports "nothing newer"; it is not a failure.
         if code == 1001 { return }
         dlog("AppUpdater: check FAILED — \(error.localizedDescription) (code \(code))", tag: "UPDATE")
+        ActivityLog.record("update_checked", ["result": "failed"])
     }
 
     #if DEBUG

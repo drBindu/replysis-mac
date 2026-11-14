@@ -1349,5 +1349,60 @@ check(!LanguageRules.canApplyPendingChange(listening: true, processing: false, u
 check(!LanguageRules.canApplyPendingChange(listening: false, processing: true, unansweredText: "", secondsSinceSpeech: 9), "language: never while an answer is being written")
 check(LanguageRules.canApplyPendingChange(listening: false, processing: false, unansweredText: "x", secondsSinceSpeech: 0), "language: Manual with the mic shut applies at once")
 
+// ── Activity diary (CHANNEL 2026-11-14): fixed values only, 200 a batch, 5,000 kept, sending off ──
+do {
+    check(ActivityLog.sendingEnabled == true, "diary: sending is on (owner approved, endpoint live)")
+    let clean = ActivityLog.cleanProps(["mode": "auto", "ms": 420, "ok": true, "ratio": 0.5, "transcript": "x", "question_text": "y",
+                                        "free": "What is a mutex?", "long": String(repeating: "a", count: 41), "email": "a@b.c",
+                                        "resume": "r", "Bad Name": "z", "list": [1, 2], "model": "Mac14,2", "v": "1.0.255"])
+    check(clean["mode"] as? String == "auto" && clean["ms"] as? Int == 420 && clean["ok"] as? Bool == true && clean["ratio"] as? Double == 0.5,
+          "diary: fixed values, numbers and booleans are kept")
+    check(clean["model"] as? String == "Mac14,2" && clean["v"] as? String == "1.0.255", "diary: a Mac model and a version are fixed values")
+    check(clean["transcript"] == nil && clean["question_text"] == nil && clean["email"] == nil && clean["resume"] == nil,
+          "diary: text-like prop names are dropped whatever the value")
+    check(clean["free"] == nil, "diary: a string with spaces (anything said or written) is dropped")
+    check(clean["long"] == nil && clean["Bad Name"] == nil && clean["list"] == nil, "diary: long strings, odd names and lists are dropped")
+    let e = ActivityLog.makeEvent(name: "answer_shown", props: ["words": 42], t: 1_700_000_000_000, uid: "u1", sessionId: "s1", version: "1.0.255")
+    check(e?["t"] as? Int64 == 1_700_000_000_000 && e?["uid"] as? String == "u1" && e?["session_id"] as? String == "s1"
+          && e?["app"] as? String == "mac" && e?["v"] as? String == "1.0.255" && e?["event"] as? String == "answer_shown"
+          && (e?["props"] as? [String: Any])?["words"] as? Int == 42, "diary: an event is {t, uid, session_id, app mac, v, event, props}")
+    check(ActivityLog.makeEvent(name: "What is a mutex", props: [:], t: 0, uid: "", sessionId: "", version: "") == nil, "diary: an event name is a fixed name")
+    let many = (1...5_100).map { ["_n": $0, "event": "x"] as [String: Any] }
+    let kept = ActivityLog.trimmed(many)
+    check(kept.count == 5_000 && kept.first?["_n"] as? Int == 101, "diary: at most 5,000 kept on disk, the oldest dropped")
+    let b = ActivityLog.batch(kept)
+    check(b.count == 200 && b.allSatisfy { $0["_n"] == nil }, "diary: a batch is at most 200 events and carries no internal number")
+    let last = ActivityLog.lastSeq(ofBatchIn: kept)
+    check(last == 300 && ActivityLog.removingSent(kept, upTo: last!).count == 4_800, "diary: exactly the sent batch is removed")
+    let req = ActivityLog.request(backendUrl: "https://replysis.com/", token: "tok", events: b)
+    let bodyJson = req?.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    check(req?.url?.absoluteString == "https://replysis.com/api/v1/activity" && req?.httpMethod == "POST"
+          && req?.value(forHTTPHeaderField: "Authorization") == "Bearer tok" && (bodyJson?["events"] as? [Any])?.count == 200,
+          "diary: POST /api/v1/activity, Bearer token, body {events: [...]}")
+    let labelled = AppIdentity.label(req!, backendHost: "replysis.com", version: "1.0.255")
+    check(labelled.value(forHTTPHeaderField: "X-App-Platform") == "mac" && labelled.value(forHTTPHeaderField: "X-App-Version") == "1.0.255",
+          "diary: the request carries the two app labels, as presence does")
+    check(ActivityLog.request(backendUrl: "https://replysis.com", token: "", events: b) == nil, "diary: nothing goes out without a token")
+    check(ActivityLog.request(backendUrl: "https://replysis.com", token: "t", events: many) == nil, "diary: never more than 200 in one request")
+    check(ActivityLog.outcome(status: 204) == .sent && ActivityLog.outcome(status: 200) == .sent, "diary: 204 and 200 are sent")
+    check(ActivityLog.outcome(status: 401) == .refreshAndRetry, "diary: 401 refreshes the token and tries once more")
+    check(ActivityLog.outcome(status: 404) == .endpointMissing, "diary: 404 means the endpoint is not there yet")
+    check(ActivityLog.outcome(status: 500) == .keep && ActivityLog.outcome(status: 429) == .keep && ActivityLog.outcome(status: nil) == .keep,
+          "diary: anything else, or offline, keeps the batch for the next tick")
+    let now = Date()
+    check(!ActivityLog.maySend(enabled: false, testServer: false, pausedUntil: nil, now: now), "diary: a real user with sending off sends nothing")
+    check(ActivityLog.maySend(enabled: false, testServer: true, pausedUntil: nil, now: now), "diary: a test copy against the fake server sends")
+    check(!ActivityLog.maySend(enabled: true, testServer: false, pausedUntil: now.addingTimeInterval(60), now: now), "diary: paused after a 404")
+    check(ActivityLog.maySend(enabled: true, testServer: false, pausedUntil: now.addingTimeInterval(-1), now: now), "diary: tries again once the pause is over")
+    check(ActivityLog.outputType(transport: kAudioDeviceTransportTypeBuiltIn) == "speakers", "diary: built-in output is speakers")
+    check(ActivityLog.outputType(transport: kAudioDeviceTransportTypeBuiltIn, dataSource: 0x6864_706E) == "headphones", "diary: the headphone jack is headphones")
+    check(ActivityLog.outputType(transport: kAudioDeviceTransportTypeBluetooth) == "bluetooth" && ActivityLog.outputType(transport: kAudioDeviceTransportTypeBluetoothLE) == "bluetooth", "diary: AirPods are bluetooth")
+    check(ActivityLog.outputType(transport: kAudioDeviceTransportTypeUSB) == "headphones" && ActivityLog.outputType(transport: kAudioDeviceTransportTypeHDMI) == "other", "diary: USB is headphones, HDMI other")
+    let changes = ActivityLog.changedSettings(old: ["language": "en", "stealth": "true"], new: ["language": "es", "stealth": "true", "answer_length": "short"])
+    check(changes.map { "\($0.name)=\($0.value)" } == ["answer_length=short", "language=es"], "diary: only the settings that changed are recorded")
+    check(ActivityLog.changedSettings(old: [:], new: ["language": "a key with spaces"]).isEmpty, "diary: a free text setting value is never recorded")
+    check(ActivityLog.wordCount("I would use a hash map.\nThat is linear.") == 9, "diary: words are counted, only the number is kept")
+}
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

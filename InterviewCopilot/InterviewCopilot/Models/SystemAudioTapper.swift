@@ -194,6 +194,7 @@ nonisolated final class SystemAudioTapper {
             if buildDevice() {
                 outputSwitches += 1
                 dlog("in-app tap: the default output changed; now hearing '\(newUID)'", tag: "TAP")
+                ActivityLog.record("audio_output_changed", ["type": ActivityLog.currentOutputType()])
             } else {
                 // Never give up while listening: without a device the interviewer is not heard at all. Quick tries
                 // first (Bluetooth announces itself before it can play), then every 5 s.

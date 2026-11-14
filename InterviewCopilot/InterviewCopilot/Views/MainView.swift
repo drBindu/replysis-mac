@@ -225,7 +225,7 @@ struct MainView: View {
     /// changes is read as a switch. Whether screen answers are armed is a Settings preference, said in the tooltip. Styled to the
     /// Windows 1.0.21 glass spec: neutral silver, fills that follow the opacity slider, text that never fades.
     func screenButton(compact: Bool) -> some View {
-        Button(action: { vm.runScreenAnalysis(wholeScreen: false) }) {
+        Button(action: { ActivityLog.record("button_clicked", ["id": "read_screen"]); vm.runScreenAnalysis(wholeScreen: false) }) {
             ReadScreenButtonLabel(busy: vm.isScreenAnalyzing, showKey: !compact)
         }
         .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
@@ -551,7 +551,7 @@ struct MainView: View {
     // ── Profile button + dropdown popover ──────────────────────────
     func profileButton(compact: Bool = false) -> some View {
         // Just the round initials (Windows MAC_CATCHUP, 2026-10-19): the name is inside the menu it opens.
-        Button(action: { showProfileMenu.toggle() }) {
+        Button(action: { if !showProfileMenu { ActivityLog.record("menu_opened", ["which": "profile"]) }; showProfileMenu.toggle() }) {
             profileAvatar(size: 32, fontSize: 12)
         }
         .buttonStyle(.plain)
@@ -618,10 +618,12 @@ struct MainView: View {
             VStack(spacing: 0) {
                 menuRow(icon: "gearshape.fill", title: "Settings",
                         subtitle: "Listening, screen, appearance") {
+                    ActivityLog.record("button_clicked", ["id": "settings"])
                     showProfileMenu = false; showSettings = true
                 }
                 menuRow(icon: "clock.arrow.circlepath", title: "Past Sessions",
                         subtitle: "Review previous interviews") {
+                    ActivityLog.record("button_clicked", ["id": "past_sessions"])
                     showProfileMenu = false; vm.sessionsOpen = true
                 }
                 menuRow(icon: "gift.fill", title: "Invite a friend",
@@ -1201,11 +1203,11 @@ struct MainView: View {
                         // press away instead of gone.
                         answerHistoryControls
 
-                        ghostBtn(compact ? "📋" : "📋 Copy") { copyAnswer() }
-                        ghostBtn(compact ? "✕" : "✕ Clear") { vm.clearAnswer() }
+                        ghostBtn(compact ? "📋" : "📋 Copy") { ActivityLog.record("button_clicked", ["id": "copy"]); copyAnswer() }
+                        ghostBtn(compact ? "✕" : "✕ Clear") { ActivityLog.record("button_clicked", ["id": "clear"]); vm.clearAnswer() }
                         // Back to the Setup page without ending the session, and Finish: save,
                         // and review this interview in Past sessions.
-                        Button(action: { vm.backToSetup() }) {
+                        Button(action: { ActivityLog.record("button_clicked", ["id": "setup"]); vm.backToSetup() }) {
                             Text("Setup").font(.system(size: 11, weight: .semibold)).lineLimit(1).fixedSize()
                         }
                         .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
@@ -1213,7 +1215,7 @@ struct MainView: View {
                         .accessibilityLabel("Setup")
                         .help("Return to interview setup")
 
-                        Button(action: { Task { _ = await vm.finishInterview() } }) {
+                        Button(action: { ActivityLog.record("button_clicked", ["id": "finish"]); Task { _ = await vm.finishInterview() } }) {
                             Text(vm.finishing ? "Saving..." : "Finish")
                                 .font(.system(size: 11, weight: .semibold)).lineLimit(1).fixedSize()
                                 .foregroundColor(Color(hex: "#0B0F17"))
@@ -1225,7 +1227,7 @@ struct MainView: View {
                         .accessibilityLabel("Finish")
                         .help("Finish, save, and review this interview in Past Sessions.")
 
-                        Button(action: { vm.newSession() }) {
+                        Button(action: { ActivityLog.record("button_clicked", ["id": "new_session"]); vm.newSession() }) {
                             HStack(spacing: 6) {
                                 Image(systemName: "plus")
                                     .font(.system(size: 10, weight: .semibold))
@@ -1266,6 +1268,7 @@ struct MainView: View {
     }
 
     func copyAnswer() {
+        ActivityLog.record("answer_copied")
         let text = AnswerLayout.copyText(vm.aiAnswer)
         Task { @MainActor in _ = await Clipboard.copy(text) }   // retries while another program holds the clipboard
     }
@@ -1994,12 +1997,12 @@ extension MainView {
             setupChoiceGroup("WHEN TO ANSWER") {
                 setupChoiceCard(icon: "bolt.fill", title: "Auto",
                                 selected: vm.listeningMode == .auto,
-                                action: { vm.setListeningMode(.auto) }) {
+                                action: { vm.setListeningMode(.auto, via: "setup") }) {
                     Text("Answers after each complete question.")
                 }
                 setupChoiceCard(icon: "keyboard", title: "Manual",
                                 selected: vm.listeningMode == .manual,
-                                action: { vm.setListeningMode(.manual) }) {
+                                action: { vm.setListeningMode(.manual, via: "setup") }) {
                     Text("Press Space to listen, then Space to answer.")
                 }
             }
@@ -2068,7 +2071,7 @@ extension MainView {
                     .font(.system(size: 11)).foregroundColor(Color(hex: "#718298"))
             }
             Spacer()
-            Button(action: { vm.startInterview() }) {
+            Button(action: { ActivityLog.record("button_clicked", ["id": "start"]); vm.startInterview() }) {
                 HStack(spacing: 8) {
                     Text("Start interview").font(.system(size: 13, weight: .semibold))
                     Image(systemName: "arrow.right").font(.system(size: 11, weight: .bold))

@@ -413,8 +413,10 @@ struct LoginView: View {
             isLoading = false
             if result.success {
                 vm.onLoginSuccess()
+                ActivityLog.record("signed_in", ["method": "email"])
                 dismiss()
             } else {
+                ActivityLog.record("sign_in_failed", ["method": "email"])
                 fail(result.error ?? SignInMessages.failed, life)
             }
         }
@@ -442,8 +444,10 @@ struct LoginView: View {
             isLoading = false
             if result.success {
                 vm.onLoginSuccess()
+                ActivityLog.record("signed_in", ["method": "email", "new_account": true])
                 dismiss()
             } else {
+                ActivityLog.record("sign_in_failed", ["method": "email", "new_account": true])
                 fail(result.error ?? SignInMessages.createFailed, life)
             }
         }
@@ -468,8 +472,11 @@ struct LoginView: View {
                 UserSession.shared.isLoggedIn   = true
                 UserSession.shared.saveToDisk()   // BUG-2 FIX: was saveToDisK() — typo silently skipped Keychain write
                 vm.onLoginSuccess()
+                ActivityLog.record("signed_in", ["method": "google"])
                 dismiss()
             } else {
+                let cancelled = result.error.contains("cancelled")
+                ActivityLog.record("sign_in_failed", ["method": "google", "cancelled": cancelled])
                 fail(result.error, life)
                 // Report real failures so they surface automatically instead of only being
                 // known if the user happens to report them — but skip the two cases that
@@ -490,6 +497,7 @@ struct LoginView: View {
             isLoading = false
             if ok {
                 vm.onLoginSuccess()
+                ActivityLog.record("signed_in", ["method": "saved"])
                 dismiss()
             } else {
                 fail(SignInMessages.sessionExpired, life)

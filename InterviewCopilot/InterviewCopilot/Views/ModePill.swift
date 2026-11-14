@@ -14,7 +14,7 @@ struct ModePill: View {
 
     var body: some View {
         let answers = vm.listeningMode == .auto ? "Auto" : "Manual"
-        Button(action: { showMenu.toggle() }) {
+        Button(action: { if !showMenu { ActivityLog.record("menu_opened", ["which": "mode"]) }; showMenu.toggle() }) {
             HStack(spacing: 6) {
                 Image(systemName: vm.listeningMode == .auto ? "bolt.fill" : "hand.tap.fill")
                     .font(.system(size: 10, weight: .semibold))

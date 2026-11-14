@@ -400,7 +400,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // termination dies with the process.
             vm.flushListeningMeterOnExit(synchronously: true)
             // Tell the server the app is closing, so the admin panel drops the Mac at once. At most 1.5 s, never more.
+            // The diary's last batch goes out side by side with it and shares the same 1.5 s.
+            let quitDeadline = Date().addingTimeInterval(ActivityLog.quitWaitSeconds)
+            let diary = ActivityLog.beginQuitFlush()
             PresenceTracker.shared.leave()
+            diary.wait(until: quitDeadline)
             // And wait: the engine's graceful shutdown now runs off the main thread, and this process must not
             // exit before it has told the speech service the session is over.
             SpeechmaticsEngine.shared.stopAndWait()

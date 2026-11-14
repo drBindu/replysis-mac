@@ -48,6 +48,7 @@ enum CrashReporter {
     private static func reportPreviousCrashLater() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
             guard SentrySDK.lastRunStatus == .didCrash else { return }
+            ActivityLog.record("app_crashed_previous_run")
             dlog("CRASH: the previous run crashed; reported once", tag: "SENTRY")
             ClientErrorReporter.reportProblem(kind: "previous-run-crashed", message: "The previous run of the app crashed (details in Sentry)")
         }
