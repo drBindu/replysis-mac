@@ -3207,6 +3207,18 @@ class MainViewModel {
         if text != transcript {
             dlog("Transcript updated: '\(text.prefix(80))'", tag: "TX")
             transcript = text
+            transcriptChangedAt = Date()
+        }
+        // No end of turn from the speech service (see AutoTurnDetector.quietFallbackDue). Once per text, through the same
+        // path as the service's own signal, and stamped like the early signal so a late end of turn finds nothing left.
+        if autoModeEnabled, isListening, !isProcessing, !isScreenAnalyzing, !autoTurnSubmitting, engine.isReady,
+           text != quietFallbackFiredFor,
+           AutoTurnDetector.quietFallbackDue(text: text, now: Date(), textChangedAt: transcriptChangedAt,
+                                             lastWordsAt: engine.lastWordsAt, lastTurnSignalAt: lastTurnSignalAt) {
+            quietFallbackFiredFor = text
+            dlog("AUTO: no end of turn from the speech service; the words have been still for 2.8 s — answering: '\(text.suffix(40))'", tag: "AUTO")
+            lastEarlyAnswerAt = Date()
+            handleUtteranceEnd()
         }
         // AUTO MODE: the same polled text that drives the on-screen transcript also tells
         // us when the interviewer stopped talking. No extra timer, no extra file read.
@@ -3227,9 +3239,9 @@ class MainViewModel {
             }
             autoBlockLogTick += 1
         }
-        // NOTE: turns are driven by handleUtteranceEnd(), from the recogniser's own
-        // acoustic silence detection. No text-timing fallback runs here: two independent
-        // triggers would race and double-answer, and the text one is the guess we removed.
+        // NOTE: turns are driven by handleUtteranceEnd(), from the recogniser's own acoustic silence detection. The one
+        // text-timing path above runs only when no turn signal came after the last change, and goes through
+        // handleUtteranceEnd itself, so the two cannot both answer one question.
     }
 
     /// The recogniser reported real acoustic silence — the speaker has finished.
@@ -3279,6 +3291,11 @@ class MainViewModel {
     /// When the recogniser last said the speaker stopped. The user's wait starts here, not
     /// when the request goes out — everything before it is time they are already spending.
     var lastUtteranceEndAt = Date.distantPast
+    /// When the shown transcript last changed, the last end-of-turn signal of any kind, and the text the quiet fallback
+    /// last answered (so it fires once per text).
+    private var transcriptChangedAt = Date.distantPast
+    private var lastTurnSignalAt = Date.distantPast
+    private var quietFallbackFiredFor = ""
 
     private var continuationChainStartedAt = Date.distantPast
     private var continuationCount = 0
@@ -3447,6 +3464,7 @@ class MainViewModel {
     private var lastEarlyAnswerAt = Date.distantPast
 
     private func handleSpeechFinal() {
+        lastTurnSignalAt = Date()
         guard autoModeEnabled, isListening, !isScreenAnalyzing, !autoTurnSubmitting, engine.isReady else { return }
         let heardAtSignal = engine.readLatestTxt()
         let text = remainingSpeech(heardAtSignal)
@@ -3463,6 +3481,7 @@ class MainViewModel {
     }
 
     private func handleUtteranceEnd() {
+        lastTurnSignalAt = Date()
         guard autoModeEnabled, isListening, !isScreenAnalyzing, !autoTurnSubmitting, engine.isReady else { return }
         // The late signal for a question already answered on the early one finds nothing left. That
         // is not a desync, so it must not count toward the resynchronise rule below.

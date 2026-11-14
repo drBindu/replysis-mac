@@ -1304,5 +1304,24 @@ check(AnswerLayout.depthBullets("- one\n-  two\n\n• three") == "• one\n• t
 let indentedFirst = AnswerLayout.split("Here it is.\n```python\n\n    return x\n```")
 check(indentedFirst.code == "    return x", "split: the first code line keeps its indentation")
 
+// ── Quiet fallback (Windows RecognitionSettled + 2.8 s): a finished sentence with no end of turn from the service ──
+do {
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+    let q = "What is a hash map and when would you use it?"
+    check(AutoTurnDetector.quietFallbackDue(text: q, now: t0.addingTimeInterval(3.0), textChangedAt: t0, lastWordsAt: t0.addingTimeInterval(0.5), lastTurnSignalAt: .distantPast),
+          "quiet fallback: a finished question, still for 3 s, no words for 2.5 s, no turn signal: answered")
+    check(!AutoTurnDetector.quietFallbackDue(text: q, now: t0.addingTimeInterval(2.0), textChangedAt: t0, lastWordsAt: t0, lastTurnSignalAt: .distantPast),
+          "quiet fallback: not before 2.8 s")
+    check(!AutoTurnDetector.quietFallbackDue(text: q, now: t0.addingTimeInterval(3.0), textChangedAt: t0, lastWordsAt: t0.addingTimeInterval(1.5), lastTurnSignalAt: .distantPast),
+          "quiet fallback: not while the service sent words in the last 2 s")
+    check(!AutoTurnDetector.quietFallbackDue(text: q, now: t0.addingTimeInterval(5.0), textChangedAt: t0, lastWordsAt: t0, lastTurnSignalAt: t0.addingTimeInterval(1.0)),
+          "quiet fallback: never when the service already signalled the end after the last change")
+    check(!AutoTurnDetector.quietFallbackDue(text: "How would you design a", now: t0.addingTimeInterval(9.0), textChangedAt: t0, lastWordsAt: t0, lastTurnSignalAt: .distantPast),
+          "quiet fallback: an unfinished sentence keeps waiting")
+    check(!AutoTurnDetector.quietFallbackDue(text: "   ", now: t0.addingTimeInterval(9.0), textChangedAt: t0, lastWordsAt: t0, lastTurnSignalAt: .distantPast),
+          "quiet fallback: nothing said, nothing answered")
+}
+
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

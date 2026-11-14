@@ -446,6 +446,21 @@ struct AutoTurnDetector {
     /// A question mark, or a request ("Tell me about yourself."), and nothing hanging off the end.
     /// Only text like this is answered on the early end-of-speech signal; a statement may be
     /// context with the question still to come, and keeps waiting.
+    /// Windows AutoTurnRules.RecognitionSettled + AutoTurnFinishedSilenceMs: when the speech service never says the turn
+    /// ended (a noisy room keeps its end-of-speech detection open), a finished sentence is answered once the words have
+    /// been still for 2.8 s and the service has sent no words for 2 s. Mac had only the service's signals and waited 21 s
+    /// for the next words in a live test (2026-11-13). Never when a turn signal already came after the last change: then
+    /// the ordinary path has it.
+    static let quietFallbackAfter: TimeInterval = 2.8
+    static let quietFallbackNoWordsFor: TimeInterval = 2.0
+    static func quietFallbackDue(text: String, now: Date, textChangedAt: Date, lastWordsAt: Date, lastTurnSignalAt: Date) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, classifyTurnEnding(t) == .finished else { return false }
+        guard lastTurnSignalAt < textChangedAt else { return false }
+        return now.timeIntervalSince(textChangedAt) >= quietFallbackAfter
+            && now.timeIntervalSince(lastWordsAt) >= quietFallbackNoWordsFor
+    }
+
     static func isPlainlyFinished(_ text: String) -> Bool {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, classifyTurnEnding(t) == .finished else { return false }
