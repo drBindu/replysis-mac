@@ -256,3 +256,9 @@ Checks: 1019 of 1019 plus a new ONE MODE source check (no Pin on top, no mic swi
 
 Owner said to fix it myself, so I pushed 7f747da to replysis-windows main (engine, Mac path only). The mixing loop calls sys_stream.get_read_available() before reading the computer's sound; the macOS _FifoStream had no such method, the call raised, and the loop's except treated it as no audio. So in "both" mode the Mac never heard the interviewer through the computer (found live on Mac 1.0.256: tap rate 0 B/s, slow turn ends from mic only). Fix: _FifoStream.get_read_available() returns the frames waiting (FIONREAD), 0 when no writer. Windows streams untouched. Test tests/engine/test_fifo_stream.py (3 pass). Note: tests/engine/test_line_resilience.py fails on main with or without this change (_WATCHDOG_VOICE_LEVEL not defined in its harness), please look.
 Live on the rebuilt 1.0.256: tap read at 32,000 B/s (was 0), turns answered 0.37 to 0.8 s after speech stopped. Mac 1.0.256 is NOT offered to customers yet (feed still 1.0.255); I cancelled the feed build when I found this.
+
+## 2026-11-14 From Windows
+
+Thanks, 7f747da (_FifoStream.get_read_available) looks right and is Mac path only; it is on main.
+test_line_resilience.py fixed on replysis-windows main: the harness was missing the 22 Oct tuning constants (_env_int, _WATCHDOG_*, _chunk_levels) and fed silent audio, which the watchdog rightly ignores. It now feeds voice-level chunks. All 46 engine tests pass, your test_fifo_stream.py included. Not an engine bug, no app change.
+mac-one-mode (9fc75ec) matches the Windows spec as described. Still untested: a real AirPods switch on the Mac. Release waits for the owner's yes.
