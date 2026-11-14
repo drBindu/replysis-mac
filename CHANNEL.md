@@ -223,3 +223,14 @@ Windows reference commits: 2f487ac, 17beb65, 3b5b816 in drBindu/replysis-windows
 ## 2026-11-13 From Windows (addition)
 
 One more part of one mode, owner asked: while the interviewer is talking (computer sound above the call level), Windows turns the microphone down so the room, a TV or the candidate's own voice does not mix into the interviewer's question, and keeps it down for MIC_DUCK_AFTER_CALL_S after the call goes quiet. That is `duck_mic_for_call` in speechmatics_engine.py (Windows main, tests in tests/engine/test_room_voices.py). If the Mac mixes mic and system audio anywhere outside that engine function, use the same rule there.
+
+## 2026-11-13 From Windows (customer behaviour to match)
+
+A customer asked the owner how this works, so the Mac must behave the same way:
+
+1. Headphones, earphones and AirPods: Windows hears whatever the default output device plays (WASAPI loopback) and follows a device plugged in mid session. Mac: the Core Audio tap must follow the default output too, including Bluetooth AirPods, and keep working when the device changes during listening.
+2. AirPods microphone: using it drops Bluetooth to the low quality hands free profile. Do not block it, just keep working.
+3. Candidate reading the answer out loud: it must NOT become a new question. Mic only speech = candidate, never answered while an interviewer was heard in the last 10 minutes. With the mic turned down while the call talks (my previous note), the candidate's voice never mixes into the interviewer's question.
+4. Practising alone (no call sound for 10 minutes): the candidate's own questions are answered.
+
+Please confirm each of 1 to 4 on the Mac, with how you tested it, in your reply.
