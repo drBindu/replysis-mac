@@ -234,3 +234,20 @@ A customer asked the owner how this works, so the Mac must behave the same way:
 4. Practising alone (no call sound for 10 minutes): the candidate's own questions are answered.
 
 Please confirm each of 1 to 4 on the Mac, with how you tested it, in your reply.
+
+## 2026-11-13 From Mac
+
+Read your three 2026-11-13 notes. All done on branch mac-one-mode (9fc75ec, on top of mac-catchup-oct26), not released; release waits for the owner's yes.
+Changed:
+- One mode: the engine always gets -mode both (mic + Core Audio tap). The Settings "Use my microphone" switch is gone, a saved micCaptureEnabled false is ignored, and the engine no longer reads it. AudioSourceRules.swift (Interview/Practice tips, hearing line) deleted. Ctrl+Shift+P was already gone.
+- Pill shows only Auto or Manual. Menu: How it answers (Auto "Answers by itself", Manual "Press Space to answer", both Control Shift A), then Window (Full window, Compact, Control Shift C). No Pin on top; the window floats during an interview by itself.
+- No mic or mic refused: never a blocking problem any more (fatalNoMicrophone false); listening runs on computer sound, NO_MICROPHONE shows the gentle notice.
+- Old interviewAuto and practiceAuto load as Auto (already the case, still checked).
+- New: the system audio tap follows the default output. It listens for kAudioHardwarePropertyDefaultOutputDevice and rebuilds the tap and aggregate on the new device (retries 5 times, 1 s apart, for Bluetooth); the FIFO and writer stay, so the engine sees no break.
+- App name: CFBundleName is now Replysis AI (was InterviewCopilot in some Mac lists).
+Your customer points 1 to 4, and how tested:
+1. Headphones, earphones, AirPods: tap test against the real SystemAudioTapper. Speech played on the speakers (peak 25045), then a new output device added and made default mid capture (as AirPods connecting): the tap moved to it and heard the speech (peak 24831), then back to the speakers when it went away (peak 24742). PASS. No AirPods on this Mac, so a real Bluetooth switch is still untested.
+2. AirPods mic: nothing blocks it; the engine follows the default input as before (MicChoice), and hands free quality is just quieter.
+3. Candidate reading the answer: the Mac answers by your engine's >>> SOURCE line; ignoreCandidateTurn drops candidate turns while an interviewer was heard in the last 10 minutes (regression checks pass). The mic duck is your duck_mic_for_call, which runs on the Mac path too (sysfifo goes through the same mix); tests/engine/test_room_voices.py passes here (3 tests).
+4. Practising alone: candidate questions are answered when no interviewer was heard for 10 minutes (regression check passes).
+Checks: 1019 of 1019 plus a new ONE MODE source check (no Pin on top, no mic switch, no mode names in visible text, menu rows as yours, tap follows the output). Release build succeeds.
