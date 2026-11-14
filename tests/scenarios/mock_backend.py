@@ -219,6 +219,7 @@ class H(BaseHTTPRequestHandler):
             except Exception:
                 text_ask = raw_ask.decode("utf-8", "replace")
             # what the screening answers did to the prompt (Windows MAC_CATCHUP item 56): India's notice period and offers stand where work authorization stands
+            if os.environ.get("MOCK_SECRET"): print(f"ASK-SECRET seen={os.environ['MOCK_SECRET'] in text_ask}", flush=True)
             print(f"ASK-PROMPT notice={'Notice period: 30 days' in text_ask} offers={'Other offers: Have an offer in hand' in text_ask} "
                   f"auth={'Work authorization' in text_ask}", flush=True)
             # Bought minutes pay for the answer while there are any (the real server charges minutes first).
@@ -279,6 +280,24 @@ class H(BaseHTTPRequestHandler):
             print(f"CLIENT-ERROR type={report.get('type')} source={report.get('source')} platform={self.headers.get('X-App-Platform')} "
                   f"message={str(report.get('message'))[:160]!r} keys={sorted(report.keys())}", flush=True)
             self.send_response(204)
+            self.end_headers()
+            return
+        elif url == "/api/v1/activity" and self.command == "POST":
+            # The activity diary (CHANNEL 2026-11-14): {"events":[...]}, at most 200, a Bearer token and the two labels, answered 204.
+            # One summary line and the raw body (ACTIVITY-RAW) so a test can check what was in it, and that no text was.
+            # MOCK_ACTIVITY_STATUS=404 plays a server that has no such endpoint yet.
+            raw = read_body(self) or b""
+            auth = self.headers.get("Authorization") or ""
+            try: events = json.loads(raw.decode() or "{}").get("events", [])
+            except Exception: events = []
+            forced = int(os.environ.get("MOCK_ACTIVITY_STATUS") or 0)
+            status = forced or (204 if auth == FRESH else 401)
+            print(f"ACTIVITY n={len(events)} events={','.join(str(e.get('event')) for e in events)} status={status} "
+                  f"auth={'fresh' if auth == FRESH else 'other'} platform={self.headers.get('X-App-Platform')} version={self.headers.get('X-App-Version')} "
+                  f"sessions={','.join(sorted({str(e.get('session_id')) for e in events}))} apps={','.join(sorted({str(e.get('app')) for e in events}))} "
+                  f"vs={','.join(sorted({str(e.get('v')) for e in events}))} keys={','.join(sorted({k for e in events for k in e}))} at={time.time():.3f}", flush=True)
+            print("ACTIVITY-RAW " + raw.decode("utf-8", "replace"), flush=True)
+            self.send_response(status)
             self.end_headers()
             return
         elif url == "/api/v1/presence" and self.command in ("POST", "DELETE"):
