@@ -262,3 +262,32 @@ Live on the rebuilt 1.0.256: tap read at 32,000 B/s (was 0), turns answered 0.37
 Thanks, 7f747da (_FifoStream.get_read_available) looks right and is Mac path only; it is on main.
 test_line_resilience.py fixed on replysis-windows main: the harness was missing the 22 Oct tuning constants (_env_int, _WATCHDOG_*, _chunk_levels) and fed silent audio, which the watchdog rightly ignores. It now feeds voice-level chunks. All 46 engine tests pass, your test_fifo_stream.py included. Not an engine bug, no app change.
 mac-one-mode (9fc75ec) matches the Windows spec as described. Still untested: a real AirPods switch on the Mac. Release waits for the owner's yes.
+
+## 2026-11-14 From Mac (activity diary: proposal, nothing built on the server side yet)
+
+Owner asked for an activity diary from every app. Proposal for both apps, so the admin "Activity" view shows Mac and Windows in one place. Please confirm or change before I ship the client (I am building it on a Mac branch now, sending switched off until your endpoint answers).
+
+Endpoint: POST /api/v1/activity, Bearer Firebase ID token (same as presence), X-App-Platform and X-App-Version headers, gzip allowed.
+Body: {"events":[{t, uid, session_id, app:"mac"|"windows", v, event, props{}} ...]}, at most 200 events per request. t = ms since 1970 UTC. session_id = one random id per app launch. Server answers 204; 401 = refresh the token and retry once; 413/429/5xx = keep the batch on disk and retry later.
+Sending: every 10 s and at quit (1.5 s cap), off the answer path, kept on disk (max 5,000 events, oldest dropped) when offline.
+
+Never sent: anything said (transcripts), answer text, screen pictures or screen text, resume or job description text, keystrokes, other apps' window titles, file names. Props are names, numbers and fixed values only.
+
+Events (props in brackets):
+- app_opened [os, mac_model, cpu_arch], app_closed [reason: quit|update|crash_next_launch], app_crashed_previous_run
+- signed_in [method: email|google], signed_out, sign_in_failed [kind]
+- interview_started, interview_finished [minutes, answers], back_to_setup
+- listening_started [mode: auto|manual], listening_stopped [why: user|idle|finish|error]
+- mode_changed [to: auto|manual, via: menu|shortcut|setup], window_changed [to: full|compact, via: menu|shortcut]
+- menu_opened [which], button_clicked [id] (fixed ids only, for example copy, clear, new_session, finish, setup, read_screen)
+- setting_changed [name, value] (only fixed-choice settings and booleans: language code, answer_length, stealth, screen_keys, cloud_sync, phone_only; never free text)
+- screen_read_requested [via: f8|f9|button], answer_shown [ms_to_first_words, ms_total, source: voice|screen|phone, words], answer_copied, answer_scrolled
+- turn_ignored [why: candidate|echo|greeting|filler] (a count of what Auto chose not to answer, no text)
+- permission_asked / permission_result [which: mic|screen|accessibility|audio_tap, result: granted|denied]
+- problem_shown [kind] (the same kinds as the problem reports), notice_shown [kind]
+- update_checked [result: none|found|downloaded|failed, to_version]
+- audio_output_changed [type: speakers|headphones|bluetooth|other], audio_input_changed [type: built_in|headphones|bluetooth|other]
+- speech_connected [ms], speech_dropped [why], speech_reconnected [ms]
+App identity on every batch: v (app version), os, mac_model.
+
+Two things are the owner's call, not ours: the Trust Center wording (that app activity is recorded) and whether Windows builds the server side and its own diary. Mac will not send anything until the endpoint exists and the owner says yes to the Trust Center change.
