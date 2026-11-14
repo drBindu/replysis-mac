@@ -453,10 +453,15 @@ struct AutoTurnDetector {
     /// the ordinary path has it.
     static let quietFallbackAfter: TimeInterval = 2.8
     static let quietFallbackNoWordsFor: TimeInterval = 2.0
-    static func quietFallbackDue(text: String, now: Date, textChangedAt: Date, lastWordsAt: Date, lastTurnSignalAt: Date) -> Bool {
+    /// Without the service's turn end there is no ">>> SOURCE" for these words either, so who said them is judged here:
+    /// with an interviewer heard in the last 10 minutes, the words count only if the computer made sound up to 2 s
+    /// before they stopped. Otherwise it is the candidate answering out loud, and their pause must not be answered.
+    static func quietFallbackDue(text: String, now: Date, textChangedAt: Date, lastWordsAt: Date, lastTurnSignalAt: Date,
+                                 interviewerPresent: Bool = false, secondsSinceComputerSound: TimeInterval = .greatestFiniteMagnitude) -> Bool {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, classifyTurnEnding(t) == .finished else { return false }
         guard lastTurnSignalAt < textChangedAt else { return false }
+        if interviewerPresent, secondsSinceComputerSound > now.timeIntervalSince(textChangedAt) + 2 { return false }
         return now.timeIntervalSince(textChangedAt) >= quietFallbackAfter
             && now.timeIntervalSince(lastWordsAt) >= quietFallbackNoWordsFor
     }

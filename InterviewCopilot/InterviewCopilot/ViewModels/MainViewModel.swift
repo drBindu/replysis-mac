@@ -3215,7 +3215,8 @@ class MainViewModel {
         if autoModeEnabled, isListening, !isProcessing, !isScreenAnalyzing, !autoTurnSubmitting, engine.isReady,
            text != quietFallbackFiredFor,
            AutoTurnDetector.quietFallbackDue(text: text, now: Date(), textChangedAt: transcriptChangedAt,
-                                             lastWordsAt: engine.lastWordsAt, lastTurnSignalAt: lastTurnSignalAt) {
+                                             lastWordsAt: engine.lastWordsAt, lastTurnSignalAt: lastTurnSignalAt,
+                                             interviewerPresent: interviewerPresent, secondsSinceComputerSound: secondsSinceComputerSound) {
             quietFallbackFiredFor = text
             dlog("AUTO: no end of turn from the speech service; the words have been still for 2.8 s — answering: '\(text.suffix(40))'", tag: "AUTO")
             lastEarlyAnswerAt = Date()
@@ -3297,6 +3298,11 @@ class MainViewModel {
     private var transcriptChangedAt = Date.distantPast
     private var lastTurnSignalAt = Date.distantPast
     private var quietFallbackFiredFor = ""
+    /// Seconds since the computer last made sound (the interviewer, when one is on a call).
+    private var secondsSinceComputerSound: TimeInterval {
+        if #available(macOS 14.2, *) { return SystemAudioTapper.shared.secondsSinceAudio }
+        return .greatestFiniteMagnitude
+    }
 
     private var continuationChainStartedAt = Date.distantPast
     private var continuationCount = 0

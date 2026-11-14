@@ -1327,5 +1327,20 @@ do {
 check(AutoTurnDetector.speechFinalWaitNanos(tailMergesThisInterview: 0) == 250_000_000, "early signal: a plainly finished question is answered 250 ms after the speaker stops (Windows SpeechFinalConfirmMs)")
 check(AutoTurnDetector.speechFinalWaitNanos(tailMergesThisInterview: 1) == 650_000_000, "early signal: 650 ms once a question arrived in two parts (Windows SpeechFinalConfirmAfterTailMs)")
 
+// ── Quiet fallback never answers the candidate's own pause while an interviewer is present ──
+do {
+    let t0 = Date(timeIntervalSince1970: 2_000_000)
+    let said = "I built the payments service at my last job."
+    check(!AutoTurnDetector.quietFallbackDue(text: said, now: t0.addingTimeInterval(3.0), textChangedAt: t0, lastWordsAt: t0, lastTurnSignalAt: .distantPast,
+                                             interviewerPresent: true, secondsSinceComputerSound: 40),
+          "quiet fallback: with an interviewer present and no computer sound near the words, the candidate's pause is not answered")
+    check(AutoTurnDetector.quietFallbackDue(text: "Tell me about a time you led a project.", now: t0.addingTimeInterval(3.0), textChangedAt: t0, lastWordsAt: t0, lastTurnSignalAt: .distantPast,
+                                            interviewerPresent: true, secondsSinceComputerSound: 3.5),
+          "quiet fallback: computer sound up to the end of the words is the interviewer, answered")
+    check(AutoTurnDetector.quietFallbackDue(text: "What is a closure?", now: t0.addingTimeInterval(3.0), textChangedAt: t0, lastWordsAt: t0, lastTurnSignalAt: .distantPast,
+                                            interviewerPresent: false, secondsSinceComputerSound: 600),
+          "quiet fallback: practising alone (no interviewer), the candidate's question is answered")
+}
+
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)
