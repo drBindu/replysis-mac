@@ -27,11 +27,11 @@ echo "$B" | grep -q "^BUTTON Read screen\|^BUTTON .*Screen" && ok "Screen is in 
 echo "$B" | grep -q "^BUTTON AUTO\|^BUTTON MANUAL\|^BUTTON Compact\|^BUTTON Pin" && no "the old Auto, Manual, Compact or Pin buttons are still in the bar" || ok "the old Auto, Manual, Compact and Pin buttons are gone from the bar"
 /tmp/axpress $PID "Mode menu" | grep -q "press: ok" && ok "the pill opens" || no "the pill did not open"
 sleep 1; M=$(buttons)
-for row in "Auto" "Manual" "Compact" "Pin on top"; do
+for row in "Auto" "Manual" "Full window" "Compact"; do
   echo "$M" | grep -q "^BUTTON $row" && ok "the menu has $row" || no "the menu has no $row"
 done
-for row in "Interview" "Practice"; do
-  echo "$M" | grep -q "^BUTTON $row " && no "the menu still has $row" || ok "the menu has no $row (one listening mode)"
+for row in "Interview" "Practice" "Pin on top"; do
+  echo "$M" | grep -q "^BUTTON $row " && no "the menu still has $row" || ok "the menu has no $row (as Windows, CHANNEL 2026-11-13)"
 done
 /tmp/axpress $PID "Auto" | grep -q "press: ok" && ok "choosing Auto works" || no "could not choose Auto"
 sleep 2
