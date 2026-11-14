@@ -31,8 +31,9 @@ nonisolated enum ActivityLog {
     /// The internal order number each queued event carries on disk. Never sent.
     static let seqKey = "_n"
 
-    /// OFF: real users send nothing until the owner approves the Trust Center wording. The diary is still kept on disk.
-    nonisolated(unsafe) static var sendingEnabled = false
+    /// ON (owner approved 2026-11-14, Trust Center updated; endpoint live, Windows f000fbe). Only to see and fix the problems
+    /// users meet: never what anyone says, answers, screens, resumes, passwords or keystrokes (see forbiddenNameParts).
+    nonisolated(unsafe) static var sendingEnabled = true
 
     // ── What may be in props ─────────────────────────────────────────────────────────────────
     /// A prop name containing any of these is dropped, whatever its value.

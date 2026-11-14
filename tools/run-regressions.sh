@@ -105,6 +105,6 @@ CALLS=$(grep -rn 'ActivityLog\.record(' "$APPSRC" --include='*.swift' | grep -v 
 [ "$(echo "$CALLS" | grep -c .)" -ge 25 ] || { echo "DIARY CHECK FAILED: fewer than 25 diary call sites ($(echo "$CALLS" | grep -c .))"; exit 1; }
 BADCALLS=$(echo "$CALLS" | sed -E 's/"([^"\\]|\\.)*"//g' | grep -E '\b(transcript|transcriptForDisplay|aiAnswer|aiAnswerHint|answer|resumeText|resumeFacts|jobContext|jobDescription|liveHints|question|lastQuestionShown|q|accumulated|final|screenWords|screenText|email|name|title|body|message|err|error|text|label|header|cleanEmail|password|fullName)\b' || true)
 if [ -n "$BADCALLS" ]; then echo "DIARY CHECK FAILED: a diary event may carry text:"; echo "$BADCALLS" | cut -c1-220; exit 1; fi
-grep -q 'nonisolated(unsafe) static var sendingEnabled = false' "$SRC/ActivityLog.swift" || { echo "DIARY CHECK FAILED: sending is not off by default"; exit 1; }
+grep -q 'nonisolated(unsafe) static var sendingEnabled = true' "$SRC/ActivityLog.swift" || { echo "DIARY CHECK FAILED: sending is not on"; exit 1; }
 grep -q 'posixPermissions: 0o600' "$SRC/ActivityLogSend.swift" || { echo "DIARY CHECK FAILED: the diary file is not 0600"; exit 1; }
-echo "DIARY CHECK: $(echo "$CALLS" | grep -c .) call sites, none carries text; sending off by default; the queue file is 0600"
+echo "DIARY CHECK: $(echo "$CALLS" | grep -c .) call sites, none carries text; sending on (owner approved); the queue file is 0600"

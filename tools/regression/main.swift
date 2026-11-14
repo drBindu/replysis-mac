@@ -1351,7 +1351,7 @@ check(LanguageRules.canApplyPendingChange(listening: false, processing: false, u
 
 // ── Activity diary (CHANNEL 2026-11-14): fixed values only, 200 a batch, 5,000 kept, sending off ──
 do {
-    check(ActivityLog.sendingEnabled == false, "diary: sending is off by default (Trust Center wording not approved yet)")
+    check(ActivityLog.sendingEnabled == true, "diary: sending is on (owner approved, endpoint live)")
     let clean = ActivityLog.cleanProps(["mode": "auto", "ms": 420, "ok": true, "ratio": 0.5, "transcript": "x", "question_text": "y",
                                         "free": "What is a mutex?", "long": String(repeating: "a", count: 41), "email": "a@b.c",
                                         "resume": "r", "Bad Name": "z", "list": [1, 2], "model": "Mac14,2", "v": "1.0.255"])
