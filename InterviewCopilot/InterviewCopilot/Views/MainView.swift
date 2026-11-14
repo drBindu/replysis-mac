@@ -1987,7 +1987,7 @@ extension MainView {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Listening controls")
                     .font(.system(size: 17, weight: .bold)).foregroundColor(setupTitle)
-                Text("Choose how answers trigger and which audio Replysis should hear. You can change both later.")
+                Text("Choose how answers come. Replysis always hears the meeting and your microphone. You can change this later.")
                     .font(.system(size: 11)).foregroundColor(setupMuted)
             }
 
