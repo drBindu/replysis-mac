@@ -20,6 +20,9 @@ class GlobalHotkey {
     /// so once it was covered or hidden there was no way back to it (Windows: Ctrl+Alt+R).
     var onBringToFront: (() -> Void)?
     var onModeShortcut: ((ModeShortcut) -> Void)?
+    /// ⌃⌥H from any app: phone only. Hides every Replysis window on this Mac while listening and answering carry on, or shows it
+    /// again (Windows Ctrl+Alt+H, 2026-10-24).
+    var onTogglePhoneOnly: (() -> Void)?
 
     // The app mirrors two pieces of state here so the CGEvent tap thread can decide
     // whether to CONSUME a key WITHOUT touching @MainActor state (which would be a data
@@ -57,14 +60,19 @@ class GlobalHotkey {
         keyCode == 15 && isControlOption(flags)
     }
 
-    /// The top bar's three shortcuts (Windows MAC_CATCHUP, 2026-10-19: Ctrl+Shift+P, A and C): Interview or Practice, Auto or Manual, Compact.
+    /// ⌃⌥H. Never swallowed.
+    static func isPhoneOnlyToggle(keyCode: Int64, flags: CGEventFlags) -> Bool {
+        keyCode == 4 && isControlOption(flags)
+    }
+
+    /// The top bar's shortcuts (Windows MAC_CATCHUP, 2026-10-19: Ctrl+Shift+A and C): Auto or Manual, Compact. Ctrl+Shift+P (Interview or
+    /// Practice) went with the modes themselves (one listening mode, Windows 1.0.45).
     /// Exactly Control and Shift. Never swallowed, and only acted on during an interview (see MainViewModel.handleModeShortcut).
-    enum ModeShortcut { case audioSource, answerMode, compact }
+    enum ModeShortcut { case answerMode, compact }
 
     static func modeShortcut(keyCode: Int64, flags: CGEventFlags) -> ModeShortcut? {
         guard flags.intersection(chordModifiers) == [.maskControl, .maskShift] else { return nil }
         switch keyCode {
-        case 35: return .audioSource     // P
         case 0:  return .answerMode      // A
         case 8:  return .compact         // C
         default: return nil
@@ -308,6 +316,9 @@ class GlobalHotkey {
             }
             if Self.isBringToFront(keyCode: keyCode, flags: flags) {
                 DispatchQueue.main.async { [weak self] in self?.onBringToFront?() }
+            }
+            if Self.isPhoneOnlyToggle(keyCode: keyCode, flags: flags) {
+                DispatchQueue.main.async { [weak self] in self?.onTogglePhoneOnly?() }
             }
             return false
         }

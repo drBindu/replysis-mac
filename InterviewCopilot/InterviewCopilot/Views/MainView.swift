@@ -236,12 +236,35 @@ struct MainView: View {
               : "Read the screen now (F8). Automatic screen answers are off. Turn them on in Settings.")
     }
 
-    /// The mic notice and the Interview / Practice tips, on their own line under the header.
+    /// The mic notice and other notices, on their own line under the header.
     @ViewBuilder
     var transientMessageRow: some View {
-        if !vm.alertTitle.isEmpty || !vm.listeningNotice.isEmpty {
+        if !vm.alertTitle.isEmpty || !vm.listeningNotice.isEmpty || !vm.updateNoticeText.isEmpty {
             // One above the other: side by side, a full-width message left the notice no room.
             VStack(alignment: .leading, spacing: 6) {
+                if !vm.updateNoticeText.isEmpty {
+                    HStack(spacing: 8) {
+                        Image(systemName: vm.updateReady ? "arrow.down.circle.fill" : "arrow.down.circle")
+                            .font(.system(size: 11)).foregroundColor(Color(hex: "#60a5fa"))
+                        Text(vm.updateNoticeText + (vm.updateReady ? ". It installs when you close the app." : ". It downloads in the background."))
+                            .font(.system(size: 11)).foregroundColor(Color(hex: "#c3ccd8"))
+                            .lineLimit(1).truncationMode(.tail)
+                        if vm.updateReady {
+                            Button(action: { vm.restartToUpdate() }) {
+                                Text("Restart to update").font(.system(size: 10.5, weight: .semibold)).lineLimit(1).fixedSize()
+                            }
+                            .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity,
+                                                          minHeight: 24, horizontalPadding: 10, verticalPadding: 2))
+                            .accessibilityLabel("Restart to update")
+                        }
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 5)
+                    .frame(maxWidth: 1000, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 9).fill(Color(hex: "#161b22").opacity(0.96)))
+                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.12), lineWidth: 1))
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Update notice")
+                }
                 if !vm.alertTitle.isEmpty {
                     audioSourceAlert
                 }
@@ -422,7 +445,7 @@ struct MainView: View {
             .padding(.horizontal, 2)
     }
 
-    /// An in-app alert that can carry one action, for the Interview / Practice tips.
+    /// An in-app alert that can carry one action.
     /// One click does the thing it suggests, so nobody has to find a setting mid-call.
     var audioSourceAlert: some View {
         HStack(alignment: alertExpanded ? .top : .center, spacing: 10) {
@@ -601,13 +624,17 @@ struct MainView: View {
                         subtitle: "Review previous interviews") {
                     showProfileMenu = false; vm.sessionsOpen = true
                 }
+                menuRow(icon: "gift.fill", title: "Invite a friend",
+                        subtitle: "You both get 5 free answers") {
+                    showProfileMenu = false; vm.inviteFriend()
+                }
                 if !vm.session.isPaidPlan {
                     // Only offered to accounts actually below the paid tiers. Gating this on
                     // isUnlimited offered "Upgrade to Pro" to a Max subscriber, because Max
                     // is paid but still metered — an upsell to a LOWER tier than the one
                     // they are on.
-                    menuRow(icon: "bolt.fill", title: "Upgrade to Pro",
-                            subtitle: PlanFacts.allowanceText(plan: "pro", signedIn: true), accent: Color(hex: "#a78bfa")) {
+                    menuRow(icon: "bolt.fill", title: "Upgrade now",
+                            subtitle: "A whole month of answers, cancel any time", accent: Color(hex: "#a78bfa")) {
                         showProfileMenu = false
                         NSWorkspace.shared.open(URL(string: "https://replysis.com/pricing")!)
                     }
@@ -615,7 +642,7 @@ struct MainView: View {
                     // Paid but metered: the useful action is more answers, not a new plan.
                     menuRow(icon: "creditcard.fill", title: "Get more answers",
                             subtitle: vm.session.creditsKnown
-                                ? "\(vm.session.plan.capitalized) plan, \(PlanFacts.answersLabel(vm.session.credits)) left"
+                                ? "\(vm.planName), \(PlanFacts.answersLabel(vm.session.credits)) left"
                                 : "Checking how many answers are left",
                             accent: Color(hex: "#34E08A")) {
                         showProfileMenu = false
@@ -647,10 +674,10 @@ struct MainView: View {
                 HStack(spacing: 11) {
                     Text("👑").font(.system(size: 20))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Pro Plan")
+                        Text(vm.planName)
                             .font(.system(size: 13, weight: .bold))
                             .foregroundColor(Color(hex: "#c4b5fd"))
-                        Text("Unlimited AI answers")
+                        Text(PlanFacts.allowanceText(plan: vm.session.plan, signedIn: true))
                             .font(.system(size: 10))
                             .foregroundColor(Color(hex: "#7c6ba8"))
                     }
@@ -671,9 +698,12 @@ struct MainView: View {
                         Text(vm.session.creditsKnown ? PlanFacts.answersLabel(vm.session.credits) : "Checking answers")
                             .font(.system(size: 14, weight: .bold))
                             .foregroundColor(creditsAccent)
-                        Text(vm.onFreeTrial
+                        // Paid plans: the plan's words, never a number (MAC_HANDOFF_2026-10-27). The trial is "Free trial".
+                        Text(vm.session.isTrial && !vm.session.isGuestSession
+                             ? PlanFacts.allowanceText(plan: vm.session.plan, signedIn: true, trial: true)
+                             : vm.onFreeTrial
                              ? "Free trial, \(PlanFacts.allowanceText(plan: vm.session.plan, signedIn: false)). Not refreshed"
-                             : "\(vm.session.plan.capitalized) plan, \(PlanFacts.allowanceText(plan: vm.session.plan, signedIn: true))")
+                             : "\(vm.planName), \(PlanFacts.allowanceText(plan: vm.session.plan, signedIn: true))")
                             .font(.system(size: 10))
                             .foregroundColor(Color(hex: "#64748b"))
                     }
@@ -685,9 +715,9 @@ struct MainView: View {
                         // standalone credits popover — close whichever one is actually open.
                         showProfileMenu = false
                         showCreditsPopover = false
-                        NSWorkspace.shared.open(PlanFacts.addAnswersURL)
+                        NSWorkspace.shared.open(vm.onFreeTrial ? PlanFacts.pricingURL : PlanFacts.addAnswersURL)
                     }) {
-                        Text("Get more")
+                        Text(vm.onFreeTrial ? "Upgrade" : "Get more")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 12).padding(.vertical, 6)
@@ -1974,23 +2004,6 @@ extension MainView {
                 }
             }
 
-            setupChoiceGroup("WHAT IT HEARS") {
-                setupChoiceCard(icon: "video.fill", title: "Interview",
-                                selected: !vm.practiceAudioOn,
-                                tag: ("Recommended for real interviews", Color(hex: "#5FC98E")),
-                                action: { vm.selectAudioSource(practice: false) }) {
-                    Text("Hears ") + Text("system audio only").fontWeight(.semibold).foregroundColor(Color(hex: "#DDE4EE"))
-                        + Text(" from the meeting. Your microphone stays off, preventing your answer from becoming a new question.")
-                }
-                setupChoiceCard(icon: "mic.fill", title: "Practice",
-                                selected: vm.practiceAudioOn,
-                                tag: ("Practice environment only", Color(hex: "#D99B7C")),
-                                action: { vm.selectAudioSource(practice: true) }) {
-                    Text("Hears ") + Text("system audio and microphone").fontWeight(.semibold).foregroundColor(Color(hex: "#DDE4EE"))
-                        + Text(" together, ideal for rehearsing aloud or practising with someone nearby.")
-                }
-            }
-
             setupChoiceGroup("ANSWER LENGTH") {
                 setupChoiceCard(icon: "text.alignleft", title: "Short",
                                 selected: !vm.answerDetailed,
@@ -2008,21 +2021,37 @@ extension MainView {
         }
     }
 
+    /// "Screen share" row (Windows, 2026-10-23): the self-test's answer, quietly, instead of a warning popup.
     var captureProtectionCard: some View {
-        let state = CaptureProtection.current()
+        let state = vm.screenShareState
+        let color: Color = {
+            switch state {
+            case .hidden: return Color(hex: "#5FC98E")
+            case .visible, .off: return Color(hex: "#E0A458")
+            case .checking, .notChecked: return Color(hex: "#93A1B5")
+            }
+        }()
         return HStack(alignment: .top, spacing: 11) {
             setupChip("lock.shield")
             VStack(alignment: .leading, spacing: 3) {
-                Text("Check capture protection before the call")
-                    .font(.system(size: 12.5, weight: .semibold)).foregroundColor(Color(hex: "#E9EFF7"))
-                Text("Hides the app from screen sharing. Support varies, so check it in your meeting app first.")
+                HStack(spacing: 8) {
+                    Text("Screen share")
+                        .font(.system(size: 12.5, weight: .semibold)).foregroundColor(Color(hex: "#E9EFF7"))
+                    HStack(spacing: 5) {
+                        Circle().fill(color).frame(width: 7, height: 7)
+                        Text(state.label).font(.system(size: 11.5, weight: .semibold)).foregroundColor(color)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Screen share: \(state.label)")
+                }
+                Text(state.detail)
                     .font(.system(size: 11)).foregroundColor(setupBody).fixedSize(horizontal: false, vertical: true)
-                Text(CaptureProtection.summary(state))
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundColor(state == .hidden ? Color(hex: "#5FC98E") : Color(hex: "#D99B7C"))
-                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
+            if state == .visible || state == .notChecked {
+                Button("Test again") { vm.runStealthSelfTest() }
+                    .buttonStyle(GlassButtonStyle(windowOpacity: vm.mainWindowOpacity, minHeight: 24, horizontalPadding: 10, verticalPadding: 2))
+            }
         }
         .padding(13)
         .background(RoundedRectangle(cornerRadius: 11).fill(Color.white.opacity(0.04)))

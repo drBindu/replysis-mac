@@ -2,7 +2,7 @@
 # Pin on top is an interview control (owner, 2026-10-09; Windows: Topmost = interview started && pinned). On the Setup page the main window is an
 # ordinary one (window layer 0); while an interview runs and the pin is on it floats above other apps (layer 3); with the pin off it stays
 # ordinary; when the interview ends it is ordinary again. Starts the REAL app (a Debug build, invisible) and reads the window's layer from the
-# window server. The pin button itself is only drawn during an interview (checked through accessibility).
+# window server. There is no Pin on top choice any more (CHANNEL 2026-11-13), checked through accessibility.
 #   pin_on_interview.sh <path-to-Debug-InterviewCopilot.app>
 APP="$1"; BIN="$APP/Contents/MacOS/InterviewCopilot"
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -25,20 +25,20 @@ sleep 10
 [ "$(pins)" = "0" ] && ok "on Setup there is no pin (the top bar and its menu are for the interview)" || no "the pin button shows on Setup"
 cmd start; sleep 4
 [ "$(layer)" = "3" ] && ok "during an interview, pinned: the window floats (layer 3)" || no "during an interview the window does not float (layer $(layer))"
-[ "$(pins)" -ge 1 ] && ok "during an interview Pin on top is in the mode menu" || no "no pin button during an interview"
+[ "$(pins)" = "0" ] && ok "no Pin on top in the menu during an interview either (as Windows, CHANNEL 2026-11-13)" || no "Pin on top is still in the menu"
 cmd back; sleep 3
 [ "$(layer)" = "0" ] && ok "back on Setup the window is ordinary again" || no "back on Setup the window still floats (layer $(layer))"
 cmd start; sleep 3
 cmd finish; sleep 5
 [ "$(layer)" = "0" ] && ok "after finishing an interview the window is ordinary again" || no "after finishing the window still floats (layer $(layer))"
 kill $PID $MOCK 2>/dev/null
-# with the pin off, an interview does not float it either
+# a copy that had saved the pin off still floats during an interview: there is no pin any more
 echo '{"listeningMode":"manual","keepOnTop":false}' > "$DATA/settings.json"; rm -f "$DATA/flow.cmd"
 python3 "$HERE/mock_backend.py" healthy-credits $PORT >/dev/null 2>&1 & MOCK=$!; sleep 1
 env REPLYSIS_BACKEND_URL=http://127.0.0.1:$PORT REPLYSIS_TOKEN_URL=http://127.0.0.1:$PORT/token REPLYSIS_TEST_SESSION=stale \
   REPLYSIS_DATA_DIR="$DATA" REPLYSIS_HEADLESS=1 REPLYSIS_FLOW_SCRIPT=watch "$BIN" >/dev/null 2>&1 & PID=$!
 sleep 10; cmd start; sleep 4
-[ "$(layer)" = "0" ] && ok "with the pin off, an interview leaves the window ordinary" || no "with the pin off the window still floats (layer $(layer))"
+[ "$(layer)" = "3" ] && ok "an old saved pin off is ignored: the interview window floats" || no "an old saved pin off still leaves the window ordinary (layer $(layer))"
 kill $PID $MOCK 2>/dev/null
 [ $fail -eq 0 ] && echo "PIN ON INTERVIEW: all checks passed" || echo "PIN ON INTERVIEW: FAILED"
 exit $fail

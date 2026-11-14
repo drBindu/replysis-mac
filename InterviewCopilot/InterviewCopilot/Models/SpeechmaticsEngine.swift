@@ -25,6 +25,11 @@ class SpeechmaticsEngine {
     /// second before UTTERANCE END). Only a newer engine prints it; with an older one this never
     /// fires and everything works from UTTERANCE END as before.
     var onSpeechFinal: (() -> Void)?
+    /// The engine could not get the voice out for a few seconds ("audio upload stalled"): whatever else uses the line
+    /// (screenshots sent ahead) must give way (Windows, 2026-10-22).
+    var onUploadStalled: (() -> Void)?
+    /// ">>> SOURCE interviewer|candidate|unknown": who is speaking, while they speak and at each turn's end (Windows 1.0.45).
+    var onTurnSource: ((String) -> Void)?
     /// When the recogniser last said a sentence was over, in any mode. Manual reads it to know the
     /// tail of a question has arrived.
     private(set) var lastUtteranceEndAt = Date.distantPast
@@ -49,6 +54,10 @@ class SpeechmaticsEngine {
     private(set) var engineBuildId = "unknown"
 
     private(set) var lastAudioActivityAt = Date.distantPast
+    /// When the engine last printed that the speech provider refused it or failed (HTTP 402, 403, 429, 5xx).
+    private(set) var lastProviderFaultAt = Date.distantPast
+    /// The provider refused or failed within the last 45 s: the window says the service is unavailable, not a network problem.
+    var providerAtFault: Bool { Date().timeIntervalSince(lastProviderFaultAt) < ListeningProblems.providerFaultWindow }
     private(set) var lastWordsAt = Date.distantPast
 
     /// Audio in the last 3s, and no words for 12s.
@@ -113,6 +122,10 @@ class SpeechmaticsEngine {
     private var retryTimer: Timer?
     private var engineCancelled = false
     private var authErrorHandled = false
+    /// What the server sends as the Speechmatics key while Speechmatics is down and Deepgram works.
+    static let backupUnavailableKey = "speech-backup-unavailable"
+    /// Quiet returns to Deepgram after the switched-off backup refused; reset once the engine is online.
+    private var backupOffRestarts = 0
     /// How many times in a row the credentials were rejected without a session getting online,
     /// and when the fast retries last minted a token (see RecoveryPolicy.credentialRenewalWait).
     private var credentialRecoveryAttempt = 0
@@ -139,6 +152,10 @@ class SpeechmaticsEngine {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let dir = DeveloperOverrides.dataFolder.map { URL(fileURLWithPath: $0) } ?? support.appendingPathComponent("InterviewCopilot")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // The system sound FIFO (sysaudio.pcm, made 0600), the transcript the engine writes (latest.txt) and the flags all
+        // live here. The folder is the current user's only, so nothing passing audio or words to the engine can be read by
+        // another account even if a file in it is created with the default mode (Windows bug round 18). Nothing is deleted.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
         return dir
     }()
 
@@ -343,26 +360,22 @@ class SpeechmaticsEngine {
         //
         // Mic permission is requested lazily on the first Space press. Until it's granted
         // the engine runs system-only; once granted it restarts in BOTH mode.
-        // Read the Settings toggle (System audio only vs. + my voice) directly from disk so
-        // every start() call site picks it up without threading state through MainViewModel.
-        // Default OFF (system-audio-only) — a fresh install stays fully invisible until the
-        // user explicitly opts in to their own voice being transcribed too.
+        // One listening mode (Windows 1.0.45, CHANNEL 2026-11-13): the computer's sound and the microphone are ALWAYS
+        // opened together. There is no "System audio only" setting any more; who spoke is decided per turn by the
+        // engine (">>> SOURCE"), and the engine turns the microphone down while the call is talking (duck_mic_for_call).
         let settingsPath = appDataFolder.appendingPathComponent("settings.json")
         let savedSettings: [String: Any] = {
             guard let data = try? Data(contentsOf: settingsPath),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
             return obj
         }()
-        // Interview is the default for a new install, here as well as in the view model:
-        // this file is read by the engine launch, and disagreeing defaults would open the
-        // microphone on a machine whose UI says Interview.
-        let micCaptureEnabled = savedSettings["micCaptureEnabled"] as? Bool ?? false
         // The engine hears ONLY this language, so it has to match the interview. Speech in
         // another language comes back as garbled words in this one.
-        let language = (savedSettings["transcriptLanguage"] as? String ?? "en")
-            .trimmingCharacters(in: .whitespaces)
-        // The saved preference AND the active mode must both permit the mic.
-        let micAllowed = micCaptureEnabled && micCaptureAllowed
+        // A Sarvam language with no key is started in English: without the key the engine exits at once (round 53).
+        let language = LanguageRules.engineLanguage(saved: savedSettings["transcriptLanguage"] as? String,
+                                                    sarvamKey: savedSettings["sarvamApiKey"] as? String)
+        // No microphone permission yet, or no microphone at all: listening runs on the computer's sound alone.
+        let micAllowed = micCaptureAllowed
         let micGranted = micAllowed && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         capturesMicrophone = micGranted
         if !language.isEmpty, language != "en" {
@@ -370,6 +383,15 @@ class SpeechmaticsEngine {
             dlog("  Interview language: \(language)", tag: "SM")
         }
         inputRoute.reset(to: micGranted ? AudioInputRoute.current() : nil)
+        if micGranted {
+            let defaultName = AudioInputRoute.current().flatMap { MicChoice.deviceName($0.deviceID) }
+            if let real = MicChoice.replacementForDefault(defaultName: defaultName, inputs: MicChoice.inputDeviceNames()) {
+                args += ["--device-name", real]
+                dlog("  MIC: the default input '\(defaultName ?? "")' carries the computer's sound, not a voice; using '\(real)'", tag: "SM")
+            } else if let defaultName, MicChoice.isNotAMic(defaultName) {
+                dlog("  MIC: the default input '\(defaultName)' is not a microphone and no real one was found", tag: "SM")
+            }
+        }
         var startedSysTap = false
         if !sysAudioCrashed, #available(macOS 14.2, *) {
             let fifo = appDataFolder.appendingPathComponent("sysaudio.pcm").path
@@ -600,11 +622,17 @@ class SpeechmaticsEngine {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 Task { @MainActor in dlog("SM \(source): \(trimmed)", tag: "SM") }
+                for part in trimmed.split(separator: "\n") { ClientErrorReporter.noteEngineLine(String(part).trimmingCharacters(in: .whitespaces)) }
             }
             if ListeningProblems.isConnectionTrouble(line) {
                 Task { @MainActor [weak self] in self?.noteConnectionTrouble() }
             }
-            if Self.isConcurrencyLimit(line) {
+            if ListeningProblems.isProviderFaultLine(line) {
+                Task { @MainActor [weak self] in self?.lastProviderFaultAt = Date() }
+            }
+            if Self.isNoSpeechKeyExit(line) {
+                Task { @MainActor [weak self] in self?.handleNoSpeechKeyExit() }
+            } else if Self.isConcurrencyLimit(line) {
                 Task { @MainActor [weak self] in self?.handleConcurrencyLimit() }
             } else if Self.isAuthFailure(line) {
                 let exhausted = Self.isBalanceExhausted(line)
@@ -661,12 +689,20 @@ class SpeechmaticsEngine {
                     self?.offlineSince = nil      // live again; the offline clock stops
                     self?.offlineRestarts = 0
                     self?.credentialRecoveryAttempt = 0
+                    self?.backupOffRestarts = 0
                 }
             }
             // A dropped session is NOT the same event as a crashed process, and handling
             // only one leaves the app believing transcription still works. This is the
             // drop; watchForExit() below is the crash.
             // CONTRACT:RUNTIME — see ENGINE_CONTRACT.md and verify_engine_contract.py
+            for part in line.split(separator: "\n") where part.hasPrefix(">>> SOURCE ") {
+                let who = part.dropFirst(">>> SOURCE ".count).trimmingCharacters(in: .whitespaces)
+                Task { @MainActor [weak self] in self?.onTurnSource?(who) }
+            }
+            if line.contains("audio upload stalled") {
+                Task { @MainActor [weak self] in self?.onUploadStalled?() }
+            }
             if line.contains(">>> SPEECH FINAL") {
                 Task { @MainActor [weak self] in self?.onSpeechFinal?() }
             }
@@ -718,15 +754,18 @@ class SpeechmaticsEngine {
     private var connectionTroubleTimes: [Date] = []
     private func noteConnectionTrouble() {
         let now = Date()
-        connectionTroubleTimes = connectionTroubleTimes.filter { now.timeIntervalSince($0) < 90 } + [now]
+        connectionTroubleTimes = connectionTroubleTimes.filter { now.timeIntervalSince($0) < Self.troubleWindow } + [now]
     }
-    /// Two or more of those in the last 90 seconds: not a hiccup, a weak connection.
+    /// Three or more of those in four minutes: not a hiccup, a weak connection. Two in 90 s told people with a working line
+    /// that their connection keeps dropping (Windows false-alarm hunt, 2026-10-22).
+    static let troubleWindow: TimeInterval = 240
+    static let troubleCount = 3
     var connectionIsPoor: Bool {
         let now = Date()
-        return connectionTroubleTimes.filter { now.timeIntervalSince($0) < 90 }.count >= 2
+        return connectionTroubleTimes.filter { now.timeIntervalSince($0) < Self.troubleWindow }.count >= Self.troubleCount
     }
     #if DEBUG
-    func debugSimulateConnectionTrouble() { noteConnectionTrouble(); noteConnectionTrouble() }
+    func debugSimulateConnectionTrouble() { for _ in 0..<Self.troubleCount { noteConnectionTrouble() } }
     #endif
 
     /// Speechmatics refusing because the ACCOUNT already has its allowed number of live
@@ -800,9 +839,57 @@ class SpeechmaticsEngine {
         startRetryTimer(interval: 60)
     }
 
+    /// The server had no speech key for us this time (it sent the placeholder, or the engine
+    /// exited saying so). That is the server's state, never the customer's: fetch a new key and
+    /// start again in 3, 10, 30 s, then every minute, with no KEY ERROR. From the second try the
+    /// cached tokens are renewed in case they are what was refused.
+    private func restartWithFreshSpeechKey(reason: String) {
+        backupOffRestarts += 1
+        let waits: [TimeInterval] = [3, 10, 30]
+        let wait = backupOffRestarts <= waits.count ? waits[backupOffRestarts - 1] : 60
+        let renew = backupOffRestarts >= 2
+        dlog("SM: \(reason) in \(Int(wait))s", tag: "SM")
+        engineCancelled = true
+        monitorTimer?.invalidate(); monitorTimer = nil
+        killAndDispose()
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+            guard let self, !self.isRunning, !self.stoppedByUser else { return }
+            if await UserSession.shared.fetchSpeechmaticsKeyAsync(forceRefresh: renew), !self.isRunning, !self.stoppedByUser {
+                self.start(smKey: UserSession.shared.speechmaticsKey)
+            }
+        }
+    }
+
+    /// The shared engine (Windows, MAC_CATCHUP 2026-11-07) prints this and exits with code 2,
+    /// no FATAL, when the key it was given is the server's placeholder.
+    nonisolated static func isNoSpeechKeyExit(_ line: String) -> Bool {
+        line.contains("No speech key from the server right now")
+    }
+
+    private func handleNoSpeechKeyExit() {
+        guard !authErrorHandled else { return }
+        authErrorHandled = true
+        // The exit can be seen by checkEngine first, which takes a dead engine for a refused
+        // system audio grant. This exit is about the key, so keep system audio on.
+        sysAudioCrashed = false
+        restartWithFreshSpeechKey(reason: "the server had no speech key; fetching a new one")
+    }
+
     private func handleAuthError(balanceExhausted: Bool = false) {
         guard !authErrorHandled else { return }   // report once per engine start
         authErrorHandled = true
+        // THE BACKUP IS SWITCHED OFF, NOT BROKEN. When Speechmatics is down the server still
+        // answers /stt/key, with a Deepgram token and this placeholder in place of the
+        // Speechmatics key (Windows, CHANNEL.md 2026-11-04). The engine only reaches the
+        // backup after Deepgram dropped twice, so the refusal here says nothing about the
+        // account: go back to Deepgram within seconds, quietly, instead of "KEY ERROR" and a
+        // ten minute wait.
+        if UserSession.shared.speechmaticsKey == Self.backupUnavailableKey,
+           !UserSession.shared.deepgramToken.isEmpty {
+            restartWithFreshSpeechKey(reason: "the backup service is off (placeholder key); back to Deepgram")
+            return
+        }
         self.balanceExhausted = balanceExhausted
         dlog("SM KEY ERROR — Speechmatics rejected the speech key. Pausing fast retries; will re-fetch every 60s.", tag: "SM")
         // The token on disk is the one that was just refused. Leaving it there means every

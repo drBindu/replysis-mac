@@ -31,7 +31,7 @@ class GoogleSignIn {
     static func signIn() async -> Result {
         guard !isSigningIn else {
             dlog("Google Sign In: already in progress — ignoring duplicate call", tag: "GOOGLE")
-            return .failure("Sign-in already in progress.")
+            return .failure(SignInMessages.googleBusy)
         }
         isSigningIn = true
         defer { isSigningIn = false }
@@ -67,10 +67,14 @@ class GoogleSignIn {
         NSWorkspace.shared.open(authURL)
 
         guard let cb = await waitForCallback(serverFd: serverFd, expectedState: state) else {
-            return .failure("Sign-in timed out (2 min). Please try again.")
+            return .failure("Google sign-in was not finished in the browser. Please try again.")
         }
         guard cb.stateValid else { return .failure("Security check failed. Please try again.") }
-        guard let code = cb.code  else { return .failure(cb.error ?? "Google sign-in was cancelled.") }
+        // The browser's own error code ("access_denied") is logged, never shown.
+        guard let code = cb.code  else {
+            if let raw = cb.error { dlog("Google: the browser answered \(raw.prefix(60))", tag: "GOOGLE") }
+            return .failure(SignInMessages.googleCancelled)
+        }
 
         dlog("Google: got code, exchanging for tokens…", tag: "GOOGLE")
 
@@ -115,7 +119,7 @@ class GoogleSignIn {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 continuation.resume(returning: OAuthLoopback.waitForCallback(
-                    serverFd: serverFd, expectedState: expectedState, timeout: 120,
+                    serverFd: serverFd, expectedState: expectedState, timeout: 300,   // 5 min, as Windows (2026-10-22): 2 min cut people off mid sign-in
                     successHTML: successHTML, failHTML: failHTML))
             }
         }

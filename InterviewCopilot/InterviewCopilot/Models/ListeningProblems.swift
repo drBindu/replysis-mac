@@ -23,7 +23,8 @@ enum ListeningProblems {
         case anotherDevice, poorConnection
     }
 
-    enum NextStep { case none, seePlans, moreAnswers }
+    /// upgrade: "Upgrade now" to the plans page, when the free answers or the free trial run out (MAC_HANDOFF_2026-10-27).
+    enum NextStep { case none, seePlans, moreAnswers, upgrade }
 
     struct Description {
         let label: String
@@ -38,7 +39,7 @@ enum ListeningProblems {
         switch kind {
         case .noAnswers where freeTrial:
             let m = PlanFacts.outOfAnswers(freeTrial: true)
-            return Description(label: "NO ANSWERS", title: m.title, body: m.body, step: .moreAnswers)
+            return Description(label: "NO ANSWERS", title: m.title, body: m.body, step: .upgrade)
         case .noAnswers:
             let m = PlanFacts.outOfAnswers(freeTrial: false)
             return Description(label: "NO ANSWERS", title: m.title, body: m.body, step: .moreAnswers)
@@ -52,7 +53,7 @@ enum ListeningProblems {
                 label: "TRIAL OVER",
                 title: "Your free trial is over",
                 body: "That is what Replysis does in a real interview. Pro gives you a whole month, enough for many interviews, and you can cancel any time. Or add a few answers with no subscription.",
-                step: .moreAnswers)
+                step: .upgrade)
         case .noListeningTime:
             return Description(
                 label: "MONTHLY LIMIT",
@@ -87,9 +88,11 @@ enum ListeningProblems {
             // the only words on screen were "Connecting". The cause is the connection, so the
             // words say so and say what fixes it.
             return Description(
-                label: "WEAK CONNECTION",
-                title: "Your internet connection is unstable",
-                body: "Replysis cannot hold a steady connection to the speech service, so listening is delayed or cut off. This usually means a weak connection, such as a phone hotspot or a busy network. It keeps trying by itself. A stronger wireless network or a cable connection fixes it.",
+                // Not the customer's internet: on Windows this showed while the speech provider itself
+                // was failing (2026-10-29; owner: never blame the network). Same words as Windows.
+                label: "RECONNECTING",
+                title: "Listening is reconnecting",
+                body: "The speech service dropped a few times and Replysis reconnected each time. Words said during a reconnect can be missed, so the interviewer may need to repeat a question.",
                 step: .none)
         case .waitingToReconnect:
             return Description(
@@ -101,21 +104,54 @@ enum ListeningProblems {
             return Description(
                 label: "NO MICROPHONE",
                 title: "No microphone found",
-                body: "Practice mode needs a microphone. Plug one in, or allow microphone access in System Settings, under Privacy and Security, then Microphone. Interview mode does not need a microphone.",
+                // No mode names (Windows 2026-11-02: Interview and Practice are gone from every hint).
+                body: "Replysis listens to your microphone too, and cannot open it. Plug one in, or allow microphone access in System Settings, under Privacy and Security, then Microphone.",
                 step: .none)
         case .noSpeechService:
             return Description(
                 label: "NO SPEECH SERVICE",
-                title: "Cannot reach the speech service",
-                body: "This is usually a network that blocks it, such as a work or school network or a VPN. Try a phone hotspot.",
+                // Never about the customer's network, VPN or hotspot (Windows 2026-11-02, same words).
+                title: "Still connecting to speech",
+                body: "Replysis is connecting to the speech service and keeps trying on its own. It starts listening by itself as soon as it connects.",
                 step: .none)
         case .noNetwork:
             return Description(
-                label: "NO NETWORK",
-                title: "No internet connection",
-                body: "Replysis cannot reach the internet, so it cannot hear or answer. It will carry on by itself as soon as the connection is back.",
+                // The Mac has no network path. Said without blaming the customer's internet (owner's copy rule).
+                label: "WAITING",
+                title: "Waiting to connect",
+                body: "Replysis cannot connect right now, so it cannot hear or answer. It carries on by itself as soon as it connects.",
                 step: .none)
         }
+    }
+
+    /// The kind sent to admin for a problem shown (Windows ListeningProblems.ReportKind). A customer's own state (out of
+    /// answers, this month's limit, no microphone) ends in "-minor", so it shows in admin but never counts towards the
+    /// "apps are reporting errors" email. Reported by kind, never by title.
+    static func reportKind(_ kind: Kind) -> String {
+        let minor: Bool
+        switch kind {
+        case .noAnswers, .noListeningTime, .noMicrophone: minor = true
+        default: minor = false
+        }
+        return "listening-" + String(describing: kind) + (minor ? "-minor" : "")
+    }
+
+    /// How long after the engine's last provider refusal it still counts (Windows: 45 s). The engine keeps trying every
+    /// few seconds, so a refusal stops counting soon after the last one.
+    static let providerFaultWindow: TimeInterval = 45
+
+    /// The engine's own line saying the speech provider refused it (no credit, forbidden, too many requests) or failed
+    /// (5xx). A 401 is not one: that is an expired token, and the app renews it. Windows SpeechHealth.IsProviderFaultLine.
+    static func isProviderFaultLine(_ line: String) -> Bool {
+        let refused = ">>> [DEEPGRAM] Refused with "
+        if let r = line.range(of: refused) {
+            return !line[r.upperBound...].hasPrefix("401")
+        }
+        let http = ">>> [DEEPGRAM] HTTP "
+        if let r = line.range(of: http) {
+            return line[r.upperBound...].first == "5"
+        }
+        return false
     }
 
     /// A line from the speech engine describing the connection failing for the usual reasons of a
@@ -132,7 +168,8 @@ enum ListeningProblems {
     static func detect(engineOnline: Bool, speechStatusCode: Int, outOfListeningTime: Bool,
                        outOfAnswers: Bool, waitingToRetry: Bool, fatalNoMicrophone: Bool,
                        connectionStalled: Bool, noNetwork: Bool = false,
-                       anotherDevice: Bool = false, poorConnection: Bool = false) -> Kind? {
+                       anotherDevice: Bool = false, poorConnection: Bool = false,
+                       providerFault: Bool = false) -> Kind? {
         if engineOnline { return nil }
         // A definite refusal outlives whatever the server said most recently. After a "no
         // listening time" the app kept asking, hit the hourly request limit, and the latest
@@ -146,6 +183,9 @@ enum ListeningProblems {
         // that follows it must not turn it into "reconnecting".
         if anotherDevice { return .anotherDevice }
         if speechStatusCode == 502 || speechStatusCode == 503 { return .serviceUnavailable }
+        // The speech provider itself refused (402, 403, 429) or failed (5xx), seen in the engine's own lines. That is
+        // the service being unavailable, never the customer's network (Windows 2026-11-02, SpeechProviderAtFault).
+        if providerFault { return .serviceUnavailable }
         if noNetwork { return .noNetwork }
         // Specific beats generic: repeated connection failures with the network up say more than
         // "reconnecting" does.

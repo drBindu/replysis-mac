@@ -193,7 +193,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Test copies only (DeveloperOverrides.headless): keep every window the app opens invisible and untouchable.
     private static func hideEveryWindowOfATestCopy() {
         Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-            for window in NSApp.windows where window.alphaValue != 0 || !window.ignoresMouseEvents {
+            // The hiding self-test's 16 pt square is the one window a test may show (REPLYSIS_SELFTEST=1), or there is nothing to test.
+            for window in NSApp.windows where (window.alphaValue != 0 || !window.ignoresMouseEvents) && !StealthSelfTest.isProbe(window) {
                 window.alphaValue = 0
                 window.ignoresMouseEvents = true
             }

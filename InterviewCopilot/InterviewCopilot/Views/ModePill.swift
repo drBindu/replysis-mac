@@ -2,25 +2,23 @@ import SwiftUI
 
 // ══════════════════════════════════════════════════════════════════════════
 // The one pill of the top bar (Windows MAC_CATCHUP, 2026-10-19: decided and locked by the owner on Windows, "Mac: match this layout"), shared by
-// the main window and the compact bar. "Interview Auto" or "Practice Manual": what Replysis hears, then how it answers. It opens a menu with
-// both choices and the window choices (Compact and Pin on top, or Full window when it is opened from the compact bar). A popover, so it is a
+// the main window and the compact bar. "Auto" or "Manual": how it answers (one listening mode since Windows 1.0.45: there is no Interview or
+// Practice any more). It opens a menu with that choice and the window choices (Full window and Compact). A popover, so it is a
 // window of its own (Stealth Mode covers it, see StealthWindows) that stays open until a choice is made, a click lands elsewhere, or Esc.
 // ══════════════════════════════════════════════════════════════════════════
 struct ModePill: View {
     @Environment(MainViewModel.self) var vm
-    /// True in the compact bar: the window choice is then "Full window", and Pin on top is left out.
+    /// True in the compact bar: "Compact" is then the ticked window choice.
     let inCompact: Bool
     @State private var showMenu = false
 
     var body: some View {
-        let hears = vm.practiceAudioOn ? "Practice" : "Interview"
         let answers = vm.listeningMode == .auto ? "Auto" : "Manual"
         Button(action: { showMenu.toggle() }) {
             HStack(spacing: 6) {
-                Image(systemName: vm.practiceAudioOn ? "mic.fill" : "video.fill")
+                Image(systemName: vm.listeningMode == .auto ? "bolt.fill" : "hand.tap.fill")
                     .font(.system(size: 10, weight: .semibold))
-                Text(hears).font(.system(size: 11.5, weight: .semibold))
-                Text(answers).font(.system(size: 11.5)).foregroundColor(Color(hex: "#94a3b8"))
+                Text(answers).font(.system(size: 11.5, weight: .semibold))
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundColor(Color(hex: "#64748b"))
             }
             .foregroundColor(.white)
@@ -30,44 +28,38 @@ struct ModePill: View {
             .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Mode menu: \(hears), \(answers)")
-        .help(AudioSourceRules.hearingLine(practiceOn: vm.practiceAudioOn))
+        .accessibilityLabel("Mode menu: \(answers)")
+        .help("How Replysis answers, and the window. It always hears the meeting and your microphone, and answers the interviewer.")
         .popover(isPresented: $showMenu, arrowEdge: .bottom) { menu }
     }
 
+    // The same rows, words and shortcuts as the Windows menu (CHANNEL 2026-11-13): How it answers (Auto, Manual), then Window
+    // (Full window, Compact). No Pin on top: the window floats during an interview by itself.
     private var menu: some View {
         VStack(alignment: .leading, spacing: 0) {
-            heading("WHAT REPLYSIS HEARS")
-            row(icon: "video.fill", title: "Interview", subtitle: "The call on this computer", selected: !vm.practiceAudioOn) {
-                vm.selectAudioSource(practice: false)
-            }
-            row(icon: "mic.fill", title: "Practice", subtitle: "Your voice. Interview or Practice: Control Shift P", selected: vm.practiceAudioOn) {
-                vm.selectAudioSource(practice: true)
-            }
             heading("HOW IT ANSWERS")
-            row(icon: "bolt.fill", title: "Auto", subtitle: "Answers as soon as the question ends. Auto or Manual: Control Shift A", selected: vm.listeningMode == .auto) {
+            row(icon: "bolt.fill", title: "Auto", subtitle: "Answers by itself", shortcut: "⌃⇧A", selected: vm.listeningMode == .auto) {
                 vm.setListeningMode(.auto)
             }
-            row(icon: "hand.tap.fill", title: "Manual", subtitle: "Press Space to listen, and again to answer", selected: vm.listeningMode == .manual) {
+            row(icon: "hand.tap.fill", title: "Manual", subtitle: "Press Space to answer", shortcut: "⌃⇧A", selected: vm.listeningMode == .manual) {
                 vm.setListeningMode(.manual)
             }
+            line
             heading("WINDOW")
-            if inCompact {
-                row(icon: "rectangle.expand.vertical", title: "Full window", subtitle: "Back to the full window. Control Shift C", selected: false) {
-                    vm.toggleCamera()
-                }
-            } else {
-                row(icon: "rectangle.compress.vertical", title: "Compact", subtitle: "A small bar instead of the full window. Control Shift C", selected: vm.showCameraOverlay) {
-                    vm.toggleCamera()
-                }
-                row(icon: vm.isPinnedOnTop ? "pin.fill" : "pin", title: "Pin on top", subtitle: "Keep the window above other apps", selected: vm.isPinnedOnTop) {
-                    vm.togglePin()
-                }
+            row(icon: "rectangle.expand.vertical", title: "Full window", subtitle: "Back to the full Replysis window", shortcut: "⌃⇧C", selected: !inCompact) {
+                if inCompact { vm.toggleCamera() }
+            }
+            row(icon: "rectangle.compress.vertical", title: "Compact", subtitle: "A slim bar on your screen", shortcut: "⌃⇧C", selected: inCompact) {
+                if !inCompact { vm.toggleCamera() }
             }
         }
         .padding(.vertical, 8)
         .frame(width: 300)
         .background(Color(hex: "#0b1018"))
+    }
+
+    private var line: some View {
+        Rectangle().fill(Color(hex: "#182338")).frame(height: 1).padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 2)
     }
 
     private func heading(_ text: String) -> some View {
@@ -77,7 +69,7 @@ struct ModePill: View {
             .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 4)
     }
 
-    private func row(icon: String, title: String, subtitle: String, selected: Bool, action: @escaping () -> Void) -> some View {
+    private func row(icon: String, title: String, subtitle: String, shortcut: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: { action(); showMenu = false }) {
             HStack(spacing: 10) {
                 Image(systemName: icon).font(.system(size: 12)).frame(width: 18)
@@ -87,6 +79,7 @@ struct ModePill: View {
                     Text(subtitle).font(.system(size: 10.5)).foregroundColor(Color(hex: "#7c8aa0"))
                 }
                 Spacer(minLength: 6)
+                Text(shortcut).font(.system(size: 10.5, weight: .medium)).foregroundColor(Color(hex: "#64748b"))
                 if selected { Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundColor(Color(hex: "#4ade80")) }
             }
             .padding(.horizontal, 14).padding(.vertical, 6)

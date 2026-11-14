@@ -132,8 +132,10 @@ class H(BaseHTTPRequestHandler):
             if scenario == "credits-flaky" and credit_requests <= 2:
                 status, body = 503, {"error": "temporarily unavailable"}
             else:
-                body = {"credits": live_credits, "plan": "free", "isUnlimited": False}
+                if os.environ.get("MOCK_CREDITS") and credit_requests == 1: live_credits = int(os.environ["MOCK_CREDITS"])
+                body = {"credits": live_credits, "plan": os.environ.get("MOCK_PLAN", "free"), "isUnlimited": False}
                 if os.environ.get("MOCK_MINUTES"): body["minutesBalance"] = int(os.environ["MOCK_MINUTES"])   # India, pay by the minute (item 57)
+                if os.environ.get("MOCK_TRIAL") == "1": body["trial"] = True   # the 3 day free trial: plan "pro", trial true (MAC_HANDOFF_2026-10-27)
         elif url == "/api/v1/interview/screen-cache" and self.command == "POST":
             raw = read_body(self)
             try: obj = json.loads(raw or b"{}")
@@ -219,7 +221,8 @@ class H(BaseHTTPRequestHandler):
             # what the screening answers did to the prompt (Windows MAC_CATCHUP item 56): India's notice period and offers stand where work authorization stands
             print(f"ASK-PROMPT notice={'Notice period: 30 days' in text_ask} offers={'Other offers: Have an offer in hand' in text_ask} "
                   f"auth={'Work authorization' in text_ask}", flush=True)
-            if live_credits < 5:
+            # Bought minutes pay for the answer while there are any (the real server charges minutes first).
+            if live_credits < 5 and not int(os.environ.get("MOCK_MINUTES") or 0):
                 status, body = 402, {"error": "No credits remaining"}
             else:
                 live_credits -= 5
@@ -240,6 +243,20 @@ class H(BaseHTTPRequestHandler):
         elif url == "/api/v1/usage/listening":
             body = {"remainingMinutes": s["minutes"], "usedMinutes": 15 - s["minutes"]}
             if os.environ.get("MOCK_MINUTES"): body["minutesBalance"] = int(os.environ["MOCK_MINUTES"])
+        elif url == "/api/v1/companion/laptop" and self.command == "POST":
+            # The phone Companion (Windows 2026-10-25): log what the laptop reports; MOCK_PHONES phones watch; a command waits in
+            # MOCK_COMMAND_FILE ("stop" or "answer") and is handed out once.
+            raw = read_body(self) or b""
+            print(f"COMPANION {raw.decode('utf-8', 'replace')[:120]} auth={'yes' if (self.headers.get('Authorization') or '').startswith('Bearer ') else 'no'}", flush=True)
+            command = ""
+            cf = os.environ.get("MOCK_COMMAND_FILE")
+            if cf and os.path.exists(cf):
+                command = open(cf).read().strip(); os.remove(cf)
+            body = {"phones": int(os.environ.get("MOCK_PHONES") or 0), "command": command}
+        elif url == "/api/referral":
+            # Invite a friend (Windows 2026-10-21): the website answers this person's link.
+            print(f"REFERRAL auth={'yes' if (self.headers.get('Authorization') or '').startswith('Bearer ') else 'no'}", flush=True)
+            body = {"link": "https://replysis.com/r/TEST123"}
         elif url == "/api/minutes" and self.command == "POST":
             # the website's auto add (Windows item 57): MOCK_MINUTES_ADD=approval answers like a bank that wants the person to approve
             raw = read_body(self) or b""

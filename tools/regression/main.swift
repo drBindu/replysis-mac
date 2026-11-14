@@ -254,21 +254,6 @@ check(AutoTurnDetector.classifyTurnEnding("What is the difference between an abs
 check(AutoTurnDetector.classifyTurnEnding("What is the difference between an abstract class and an interface?") == .finished, "two-sided comparison is finished")
 check(AutoTurnDetector.classifyTurnEnding("What's the difference between REST vs GraphQL?") == .finished, "vs comparison is finished")
 // Interview / Practice rules, ported from Windows AudioSourceTests (suite 18).
-check(AudioSourceRules.isMeetingApp(bundleId: "us.zoom.xos", name: "zoom.us"), "zoom is a meeting app")
-check(AudioSourceRules.isMeetingApp(bundleId: "com.microsoft.teams2", name: "Microsoft Teams"), "teams is a meeting app")
-check(AudioSourceRules.isMeetingApp(bundleId: nil, name: "Webex"), "webex by name")
-check(!AudioSourceRules.isMeetingApp(bundleId: "com.apple.Safari", name: "Safari"), "a browser is not a meeting app")
-check(!AudioSourceRules.isMeetingApp(bundleId: nil, name: ""), "nothing is not a meeting app")
-check(AudioSourceRules.shouldSuggestInterview(practiceOn: true, meetingAppRunning: true, alreadySuggested: false), "practice + meeting suggests Interview")
-check(!AudioSourceRules.shouldSuggestInterview(practiceOn: true, meetingAppRunning: true, alreadySuggested: true), "suggested once only")
-check(!AudioSourceRules.shouldSuggestInterview(practiceOn: false, meetingAppRunning: true, alreadySuggested: false), "already in Interview says nothing")
-check(!AudioSourceRules.shouldSuggestInterview(practiceOn: true, meetingAppRunning: false, alreadySuggested: false), "no meeting app says nothing")
-check(AudioSourceRules.shouldSuggestPractice(interviewOn: true, listening: true, meetingAppRunning: false, quietFor: 200, alreadySuggested: false), "quiet Interview suggests Practice")
-check(!AudioSourceRules.shouldSuggestPractice(interviewOn: true, listening: true, meetingAppRunning: false, quietFor: 100, alreadySuggested: false), "a short quiet stretch says nothing")
-check(!AudioSourceRules.shouldSuggestPractice(interviewOn: true, listening: false, meetingAppRunning: false, quietFor: 600, alreadySuggested: false), "not listening says nothing")
-check(!AudioSourceRules.shouldSuggestPractice(interviewOn: true, listening: true, meetingAppRunning: true, quietFor: 600, alreadySuggested: false), "a real meeting stays in Interview")
-check(AudioSourceRules.hearingLine(practiceOn: false) == "Hearing the meeting only", "interview hearing line")
-check(AudioSourceRules.hearingLine(practiceOn: true) == "Hearing the meeting and your microphone", "practice hearing line")
 
 // An addition belongs to the last question only when it is a tail or points back at it.
 check(AutoTurnDetector.isFollowUpAddition("With an example from Spring."), "example request is an addition")
@@ -301,6 +286,7 @@ check(!PlanFacts.mayAsk(balanceKnown: true, credits: 0, isUnlimited: false), "ba
 check(!PlanFacts.mayAsk(balanceKnown: true, credits: 4, isUnlimited: false), "under one answer: no question")
 check(PlanFacts.mayAsk(balanceKnown: true, credits: 5, isUnlimited: false), "one answer left: asks")
 check(PlanFacts.mayAsk(balanceKnown: true, credits: 0, isUnlimited: true), "unlimited asks")
+check(PlanFacts.mayAsk(balanceKnown: true, credits: 0, isUnlimited: false, minutes: 45), "bought minutes let a question through with 0 answers (Windows customer, 2026-10-21)")
 check(PlanFacts.answerCost == 5, "one answer costs 5 credits, in one place")
 check(PlanFacts.answers(12) == 2, "12 credits is 2 answers, rounded down")
 check(PlanFacts.answers(4) == 0, "under 5 credits buys nothing")
@@ -317,8 +303,16 @@ check(PlanFacts.isFreeTrial(plan: "pro", signedIn: false), "a guest is on the tr
 check(!PlanFacts.isFreeTrial(plan: "pro", signedIn: true), "Pro is not the trial")
 check(!PlanFacts.isFreeTrial(plan: "max", signedIn: true), "Max is not the trial")
 check(PlanFacts.allowanceText(plan: "free", signedIn: true) == "5 answers, one time", "Free is one time")
-check(PlanFacts.allowanceText(plan: "pro", signedIn: true) == "500 answers each month", "Pro allowance")
-check(PlanFacts.allowanceText(plan: "max", signedIn: true) == "1,500 answers each month", "Max allowance")
+check(PlanFacts.allowanceText(plan: "pro", signedIn: true) == "Answers for an active job search, refreshed every month", "Pro allowance, no number")
+check(PlanFacts.allowanceText(plan: "max", signedIn: true) == "Our largest monthly allowance, for interview heavy weeks", "Max allowance, no number")
+check(PlanFacts.allowanceText(plan: "practice", signedIn: true) == "Practice interviews with Maya every month", "Practice allowance")
+check(PlanFacts.allowanceText(plan: "pro", signedIn: true, trial: true) == "3 day free trial", "the trial reads as the 3 day free trial")
+check(PlanFacts.isFreeTrial(plan: "pro", signedIn: true, trial: true), "the 3 day free trial (plan pro, trial true) is not Pro")
+check(!PlanFacts.isFreeTrial(plan: "practice", signedIn: true), "Practice is a paid plan")
+for plan in ["pro", "max", "practice", "lifetime"] {
+    let t = PlanFacts.allowanceText(plan: plan, signedIn: true)
+    check(t.rangeOfCharacter(from: .decimalDigits) == nil && !t.lowercased().contains("unlimited"), "no number and no unlimited on \(plan)")
+}
 check(PlanFacts.refreshText(plan: "free", signedIn: true) == "Not refreshed", "Free never refreshes")
 check(PlanFacts.isLow(10) && !PlanFacts.isLow(11), "amber at two answers or fewer")
 check(PlanFacts.isEmpty(4) && !PlanFacts.isEmpty(5), "blocked below one answer")
@@ -386,8 +380,9 @@ for kind in ListeningProblems.Kind.allCases {
 }
 check(ListeningProblems.describe(.noAnswers, freeTrial: true).title == "Your free answers are used", "free trial: the trial has ended")
 check(ListeningProblems.describe(.noAnswers, freeTrial: false).title == "No answers left this month", "paid: answers renew")
-check(ListeningProblems.describe(.noAnswers, freeTrial: true).step == .moreAnswers, "out of answers offers Get more answers")
-check(ListeningProblems.describe(.noListeningTime, freeTrial: true).step == .moreAnswers, "the free trial ending offers Get more answers")
+check(ListeningProblems.describe(.noAnswers, freeTrial: true).step == .upgrade, "free answers used: Upgrade now")
+check(ListeningProblems.describe(.noAnswers, freeTrial: false).step == .moreAnswers, "a paid plan out of answers: Get more answers")
+check(ListeningProblems.describe(.noListeningTime, freeTrial: true).step == .upgrade, "the free trial ending offers Upgrade now")
 check(ListeningProblems.describe(.noListeningTime, freeTrial: false).body.contains("Your answers are safe"), "this month's limit says answers are safe")
 func detect(online: Bool = false, status: Int = 0, listening: Bool = false, answers: Bool = false,
             waiting: Bool = false, mic: Bool = false, stalled: Bool = false, net: Bool = false) -> ListeningProblems.Kind? {
@@ -423,6 +418,33 @@ check(ListeningProblems.isConnectionTrouble(">>> [DEEPGRAM] error: timed out dur
 check(ListeningProblems.isConnectionTrouble(">>> [DEEPGRAM] HTTP 408: server rejected WebSocket connection: HTTP 408"), "an HTTP 408 is connection trouble")
 check(ListeningProblems.isConnectionTrouble(">>> [DEEPGRAM] error: received 1011 (internal error) Deepgram did not receive audio data or a text message"), "a drop for want of audio is connection trouble")
 check(!ListeningProblems.isConnectionTrouble(">>> STATUS: ONLINE"), "being online is not trouble")
+// Windows MAC_CATCHUP 2026-11-02: no problem ever blames the network, a VPN or a hotspot, or names Interview or Practice mode.
+for kind in ListeningProblems.Kind.allCases {
+    let d = ListeningProblems.describe(kind)
+    let words = (d.title + " " + d.body).lowercased()
+    check(!["network", "internet", "vpn", "hotspot", "wi-fi", "wifi"].contains(where: { words.contains($0) }), "problem \(kind) never blames the network")
+    check(!words.contains("practice mode") && !words.contains("interview mode"), "problem \(kind) names no listening mode")
+}
+check(ListeningProblems.describe(.noSpeechService).title == "Still connecting to speech", "stalled speech: Windows title")
+check(ListeningProblems.describe(.noSpeechService).body == "Replysis is connecting to the speech service and keeps trying on its own. It starts listening by itself as soon as it connects.", "stalled speech: Windows words")
+func detectFault(status: Int = 0, net: Bool = false, stalled: Bool = true, fault: Bool = true) -> ListeningProblems.Kind? {
+    ListeningProblems.detect(engineOnline: false, speechStatusCode: status, outOfListeningTime: false, outOfAnswers: false,
+                             waitingToRetry: true, fatalNoMicrophone: false, connectionStalled: stalled, noNetwork: net,
+                             anotherDevice: false, poorConnection: true, providerFault: fault)
+}
+check(detectFault() == .serviceUnavailable, "a speech provider refusal reads as the service unavailable, not reconnecting or the network")
+check(detectFault(fault: false) == .poorConnection, "without a provider refusal the old reading stands")
+check(detectFault(status: 401) == .signInExpired, "a provider refusal never hides an expired sign in")
+for code in ["402", "403", "429"] {
+    check(ListeningProblems.isProviderFaultLine(">>> [DEEPGRAM] Refused with \(code); Speechmatics takes over."), "provider refusal \(code) is a provider fault")
+}
+check(ListeningProblems.isProviderFaultLine(">>> [DEEPGRAM] HTTP 503: server rejected WebSocket connection: HTTP 503"), "a provider 5xx is a provider fault")
+check(!ListeningProblems.isProviderFaultLine(">>> [DEEPGRAM] Refused with 401; Speechmatics takes over."), "a 401 is a token to renew, not a provider fault")
+check(!ListeningProblems.isProviderFaultLine(">>> [DEEPGRAM] HTTP 408: server rejected WebSocket connection: HTTP 408"), "a 408 is the line, not the provider")
+check(!ListeningProblems.isProviderFaultLine(">>> STATUS: ONLINE"), "being online is not a provider fault")
+check(ListeningProblems.reportKind(.noAnswers) == "listening-noAnswers-minor" && ListeningProblems.reportKind(.noListeningTime) == "listening-noListeningTime-minor"
+      && ListeningProblems.reportKind(.noMicrophone) == "listening-noMicrophone-minor", "the customer's own state is reported as minor")
+check(ListeningProblems.reportKind(.serviceUnavailable) == "listening-serviceUnavailable" && ListeningProblems.reportKind(.noSpeechService) == "listening-noSpeechService", "a real speech problem is reported by kind, not minor")
 check(detectBusy() == .anotherDevice, "a full account reads as another device using it")
 check(detectBusy(waiting: true) == .anotherDevice, "...and the retry wait that follows does not turn it into reconnecting")
 check(detectBusy(online: true) == nil, "...and it clears the moment listening works")
@@ -442,6 +464,31 @@ do {   // waking with an expired key and no Wi-Fi yet (owner's Mac, 2026-10-21 0
     check(RecoveryPolicy.wakeNeedsFreshKey(key: "k", expiry: now.addingTimeInterval(-60), now: now), "after a wake, an expired key is renewed")
     check(RecoveryPolicy.wakeNeedsFreshKey(key: "k", expiry: now.addingTimeInterval(90), now: now), "after a wake, a key with 90 s left is renewed")
     check(!RecoveryPolicy.wakeNeedsFreshKey(key: "k", expiry: now.addingTimeInterval(1800), now: now), "after a wake, a key with half an hour left is kept")
+}
+do {   // problem reports: stealth first, engine technical lines only, the signed-in email (Windows 2026-10-21/22)
+    let p = ClientErrorReporter.payload(kind: "x", message: "m", version: "1", os: "o", stealth: "STEALTH: on",
+                                        engineTail: [">>> MIC stream opened OK"], user: "a@b.c")
+    check((p["detail"] as? String) == ">>> STEALTH: on | >>> MIC stream opened OK", "report detail: stealth first, then the engine lines")
+    check((p["user"] as? String) == "a@b.c", "report carries the signed-in email")
+    check(ClientErrorReporter.technicalLine(">>> MIC stream opened OK (16kHz mono)") != nil, "engine tail keeps a microphone line")
+    check(ClientErrorReporter.technicalLine(">>> FINAL received (62 chars)") == nil, "engine tail never keeps a FINAL line")
+    check(ClientErrorReporter.technicalLine(">>> PARTIAL received (19 chars)") == nil, "engine tail never keeps a PARTIAL line")
+    check(ClientErrorReporter.technicalLine("MIC opened") == nil, "engine tail keeps only >>> lines")
+    check(ClientErrorReporter.technicalLine(">>> SYSTEM AUDIO (FIFO): /Users/pk/Library/x.pcm 16000Hz")?.contains("/Users") == false, "engine tail removes paths")
+}
+// The microphone is never a device that carries the computer's sound (Windows' Stereo Mix, 2026-10-22; on a Mac BlackHole and friends)
+check(MicChoice.isNotAMic("BlackHole 2ch") && MicChoice.isNotAMic("ZoomAudioDevice") && MicChoice.isNotAMic("Microsoft Teams Audio"), "mic: loopback devices are not a microphone")
+check(!MicChoice.isNotAMic("MacBook Air Microphone") && !MicChoice.isNotAMic("AirPods Pro") && !MicChoice.isNotAMic("Krisp Microphone"), "mic: real microphones are")
+check(MicChoice.replacementForDefault(defaultName: "BlackHole 2ch", inputs: ["BlackHole 2ch", "MacBook Air Microphone"]) == "MacBook Air Microphone", "mic: a loopback default is replaced by the first real microphone")
+check(MicChoice.replacementForDefault(defaultName: "MacBook Air Microphone", inputs: ["BlackHole 2ch", "MacBook Air Microphone"]) == nil, "mic: a real default is left alone")
+check(StealthProbe.looksLikeProbe(red: 255, green: 0, blue: 255) && StealthProbe.looksLikeProbe(red: 236, green: 51, blue: 247), "self-test: the magenta probe is recognised, also after colour management")
+check(!StealthProbe.looksLikeProbe(red: 30, green: 30, blue: 30) && !StealthProbe.looksLikeProbe(red: 240, green: 240, blue: 240), "self-test: a dark or white desktop is not the probe")
+do {   // one listening mode: whose words are answered
+    let now = Date()
+    check(AutoTurnDetector.ignoreCandidateTurn(micOn: true, source: "candidate", lastInterviewerAt: now.addingTimeInterval(-60), now: now), "one mode: the candidate's words are not answered with an interviewer heard a minute ago")
+    check(!AutoTurnDetector.ignoreCandidateTurn(micOn: true, source: "candidate", lastInterviewerAt: now.addingTimeInterval(-700), now: now), "one mode: practising alone (no interviewer for 10 minutes), the candidate's questions are answered")
+    check(!AutoTurnDetector.ignoreCandidateTurn(micOn: true, source: "interviewer", lastInterviewerAt: now, now: now), "one mode: the interviewer is answered")
+    check(!AutoTurnDetector.ignoreCandidateTurn(micOn: false, source: "candidate", lastInterviewerAt: now, now: now), "one mode: with the microphone off nothing is filtered")
 }
 check([1, 2, 3, 8, 13, 14, 40].map(RecoveryPolicy.keyRetryAfterServerFault) == [2, 3, 5, 5, 5, 15, 15], "server-fault key retry waits 2, 3, then 5 seconds for a minute, then 15")
 check([1, 2, 3, 4, 5, 9].map(RecoveryPolicy.keyRetryAfterNoConnection) == [2, 4, 8, 15, 30, 30], "no-connection retry waits 2, 4, 8, 15, then 30 seconds")
@@ -1128,15 +1175,15 @@ check(!ClientErrorReporter.shouldSend(kind: "", seen: &seenKinds), "report: noth
 for i in 0..<60 { _ = ClientErrorReporter.shouldSend(kind: "kind\(i)", seen: &seenKinds) }
 check(seenKinds.count == ClientErrorReporter.maxProblemsPerRun, "report: at most 40 kinds a run")
 let problemBody = ClientErrorReporter.payload(kind: "listening.nomic", message: "No microphone [Practice, Auto, in interview]", version: "1.0.254", os: "macOS 26.0.0 arm64")
-check(problemBody["type"] as? String == "Problem.listening.nomic" && problemBody["source"] as? String == "mac" && Set(problemBody.keys) == ["version", "os", "source", "type", "message", "frames"], "report: the body has the same fields and type as Windows")
+check(problemBody["type"] as? String == "Problem.listening.nomic" && problemBody["source"] as? String == "mac" && Set(problemBody.keys) == ["version", "os", "source", "type", "message", "frames", "detail", "user"], "report: the body has the same fields and type as Windows")
 check(ClientErrorReporter.request(backendUrl: "https://replysis.com/", payload: problemBody)?.url?.absoluteString == "https://replysis.com/api/v1/diagnostics/client-error", "report: posted to the client-error endpoint")
 
 // ── The top bar's shortcuts (Windows MAC_CATCHUP, 2026-10-19) ───────────────────────────────────────────────────────────────
-check(GlobalHotkey.modeShortcut(keyCode: 35, flags: [.maskControl, .maskShift]) == .audioSource, "shortcut: Control Shift P switches Interview and Practice")
+check(GlobalHotkey.modeShortcut(keyCode: 35, flags: [.maskControl, .maskShift]) == nil, "shortcut: Control Shift P is gone with Interview and Practice (one listening mode)")
 check(GlobalHotkey.modeShortcut(keyCode: 0, flags: [.maskControl, .maskShift]) == .answerMode, "shortcut: Control Shift A switches Auto and Manual")
 check(GlobalHotkey.modeShortcut(keyCode: 8, flags: [.maskControl, .maskShift]) == .compact, "shortcut: Control Shift C switches Compact")
 check(GlobalHotkey.modeShortcut(keyCode: 35, flags: [.maskControl]) == nil && GlobalHotkey.modeShortcut(keyCode: 35, flags: [.maskShift]) == nil, "shortcut: P with only Control or only Shift is somebody else's")
-check(GlobalHotkey.modeShortcut(keyCode: 35, flags: [.maskControl, .maskShift, .maskCommand]) == nil, "shortcut: an extra modifier is somebody else's")
+check(GlobalHotkey.modeShortcut(keyCode: 0, flags: [.maskControl, .maskShift, .maskCommand]) == nil, "shortcut: an extra modifier is somebody else's")
 check(GlobalHotkey.modeShortcut(keyCode: 1, flags: [.maskControl, .maskShift]) == nil, "shortcut: other letters are not shortcuts")
 
 // ── India screening options (Windows MAC_CATCHUP item 56) ────────────────────────────────────────────────────────────────────
@@ -1157,6 +1204,8 @@ check(!indiaSet.contains("Work authorization") && !indiaSet.contains("Can start"
 // ── India pays by the minute (Windows MAC_CATCHUP item 57) ───────────────────────────────────────────────────────────────────
 check(MinutesBalance.badgeText(minutes: 14, fallback: "5 answers") == "14 min left", "minutes: the badge says the minutes while there are any")
 check(MinutesBalance.badgeText(minutes: 0, fallback: "5 answers") == "5 answers", "minutes: no minutes, the badge says what it did before")
+check(MinutesBalance.badgeText(minutes: 14, fallback: "300 answers", paidWithAnswers: true) == "300 answers", "minutes: a paid plan with answers left shows its answers")
+check(!MinutesBalance.shouldAskForMore(hadMinutes: true, balance: 1, paidWithAnswers: true), "minutes: a paid plan with answers left is never auto-charged for minutes")
 check(MinutesBalance.shouldAskForMore(hadMinutes: true, balance: 2) && MinutesBalance.shouldAskForMore(hadMinutes: false, balance: 1), "minutes: at 2 or fewer, for someone with minutes, it asks")
 check(MinutesBalance.shouldAskForMore(hadMinutes: true, balance: 0), "minutes: just run out, it asks")
 check(!MinutesBalance.shouldAskForMore(hadMinutes: true, balance: 3) && !MinutesBalance.shouldAskForMore(hadMinutes: false, balance: 0), "minutes: above 2, or never bought any, it does not ask")
@@ -1169,6 +1218,91 @@ let evil = MinutesBalance.outcome(fromAddResponse: Data(#"{"needsApproval":true,
 check(evil == .notUsed("no reason given"), "minutes: an address that is not Stripe's checkout is never offered")
 check(MinutesBalance.outcome(fromAddResponse: Data(#"{"added":0,"reason":"auto add is off"}"#.utf8)) == .notUsed("auto add is off"), "minutes: auto add off, the reason is kept for the log")
 check(MinutesBalance.balance(from: ["minutesBalance": -3]) == 0 && MinutesBalance.balance(from: ["minutesBalance": 12]) == 12 && MinutesBalance.balance(from: [:]) == nil, "minutes: the balance is read, never below zero")
+
+
+// ── Answer path parity (Windows MAC_CATCHUP 2026-11-02 to 2026-11-07) ──────────────────────────────────────────────────────
+check(PlanFacts.isServerNoAnswersLeft("You have no answers left.") && PlanFacts.isServerNoAnswersLeft("  you have no answers left. "), "out of answers: the server's in-band \"You have no answers left.\" is recognised")
+check(!PlanFacts.isServerNoAnswersLeft("This minute's AI allowance is used up.") && !PlanFacts.isServerNoAnswersLeft(nil), "out of answers: other stream errors are not out of answers")
+check(PlanFacts.answerProblemKind(noAnswersLeft: true, slug: "server-msg") == "answer-nocredits", "out of answers: reported as answer-nocredits, never counted as a real error")
+check(PlanFacts.answerProblemKind(noAnswersLeft: false, slug: "server-error-500") == "answer.server-error-500", "a real answer failure keeps its own kind")
+check(RecoveryPolicy.answerFirstWordLimit == 20, "first word limit: 20 s, then \"That did not go through. Please try again.\"")
+check(PlanFacts.balanceWaitCap == 3, "an empty balance is asked again for at most 3 s before a question is refused")
+let longBrief = String(repeating: "The platform takes payments from many shops. ", count: 120) + "So how would you design the backend for that?"
+let cutBrief = PromptBuilder.truncateKeepingEnd(longBrief)
+check(cutBrief.hasPrefix("[earlier part cut]\n") && cutBrief.hasSuffix("So how would you design the backend for that?"), "a long question keeps its end, marked [earlier part cut]")
+check(cutBrief.count <= PromptBuilder.maxQuestionChars + "[earlier part cut]\n".count && PromptBuilder.maxQuestionChars == 4_000, "a long question is capped at 4,000 characters")
+check(longBrief.hasSuffix(" " + cutBrief.dropFirst("[earlier part cut]\n".count)), "a cut question starts on a whole word")
+check(PromptBuilder.truncateKeepingEnd("What is Kafka?") == "What is Kafka?", "a short question is never cut")
+let cappedMessages = PromptBuilder.shared.buildMessages(resumeFacts: "", currentQuestion: longBrief)
+check((cappedMessages.last?["content"] ?? "").hasSuffix("QUESTION: " + cutBrief), "the question sent to the model is the capped one, with its end")
+PromptBuilder.shared.addToHistory(question: longBrief, answer: "I would split it into services.")
+let historyMessages = PromptBuilder.shared.buildMessages(resumeFacts: "", currentQuestion: "And the database?")
+check(historyMessages.contains { $0["role"] == "user" && $0["content"] == cutBrief }, "history keeps the capped question, with its end")
+PromptBuilder.shared.clearHistory()
+check(Gzip.serverRefusedCompression(400) && Gzip.serverRefusedCompression(415) && Gzip.serverRefusedCompression(501) && !Gzip.serverRefusedCompression(500), "compression: 400, 415 and 501 are a refusal of the compressed body")
+check(Gzip.compressionWasTheCause(plainStatus: 200), "compression: the plain copy got through, so compression stays off")
+check(!Gzip.compressionWasTheCause(plainStatus: 400) && !Gzip.compressionWasTheCause(plainStatus: 415), "compression: the plain copy was refused too (an oversized question), so compression stays on")
+check(!Gzip.compressionWasTheCause(plainStatus: 0), "compression: the plain copy never got an answer, so compression stays on")
+check(ListeningReport.keepFailedReport(status: 401, error: nil) && ListeningReport.keepFailedReport(status: 429, error: nil) && ListeningReport.keepFailedReport(status: 502, error: nil) && ListeningReport.keepFailedReport(status: 503, error: nil), "listening report: 401, 429, 502 and 503 keep the minutes for the next report")
+check(!ListeningReport.keepFailedReport(status: 504, error: nil) && !ListeningReport.keepFailedReport(status: 500, error: nil) && !ListeningReport.keepFailedReport(status: 400, error: nil), "listening report: a 504 (the server may have counted it) and other answers are not kept")
+check(ListeningReport.keepFailedReport(status: nil, error: .cannotConnectToHost) && ListeningReport.keepFailedReport(status: nil, error: .cannotFindHost) && ListeningReport.keepFailedReport(status: nil, error: .dnsLookupFailed) && ListeningReport.keepFailedReport(status: nil, error: .notConnectedToInternet), "listening report: a connection that never opened, or a failed name lookup, keeps the minutes")
+check(!ListeningReport.keepFailedReport(status: nil, error: .timedOut) && !ListeningReport.keepFailedReport(status: nil, error: .networkConnectionLost) && !ListeningReport.keepFailedReport(status: nil, error: nil), "listening report: a timeout or a reset after sending is not kept (no double charge)")
+check(ListeningReport.keptSeconds(unreported: 30, minutes: 2) == 150 && ListeningReport.keptSeconds(unreported: 3500, minutes: 5) == 3600, "listening report: kept minutes are added, capped at an hour")
+check(ListeningReport.secondsForOwner(90, owner: "uid-a", current: "uid-a") == 90 && ListeningReport.secondsForOwner(90, owner: "uid-a", current: "uid-b") == 0 && ListeningReport.secondsForOwner(90, owner: "uid-a", current: "") == 0, "listening report: seconds belong to the account they were heard under")
+check(!RecoveryPolicy.refreshFailureSignsOut(refused: false) && RecoveryPolicy.refreshFailureSignsOut(refused: true), "sign in: only a refused refresh signs out, never a timeout or a 5xx")
+check(!RecoveryPolicy.sessionRefused(byStatus: 0) && !RecoveryPolicy.sessionRefused(byStatus: 500) && !RecoveryPolicy.sessionRefused(byStatus: 503) && RecoveryPolicy.sessionRefused(byStatus: 400), "sign in: Google's 5xx or no answer is not a refusal")
+check(!RecoveryPolicy.answerWaitsForRefresh(tokenAge: 52 * 60) && RecoveryPolicy.answerWaitsForRefresh(tokenAge: 59 * 60) && RecoveryPolicy.answerRefreshWaitCap == 3, "answer path: a token that still works is sent without waiting; one in its last minute waits at most 3 s")
+
+// ── Sign-in words and reports (Windows MAC_CATCHUP 2026-11-02 and 2026-11-07, bug round 1) ─────────────────────────────
+check(SignInMessages.message(firebaseCode: "WEAK_PASSWORD : Password should be at least 6 characters", creating: true) == SignInMessages.shortPassword, "sign in: a code with detail after it still maps")
+check(SignInMessages.message(firebaseCode: "TOO_MANY_ATTEMPTS_TRY_LATER : Access to this account has been temporarily disabled", creating: false).hasPrefix("Too many attempts"), "sign in: a lockout with detail still maps")
+check(SignInMessages.message(firebaseCode: "INVALID_LOGIN_CREDENTIALS", creating: false) == SignInMessages.wrongCredentials, "sign in: wrong password")
+check(SignInMessages.message(firebaseCode: "EMAIL_EXISTS", creating: true) == SignInMessages.emailUsed, "sign up: email already used")
+check(SignInMessages.message(firebaseCode: "SOMETHING_NEW : raw detail", creating: false) == "Could not sign in just now. Please try again.", "sign in: an unknown code never shows raw")
+check(!SignInMessages.message(firebaseCode: "SOMETHING_NEW", creating: true).contains("SOMETHING"), "sign up: an unknown code never shows raw")
+check(SignInMessages.message(for: URLError(.timedOut)) == "That took too long. Please try again.", "sign in: a timeout")
+check(SignInMessages.message(for: URLError(.notConnectedToInternet)) == "Could not sign in just now. Please try again.", "sign in: no reply at all")
+check(SignInMessages.didNotGoThrough == "That did not go through. Please try again.", "sign in: an unreadable reply")
+for m in [SignInMessages.failed, SignInMessages.tooLong, SignInMessages.didNotGoThrough, SignInMessages.createFailed,
+          SignInMessages.message(firebaseCode: "USER_DISABLED", creating: false), SignInMessages.message(firebaseCode: "OPERATION_NOT_ALLOWED", creating: true)] {
+    let low = m.lowercased()
+    check(!low.contains("connection") && !low.contains("internet") && !low.contains("network"), "sign in never blames the network: \(m)")
+}
+for code in ["INVALID_PASSWORD", "EMAIL_NOT_FOUND", "INVALID_EMAIL", "WEAK_PASSWORD : x", "EMAIL_EXISTS", "INVALID_LOGIN_CREDENTIALS"] {
+    let kind = SignInMessages.reportKind(SignInMessages.message(firebaseCode: code, creating: true)) ?? ""
+    check(kind.hasPrefix("signin-") && kind.hasSuffix("-minor"), "sign in: the typing mistake \(code) is reported minor (\(kind))")
+}
+for code in ["USER_DISABLED", "TOO_MANY_ATTEMPTS_TRY_LATER", "SOMETHING_NEW"] {
+    let kind = SignInMessages.reportKind(SignInMessages.message(firebaseCode: code, creating: false)) ?? ""
+    check(kind.hasPrefix("signin-") && !kind.hasSuffix("-minor"), "sign in: \(code) still counts (\(kind))")
+}
+check(SignInMessages.reportKind(SignInMessages.tooLong) == "signin-that-took-too-long-please-try-again", "sign in: reported by its kind")
+check(SignInMessages.reportKind(SignInMessages.emptyFields) == nil && SignInMessages.reportKind(SignInMessages.emptyName) == nil
+      && SignInMessages.reportKind(SignInMessages.googleCancelled) == nil, "sign in: empty fields and a cancelled Google sign-in are not reported")
+
+// ── Update notice (Windows MAC_CATCHUP 2026-11-07, bug round 8) ───────────────────────────────────────────────────────────
+check(UpdateNoticeRules.afterCheckEnds(.onItsWay("1.0.300")) == .none, "update: on its way with nothing ready comes down when the check ends")
+check(UpdateNoticeRules.afterCheckEnds(.ready("1.0.300")) == .ready("1.0.300"), "update: a staged update keeps its Restart notice")
+check(UpdateNoticeRules.afterCheckEnds(.none) == .none, "update: nothing stays nothing")
+check(UpdateNoticeRules.downloadFailedKind.hasSuffix("-minor"), "update: a failed download is reported as minor")
+
+// ── Interview language (Windows MAC_CATCHUP 2026-11-07 round 53) ──────────────────────────────────────────────────────────
+check(!LanguageRules.offered.contains(where: { LanguageRules.sarvamLanguages.contains($0.code) || $0.name.contains("Sarvam") }), "language: no Sarvam language is offered")
+check(LanguageRules.offered.first?.code == "en" && LanguageRules.offered.contains(where: { $0.code == "hi" }), "language: English first, Hindi still offered")
+check(LanguageRules.engineLanguage(saved: "te", sarvamKey: "") == "en" && LanguageRules.engineLanguage(saved: "te", sarvamKey: nil) == "en", "language: a saved Telugu with no key starts in English")
+check(LanguageRules.engineLanguage(saved: "te", sarvamKey: "sk_x") == "te", "language: a Telugu with its own key keeps working")
+check(LanguageRules.engineLanguage(saved: "hi", sarvamKey: "") == "hi" && LanguageRules.engineLanguage(saved: nil, sarvamKey: nil) == "en", "language: other languages unchanged, nothing saved is English")
+check(LanguageRules.pickerList(current: "en").count == LanguageRules.offered.count && LanguageRules.pickerList(current: "te").last?.code == "te", "language: a kept Telugu still shows in the picker")
+
+// ── Code keeps its indentation next to bullets (Windows MAC_CATCHUP 2026-11-07 round 20) ────────────────────────────────────
+let depthWithCode = "- Use a set for the lookups\n```python\ndef f(xs):\n    seen = set()\n    for x in xs:\n        seen.add(x)\n```\n* It runs in one pass"
+let depthOut = AnswerLayout.depthBullets(depthWithCode)
+check(depthOut.contains("\n    seen = set()\n    for x in xs:\n        seen.add(x)"), "depth: lines inside a code fence keep their indentation")
+check(depthOut.hasPrefix("• Use a set for the lookups") && depthOut.hasSuffix("• It runs in one pass"), "depth: lines outside the code are still bulleted")
+check(!depthOut.contains("• def") && !depthOut.contains("• seen") && !depthOut.contains("```") && !depthOut.contains("python"), "depth: code is never bulleted and the fences go")
+check(AnswerLayout.depthBullets("- one\n-  two\n\n• three") == "• one\n• two\n• three", "depth: plain bullets are unchanged")
+let indentedFirst = AnswerLayout.split("Here it is.\n```python\n\n    return x\n```")
+check(indentedFirst.code == "    return x", "split: the first code line keeps its indentation")
 
 print("RESULT: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

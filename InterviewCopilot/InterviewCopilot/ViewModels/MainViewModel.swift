@@ -77,15 +77,8 @@ class MainViewModel {
     /// wrong there, and undermines trust in a mode whose entire promise is pressing nothing.
     var idleHintForCurrentMode: String {
         switch listeningMode {
-        // In Interview mode the person must be told their own voice is not picked up: a
-        // tester who spoke to the app for minutes saw nothing and decided it was broken
-        // (Windows, 2026-09-29). Practice hears them, so it needs no such line.
-        case .manual: return practiceAudioOn
-            ? "Ready. Press SPACE to start listening, then SPACE again to get your answer."
-            : "Ready. Press SPACE to start listening, then SPACE again to get your answer. Interview mode does not pick up your own voice. To try it by speaking, choose Practice above."
-        case .auto:   return practiceAudioOn
-            ? "Listening. The answer appears when the question ends."
-            : "Auto is on. When the interviewer asks a question in your meeting, the answer appears here on its own. Interview mode does not pick up your own voice. To try it by speaking, choose Practice above. If an answer does not come, press SPACE."
+        case .manual: return "Ready. Press SPACE to start listening, then SPACE again to get your answer."
+        case .auto:   return "Listening. When the interviewer asks a question, the answer appears here on its own. If an answer does not come, press SPACE."
         }
     }
     var showThinking = false
@@ -193,13 +186,11 @@ class MainViewModel {
     /// On by default and remembered, as on Windows (AppConfig.KeepOnTop). It only takes effect during an interview. Stealth keeps the
     /// window out of the Dock and ⌘Tab, so once another window covered it an unpinned window
     /// had no way back — ⌃⌥R now brings it back too.
-    var isPinnedOnTop = true
+    let isPinnedOnTop = true
     /// Settings, "Screen keys work in every app". See GlobalHotkey.isScreenKey.
     var screenKeysEverywhere = true
     /// "Real interview? Mic off in Settings", shown in place of AUTO | MANUAL for four seconds
     /// the first time Auto is chosen in a launch with the microphone on. Windows 2523ecf.
-    var showMicOffHint = false
-    private var micOffHintShown = false
     var mainWindowOpacity: Double = 0.40
     var overlayOpacity: Double = 0.90
     var isScreenAnalyzing = false
@@ -428,13 +419,23 @@ class MainViewModel {
         // loadSettings() restored the mode in init(), so the mic veto must be in force before
         // the engine's first start — otherwise a relaunch straight into Interview Auto could
         // open the mic on the very first spawn.
-        // No mode vetoes the microphone any more. Whether it is used is the Settings switch
-        // (micCaptureEnabled), which the engine reads when it starts.
+        // No mode vetoes the microphone any more, and there is no switch: it is always opened with the computer's sound.
         engine.micCaptureAllowed = true
         // THE turn signal. The recogniser has the waveform and tells us when the speaker
         // actually stopped; we no longer infer it from how the text is punctuated.
         engine.onUtteranceEnd = { [weak self] in self?.speechFinalTask?.cancel(); self?.handleUtteranceEnd() }
         engine.onSpeechFinal = { [weak self] in self?.handleSpeechFinal() }
+        AppUpdater.shared.onStateChange = { [weak self] state in self?.updateState = state }
+        CompanionLink.shared.onStopRequested = { [weak self] in self?.stopFromPhone() }
+        CompanionLink.shared.onAnswerRequested = { [weak self] in self?.handleSpacePress(source: "PHONE") }
+        CompanionLink.shared.start()
+        updateState = AppUpdater.shared.state
+        engine.onTurnSource = { [weak self] who in self?.noteTurnSource(who) }
+        engine.onUploadStalled = { [weak self] in
+            // Voice always comes first: on a slow line the screenshot sent ahead filled the upload and the voice stalled.
+            dlog("SCREEN: the voice upload stalled; pausing screenshots sent ahead so speech keeps the line", tag: "SCREEN")
+            self?.noteUplinkOutcome(succeeded: false, elapsed: UplinkGovernor.uploadTimeout, imageBytes: 0)
+        }
         // Sweep any transcript left behind by a crash or a Force Quit. Deleting on quit
         // covers the graceful path; a process that is killed never runs that handler, and
         // the file it leaves is the last thing an interviewer said. It has no value across
@@ -466,7 +467,22 @@ class MainViewModel {
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in self?.reconnectAfterWake() }
         }
+        // Coming back to the window (from the website, after paying) asks again for an empty balance.
+        focusObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.refreshEmptyBalanceOnFocus() }
+        }
+        // The window can take focus without the app activating (a panel that does not activate), so a window becoming key counts too.
+        keyWindowObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.refreshEmptyBalanceOnFocus() }
+        }
         restoreSession()
+        // Proven, not trusted: test the hiding 4 s after start, before any interview (Windows, 2026-10-22).
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            self?.runStealthSelfTest()
+        }
     }
 
     // ── Ready the moment the Mac wakes ────────────────────────────────────────────────
@@ -475,6 +491,8 @@ class MainViewModel {
     // out by timing out (about twenty seconds) and then backing off, so the first question after opening the
     // lid met a deaf app. The network adapter needs a moment to come back, so wait 2.5 s and reconnect.
     private var wakeObserver: NSObjectProtocol?
+    private var focusObserver: NSObjectProtocol?
+    private var keyWindowObserver: NSObjectProtocol?
     static let wakeReconnectDelay: TimeInterval = 2.5
     private var lastWakeAt = Date.distantPast
 
@@ -922,6 +940,10 @@ class MainViewModel {
             }
         )
         hotkey?.onBringToFront = { [weak self] in self?.bringToFront() }
+        hotkey?.onTogglePhoneOnly = { [weak self] in
+            guard let self else { return }
+            self.setPhoneOnlyHidden(!self.phoneOnlyHidden, why: "⌃⌥H")
+        }
         hotkey?.onModeShortcut = { [weak self] shortcut in self?.handleModeShortcut(shortcut) }
         hotkey?.onRegionAnalysisPressed = { [weak self] in self?.runRegionAnalysis() }
         hotkey?.onPreviousAnswer = { [weak self] in self?.showPreviousAnswer() }
@@ -930,12 +952,11 @@ class MainViewModel {
         refreshHotkeyGate()   // seed the tap's consume/pass-through state
     }
 
-    /// Control Shift P, A and C (Windows Ctrl+Shift+P, A, C): switch Interview and Practice, Auto and Manual, Compact. Only in an interview,
+    /// Control Shift A and C (Windows Ctrl+Shift+A, C): switch Auto and Manual, Compact. Only in an interview,
     /// where the top bar's pill exists; anywhere else the keys belong to whatever app has them.
     func handleModeShortcut(_ shortcut: GlobalHotkey.ModeShortcut) {
         guard appStep == .interview, session.isLoggedIn else { return }
         switch shortcut {
-        case .audioSource: selectAudioSource(practice: !practiceAudioOn)
         case .answerMode:  setListeningMode(listeningMode == .auto ? .manual : .auto)
         case .compact:     toggleCamera()
         }
@@ -964,7 +985,7 @@ class MainViewModel {
     // MARK: - Space Logic
     func handleSpacePress(source: String = "KEYBOARD") {
         refreshHotkeyGate()   // keep the tap's editing/login mirror fresh
-        if isEditingText { return }
+        if isEditingText && source != "PHONE" { return }   // the phone's Answer button is not typing on this Mac
         // The Setup page is for preparing, not for listening. Start interview is the one way in.
         if appStep == .setup {
             dlog("⌥ SPACE from \(source): on the Setup page — ignoring", tag: "SPACE")
@@ -985,13 +1006,8 @@ class MainViewModel {
             return
         }
 
-        // Lazy microphone permission — ONLY when the user has opted into it from Settings
-        // (Audio Capture: "System audio + my voice"). With the default "System audio only"
-        // mode, the mic is never touched and never prompted for, so the app stays fully
-        // invisible (no orange indicator, nothing in the mic list if checked).
-        // Gated on the EFFECTIVE rule, not the saved preference: in Interview Auto this used
-        // to fire the macOS microphone prompt, and route the user to the mic privacy pane,
-        // for a device that mode never opens.
+        // Lazy microphone permission, asked on the first listen. The microphone is always part of listening now (one mode);
+        // refused, listening carries on with the computer's sound alone.
         if micCaptureActive {
             let micAuth = AVCaptureDevice.authorizationStatus(for: .audio)
             if micAuth == .notDetermined {
@@ -1226,7 +1242,8 @@ class MainViewModel {
         saveHints()
     }
 
-    private func startAI(manualQuestion: String? = nil) {
+    /// - Parameter balanceRechecked: an empty balance has just been asked for again, so it is now believed.
+    private func startAI(manualQuestion: String? = nil, balanceRechecked: Bool = false) {
         let q = manualQuestion ?? extractLatestQuestion(from: transcript)
         if !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { lastQuestionShown = q }
         // WATCH MODE: the interviewer is sharing their screen, so every question is about
@@ -1307,8 +1324,23 @@ class MainViewModel {
         // Blocked below ONE answer, not below one credit: 1 to 4 credits buys nothing, and
         // letting it through only earns a refusal from the server mid-question.
         guard PlanFacts.mayAsk(balanceKnown: session.creditsKnown, credits: session.credits,
-                               isUnlimited: session.isUnlimited) else {
-            showOutOfAnswers(); return
+                               isUnlimited: session.isUnlimited, minutes: minutesBalance) else {
+            // Someone who just bought answers on the website still shows none here until the next refresh. Ask the
+            // server once more (at most 3 s) before refusing, so a customer who just paid is not blocked (Windows 2026-11-02).
+            guard balanceRechecked else {
+                guard !balanceRecheckInFlight else { return }
+                balanceRecheckInFlight = true
+                isProcessing = true; updateMicUI()
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    await self.fetchCreditsWaitingAtMost(PlanFacts.balanceWaitCap)
+                    self.balanceRecheckInFlight = false
+                    self.isProcessing = false
+                    self.startAI(manualQuestion: q, balanceRechecked: true)
+                }
+                return
+            }
+            showOutOfAnswers(); updateMicUI(); return
         }
         // Not known yet: ask the server (it has the real number) and look again in the background.
         if !session.creditsKnown { Task { [weak self] in await self?.fetchCredits() } }
@@ -1407,6 +1439,11 @@ class MainViewModel {
                     self.showOutOfAnswers()
                 }
                 else if err == "SESSION_EXPIRED" { self.engine.stop(); self.session.clear(); self.setLoggedOutUI() }
+                else if err == "FIRST_WORD_TIMEOUT" || err == "NOT_THROUGH" {
+                    // No first word in 20 s, or a sign-in refresh that could not be done right now (not refused):
+                    // the person stays signed in and simply asks again.
+                    self.aiAnswer = Self.answerDidNotGoThrough
+                }
                 else if err.hasPrefix("RATE_LIMIT") {
                     self.aiAnswer = Self.rateLimitMessage(err)
                 }
@@ -1417,7 +1454,12 @@ class MainViewModel {
                     self.aiAnswer = "⏳ " + String(err.dropFirst("SERVER_MSG:".count))
                 }
                 else                         { self.aiAnswer = "⚠ Something went wrong. Please try again." }
-                self.reportProblem("answer." + ClientErrorReporter.slug(String(err.prefix(40))), "An answer failed: \(err)")
+                // Out of answers is the customer's own state, never counted as an app error ("answer-nocredits").
+                self.reportProblem(err == "FIRST_WORD_TIMEOUT" ? "answer-first-word-timeout"
+                                   : PlanFacts.answerProblemKind(noAnswersLeft: err == "NO_CREDITS",
+                                                                 slug: ClientErrorReporter.slug(String(err.prefix(40)))),
+                                   err == "FIRST_WORD_TIMEOUT" ? "No first word within \(Int(RecoveryPolicy.answerFirstWordLimit)) s; the request was stopped"
+                                   : "An answer failed: \(err)")
                 // DATA-LOSS FIX: previously the error paths saved nothing, so if the AI
                 // failed (out of credits, connection issue) the interviewer's question was
                 // lost from the session record entirely. Preserve it with a clear
@@ -1425,7 +1467,7 @@ class MainViewModel {
                 // for SESSION_EXPIRED — the session is cleared there, so there's nothing to
                 // save into.
                 if err != "SESSION_EXPIRED" {
-                    let reason = err == "NO_CREDITS" ? "no answers left" : "connection issue"
+                    let reason = err == "NO_CREDITS" ? "no answers left" : "it did not go through"
                     self.appendToSessionLog(q: q, a: "[No answer: \(reason). Question preserved.]")
                 }
                 self.stopThinkingUI()
@@ -1446,6 +1488,9 @@ class MainViewModel {
     /// A wait under fifteen seconds is never printed. An early version on Windows managed
     /// "try again in about 1 seconds", which is worse than saying nothing — it reads as
     /// broken twice over, and by the time it is read the number is wrong anyway.
+    /// What an answer that did not arrive says (Windows AnswerDidNotGoThrough). Never blames the customer's connection.
+    static let answerDidNotGoThrough = "That did not go through. Please try again."
+
     static func rateLimitMessage(_ err: String) -> String {
         let seconds = Int(err.split(separator: ":").last.map(String.init) ?? "") ?? 0
         let when = seconds >= 15 ? "in about \(seconds) seconds" : "in a moment"
@@ -1582,6 +1627,10 @@ class MainViewModel {
         case "back":   backToSetup()
         case "finish": Task { _ = await finishInterview() }
         case "closesessions": sessionsOpen = false
+        case "invite": inviteFriend()
+        case "phoneonly-on": setPhoneOnly(true)
+        case "source-interviewer": noteTurnSource("interviewer")   // what the engine's ">>> SOURCE" lines do, for tests
+        case "source-candidate": noteTurnSource("candidate")
         case "signout": signOut()
         case "login":    NotificationCenter.default.post(name: .showLogin, object: nil)
         case "snap-sessions":     snapshot(AnyView(SessionsView(preview: Self.demoSessions)), name: "sessions")
@@ -1591,6 +1640,7 @@ class MainViewModel {
                                                     .padding(22).frame(width: 760, alignment: .topLeading)
                                                     .background(Color(hex: "#0b1220"))), name: "answer")
         case "snap-main":         snapshot(AnyView(MainView().frame(width: 1040, height: 1000, alignment: .top)), name: "main")
+        case "snap-settings":     snapshot(AnyView(SettingsView().frame(width: 560, height: 1500, alignment: .top)), name: "settings")
         case "snap-main-narrow":  snapshot(AnyView(MainView().frame(width: 840, height: 1100, alignment: .top)), name: "main-narrow")
         case "snap-login":        snapshot(AnyView(LoginView(flat: true)), name: "login")
         case "snap-gate":         snapshot(AnyView(LoginView(flat: true, embedded: true).frame(width: 1038, height: 660)), name: "gate")
@@ -1645,15 +1695,14 @@ class MainViewModel {
         case "miccame":   handleMicrophoneConnected()            // MICROPHONE CONNECTED
         case "reportminutes": reportListeningMinutes(1)      // what a minute of listening reports
         case "updatecheck": AppUpdater.shared.checkInBackgroundNow()   // a scheduled background check, now
-        case "key-p":     handleModeShortcut(.audioSource)    // what ⌃⇧P does
+        case "updatefound": AppUpdater.shared.state = .onItsWay("9.9.9")   // what Sparkle's callbacks set, for the notice test
+        case "updateready": AppUpdater.shared.state = .ready("9.9.9")
         case "key-a":     handleModeShortcut(.answerMode)     // ⌃⇧A
         case "space":     handleSpacePress(source: "FLOW")   // the Space key: listen, or send what was heard
-        case "practice":  setMicCaptureEnabled(true)      // at once, the way a switch made between questions is applied: the engine restarts now
-        case "interviewaudio": setMicCaptureEnabled(false)
         case "stallstart": StallMonitor.start(); StallMonitor.reset()
         case "stallreport": dlog("STALL: \(StallMonitor.summary)\nSTALL timeline: \(StallMonitor.timeline)", tag: "FLOW")
         #endif
-        case "dump":     dlog("FLOWSTATE: step=\(appStep) sessions=\(sessionsOpen) answer='\(aiAnswer.prefix(60).replacingOccurrences(of: "\n", with: " "))' transcript='\(transcript.prefix(40))' shownQuestion='\(transcriptForDisplay.prefix(40))' history=\(answerHistory.count) detailed=\(answerDetailed) badge='\(creditsText)' plan='\(creditsPlanText)' alert='\(alertTitle)' hint='\(aiAnswerHint.prefix(50))'", tag: "FLOW")
+        case "dump":     dlog("FLOWSTATE: step=\(appStep) sessions=\(sessionsOpen) answer='\(aiAnswer.prefix(60).replacingOccurrences(of: "\n", with: " "))' transcript='\(transcript.prefix(40))' shownQuestion='\(transcriptForDisplay.prefix(40))' history=\(answerHistory.count) detailed=\(answerDetailed) badge='\(creditsText)' plan='\(creditsPlanText)' alert='\(alertTitle)' phoneonly=\(phoneOnlyHidden) auto=\(autoModeEnabled) screenshare='\(screenShareState.label)' update='\(updateNoticeText)' hint='\(aiAnswerHint.prefix(50))'", tag: "FLOW")
         default:
             // "ask What is a queue?" types the question into the Ask bar and sends it.
             if action.hasPrefix("ask ") { askManually(String(action.dropFirst(4))) }
@@ -1736,7 +1785,10 @@ class MainViewModel {
         aiAnswerHint = idleHintForCurrentMode
         refreshHotkeyGate()
         updateMicUI()
-        dlog("INTERVIEW: started (\(autoModeEnabled ? "Auto" : "Manual"), \(practiceAudioOn ? "Practice" : "Interview") audio)", tag: "FLOW")
+        dlog("INTERVIEW: started (\(autoModeEnabled ? "Auto" : "Manual"), microphone and computer sound)", tag: "FLOW")
+        if phoneOnly {
+            DispatchQueue.main.async { [weak self] in self?.setPhoneOnlyHidden(true, why: "Start with phone only on") }
+        }
     }
 
     /// Back to Setup without ending the session. The microphone is closed: a listening app
@@ -1763,16 +1815,20 @@ class MainViewModel {
     /// always in it. Returns a reason when it refuses, for the caller to show.
     func finishInterview() async -> String? {
         guard !finishing else { return nil }
-        if isProcessing || isScreenAnalyzing {
-            showAlert(title: "Answer still finishing",
-                      body: "Wait for the current answer to finish, then choose Finish again so the complete turn is saved.")
-            return "busy"
-        }
-        finishing = true
+        finishing = true                     // the button says "Saving..." from here
         defer { finishing = false }
         // Finishing is not the same action as submitting a question. If the microphone is
         // open, stop capture WITHOUT sending the partial sentence to the model.
         stopListeningForSetup()
+        // Pressed while an answer is still being written: wait for it (up to 30 s), then finish, so the whole turn is
+        // saved. It used to refuse with "Answer still finishing, choose Finish again" (Windows customer report, 1.0.51).
+        if isProcessing || isScreenAnalyzing {
+            dlog("INTERVIEW: Finish pressed while an answer is being written; saving once it is done", tag: "FLOW")
+            let deadline = Date().addingTimeInterval(30)
+            while (isProcessing || isScreenAnalyzing) && Date() < deadline {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+        }
         let hadSession = isRecording
         let number = sessionNumber
         endSession()
@@ -1936,6 +1992,10 @@ class MainViewModel {
         guard session.isLoggedIn else {
             NotificationCenter.default.post(name: .showLogin, object: nil); return
         }
+
+        // A screen read is the person using Replysis: the "Nothing heard yet" tip must not follow it (a paying customer in a
+        // coding round saw it twice on Windows, CHANNEL.md 2026-10-28).
+        interviewSilentTipShown = true
 
         dlog("Screen analysis triggered (wholeScreen=\(wholeScreen))", tag: "SCREEN")
         answerIsBehavioral = false   // screen analysis isn't a behavioral question
@@ -2115,6 +2175,9 @@ class MainViewModel {
                     self.aiAnswer = "⏳ " + String(err.dropFirst("SERVER_MSG:".count))
                 } else if err.hasPrefix("RATE_LIMIT") {
                     self.aiAnswer = Self.rateLimitMessage(err)
+                } else if err == "NOT_THROUGH" {
+                    // A sign-in refresh that could not be done right now is not a sign-out.
+                    self.aiAnswer = Self.answerDidNotGoThrough
                 } else {
                     // NOT gated on watch mode any more. Errors were being swallowed there —
                     // exactly where they are least visible, because in watch mode nobody
@@ -2922,6 +2985,7 @@ class MainViewModel {
     private func syncWakefulness() {
         // The admin panel shows Listening the moment a session starts and clears it when it ends (Windows 1.0.31 item 29).
         PresenceTracker.shared.setListening(appStep == .interview && interviewStarted)
+        CompanionLink.shared.setListening(appStep == .interview && interviewStarted)   // the phone's Companion screen shows it too
         let want = session.isLoggedIn
         if want, sessionActivity == nil {
             sessionActivity = ProcessInfo.processInfo.beginActivity(
@@ -2937,6 +3001,8 @@ class MainViewModel {
 
     private func updateTranscript() {
         syncWakefulness()
+        // What the phone's Companion screen shows: the interviewer's words only, never the candidate's own (the microphone).
+        CompanionLink.shared.heard(lastTurnSource == "candidate" ? "" : transcript)
         tickListeningProblem()
         tickPreparedShots()
         checkAudioSourceTip()
@@ -3262,7 +3328,7 @@ class MainViewModel {
         guard Date().timeIntervalSince(busyStartedAt) > busyLimit else { return }
         dlog("WATCHDOG: \(Int(busyLimit))s with no answer — releasing so listening resumes", tag: "AUTO")
         if Self.answerBody(aiAnswer).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            aiAnswer = "⚠ No answer came back because the connection stalled. Ask again."
+            aiAnswer = Self.answerDidNotGoThrough
         }
         stopThinkingUI()
     }
@@ -3616,6 +3682,17 @@ class MainViewModel {
                 self?.engine.clearLatestTxt()
                 self?.engine.writeResetFlag()
             }
+            return
+        }
+
+        // THE CANDIDATE IS NOT THE INTERVIEWER. The engine labels each turn (">>> SOURCE"): computer sound in it is the interviewer,
+        // microphone only is the candidate. While an interviewer has been heard in the last ten minutes, the candidate's own words
+        // are never a question (they are answering, or asking "can you repeat that?"); alone, practising, they are (Windows 1.0.45).
+        if AutoTurnDetector.ignoreCandidateTurn(micOn: micCaptureActive, source: lastTurnSource, lastInterviewerAt: lastInterviewerTurnAt) {
+            dlog("AUTO: the candidate is speaking (microphone only) with an interviewer present — not answered: '\(text.prefix(40))'", tag: "AUTO")
+            consumedPrefix = engine.readLatestTxt()
+            pendingSpeechStartedAt = nil
+            transcript = ""
             return
         }
 
@@ -4041,6 +4118,9 @@ class MainViewModel {
         guard autoModeEnabled, session.isLoggedIn, !isProcessing else { return }
         // Setup is not an interview. Picking Auto there must not open the microphone.
         guard appStep == .interview else { return }
+        // Finish waits for an answer still being written; that answer ending must not open the microphone again
+        // (Windows 2026-11-02: Finish in Auto no longer restarts listening). New session or Start interview resumes it.
+        guard !finishing else { return }
         // The mic gave up on a silent room. Re-arming here would reopen it seconds later
         // and spend the time the stop just saved — and the message on screen says Space.
         guard !stoppedForIdle else {
@@ -4265,6 +4345,19 @@ class MainViewModel {
     private var listeningSince: Date?
     private var lastSpeechHeardAt = Date()
     private var unreportedListeningSeconds: Double = 0
+    /// The account the unreported seconds were heard under. Another account (or a guest) starts at zero.
+    private var unreportedListeningOwner = ""
+
+    /// Seconds kept for another account are dropped, never sent with this one (Windows ClaimListeningSeconds).
+    private func claimListeningSeconds() {
+        let who = session.userId
+        let kept = ListeningReport.secondsForOwner(unreportedListeningSeconds, owner: unreportedListeningOwner, current: who)
+        if kept != unreportedListeningSeconds {
+            dlog("METER: dropped \(Int(unreportedListeningSeconds)) s kept for another account", tag: "METER")
+        }
+        unreportedListeningSeconds = kept
+        unreportedListeningOwner = who
+    }
     private var lastRawTranscript = ""
     /// -1 = unlimited, or not yet known. Never a count.
     var audioMinutesRemaining = -1
@@ -4330,6 +4423,7 @@ class MainViewModel {
     private func stopListeningMeter() {
         listeningMeterTimer?.invalidate(); listeningMeterTimer = nil
         if let since = listeningSince {
+            claimListeningSeconds()
             unreportedListeningSeconds += ListeningBilling.countableSeconds(
                 start: since, now: Date(), lastWords: heardAnythingThisSession ? lastSpeechHeardAt : nil)
             listeningSince = nil
@@ -4372,21 +4466,15 @@ class MainViewModel {
             ? autoIdleListeningTimeout
             : (heardAnythingThisSession ? idleListeningTimeout : silentSessionTimeout)
 
-        // INTERVIEW MODE HEARS THE MEETING ONLY, never the person's own voice, by design, and
-        // nothing said so. After 45 seconds with nothing heard at all, say it once and offer
-        // the switch (Windows ListeningMeterTick, 2026-09-29).
-        // Measured on the SESSION clock, as Windows does (_sessionSeconds >= 45). An earlier
-        // version measured from listeningSince, which this tick re-stamps every five seconds,
-        // so the condition could never be true and the tip never appeared.
-        if !heardEverThisRun, !interviewSilentTipShown, !practiceAudioOn,
-           appStep == .interview, sessionSeconds >= 45, alertTitle.isEmpty {
+        // Nothing heard at all for 90 seconds of an interview: said once, and reported with what the engine saw, so a Mac listening
+        // to the wrong input is found from admin without asking anyone for a log (Windows, 2026-10-22). 45 s was a normal wait for
+        // the interviewer to start. Measured on the SESSION clock, as Windows does.
+        if !heardEverThisRun, !interviewSilentTipShown, appStep == .interview, sessionSeconds >= 90, alertTitle.isEmpty {
             interviewSilentTipShown = true
-            dlog("MODE: Interview mode heard nothing for 45s; offered a switch to Practice", tag: "MODE")
+            dlog("MODE: nothing heard for 90s of listening; told the user and reported it", tag: "MODE")
+            reportProblem("nothing-heard", "Nothing heard for 90 seconds of listening")
             showAlert(title: "Nothing heard yet",
-                      body: "Interview mode listens to your meeting only, so your own voice is not picked up. If you are speaking yourself, switch to Practice.",
-                      actionLabel: "Switch to Practice") { [weak self] in
-                self?.selectAudioSource(practice: true)
-            }
+                      body: "Replysis has not heard any voice. Practising? Speak into your microphone; earphones with a mic work best. In an online interview, the interviewer is heard from this computer's sound.")
         }
 
         // Developer builds only: a listening test in an empty room must not be ended by the quiet it is there to test.
@@ -4405,6 +4493,7 @@ class MainViewModel {
         }
 
         if let since = listeningSince {
+            claimListeningSeconds()
             unreportedListeningSeconds += ListeningBilling.countableSeconds(
                 start: since, now: now, lastWords: heardAnythingThisSession ? lastSpeechHeardAt : nil)
             listeningSince = now
@@ -4463,6 +4552,7 @@ class MainViewModel {
         if let since = listeningSince {
             // Speech time here too. This is the last place the wall clock was still being
             // billed, so an app quit while listening to a silent room charged for the wait.
+            claimListeningSeconds()
             unreportedListeningSeconds += ListeningBilling.countableSeconds(
                 start: since, now: Date(), lastWords: heardAnythingThisSession ? lastSpeechHeardAt : nil)
             listeningSince = nil
@@ -4482,24 +4572,45 @@ class MainViewModel {
     /// call. The gate that protects the money is server-side already.
     private func reportListeningMinutes(_ minutes: Int) {
         guard minutes > 0, session.isLoggedIn else { return }
+        let owner = session.userId
         Task { @MainActor [weak self] in
             guard let self else { return }
-            if let report = await NetworkClient.shared.reportListeningMinutes(minutes) {
-                let remaining = report.remaining
+            switch await NetworkClient.shared.reportListeningMinutes(minutes) {
+            case .reported(let remaining, let minutesBalance):
                 self.audioMinutesRemaining = remaining
-                if let balance = report.minutesBalance {
+                if let balance = minutesBalance {
                     let hadMinutes = self.minutesBalance > 0
                     self.minutesBalance = balance
-                    if MinutesBalance.shouldAskForMore(hadMinutes: hadMinutes, balance: balance) { self.askForMoreMinutes() }
+                    if MinutesBalance.shouldAskForMore(hadMinutes: hadMinutes, balance: balance,
+                                                       paidWithAnswers: self.paidPlanWithAnswers) { self.askForMoreMinutes() }
                 }
                 dlog("METER: reported \(minutes) min; \(remaining) left this month", tag: "METER")
                 self.updateCreditsUI(credits: self.session.credits, plan: self.session.plan,
                                      isUnlimited: self.session.isUnlimited)
                 self.warnIfListeningTimeLow()
-            } else {
-                dlog("METER: report of \(minutes) min did not land — carrying on", tag: "METER")
+            case .failed(let status, let error):
+                self.keepUnreportedMinutes(minutes, owner: owner, failure: (status, error))
             }
         }
+    }
+
+    /// Minutes the server cannot have counted go back into the meter and ride along with the next report, at most an hour
+    /// in all, and only for the account they were heard under (Windows 2026-11-07, round 55).
+    private func keepUnreportedMinutes(_ minutes: Int, owner: String, failure: (status: Int?, error: URLError.Code?)) {
+        let how = failure.status.map { "HTTP \($0)" } ?? failure.error.map { "error \($0.rawValue)" } ?? "no readable reply"
+        guard ListeningReport.keepFailedReport(status: failure.status, error: failure.error) else {
+            dlog("METER: report of \(minutes) min did not land (\(how)); not kept, the server may have counted it", tag: "METER")
+            return
+        }
+        // The account changed while the report was out (a 401 is often followed by a sign out): those minutes were
+        // heard under the old account and are not added to the new one.
+        guard session.userId == owner, unreportedListeningOwner == owner || unreportedListeningSeconds == 0 else {
+            dlog("METER: report of \(minutes) min did not land (\(how)); dropped, the account changed", tag: "METER")
+            return
+        }
+        unreportedListeningOwner = owner
+        unreportedListeningSeconds = ListeningReport.keptSeconds(unreported: unreportedListeningSeconds, minutes: minutes)
+        dlog("METER: report of \(minutes) min did not land (\(how)); kept to send with the next report", tag: "METER")
     }
 
     /// Bought minutes are nearly gone (Windows item 57). Asks the website to auto add 15 on the saved card, when the person switched auto add
@@ -4694,6 +4805,9 @@ class MainViewModel {
         // Everything the write needs is read HERE, on the main actor; the queue touches none of it.
         let header: String = {
             let fmt = DateFormatter()
+            // A fixed calendar: a Mac set to the Buddhist calendar wrote the year 2569 (Windows round 16).
+            fmt.locale = Locale(identifier: "en_US_POSIX")
+            fmt.calendar = Calendar(identifier: .gregorian)
             fmt.dateFormat = "yyyy-MM-dd HH:mm"
             return "SESSION \(sessionNumber) | ai | \(fmt.string(from: Date())) | RESUME: \(ResumeParser.extractName(resumeText))\n\n"
         }()
@@ -4756,8 +4870,9 @@ class MainViewModel {
             creditsRetryAttempt = 0
             session.plan = result.plan
             session.isUnlimited = result.isUnlimited
+            session.isTrial = result.trial
             minutesBalance = result.minutesBalance
-            dlog("Credits: \(result.credits), plan=\(result.plan), unlimited=\(result.isUnlimited)\(result.minutesBalance > 0 ? ", \(result.minutesBalance) bought minutes" : "")", tag: "CREDITS")
+            dlog("Credits: \(result.credits), plan=\(result.plan)\(result.trial ? " (trial)" : ""), unlimited=\(result.isUnlimited)\(result.minutesBalance > 0 ? ", \(result.minutesBalance) bought minutes" : "")", tag: "CREDITS")
             updateCreditsUI(credits: result.credits, plan: result.plan, isUnlimited: result.isUnlimited)
             await fetchListeningTime()
         } else {
@@ -4771,6 +4886,29 @@ class MainViewModel {
 
     private var creditsRetryAttempt = 0
     private var creditsRetryTask: Task<Void, Never>?
+    /// An empty balance is being asked for again before a question is refused.
+    private var balanceRecheckInFlight = false
+    private var lastFocusBalanceCheckAt = Date.distantPast
+
+    /// Asks for the balance and waits for it, but never longer than `cap`: the fetch refreshes the token and asks two
+    /// endpoints, and nothing is on screen while an answer waits for it. A slower reply still lands in the background.
+    func fetchCreditsWaitingAtMost(_ cap: TimeInterval) async {
+        var done = false
+        Task { @MainActor [weak self] in await self?.fetchCredits(); done = true }
+        let deadline = Date().addingTimeInterval(cap)
+        while !done && Date() < deadline { try? await Task.sleep(nanoseconds: 50_000_000) }
+        if !done { dlog("Credits: no balance within \(Int(cap)) s; going on with what is known", tag: "CREDITS") }
+    }
+
+    /// The window got focus: an empty balance is asked for again, so a customer who just paid on the website is not
+    /// still shown none (Windows 2026-11-02). At most every 10 seconds.
+    func refreshEmptyBalanceOnFocus() {
+        guard session.isLoggedIn, session.creditsKnown, !session.isUnlimited, PlanFacts.isEmpty(session.credits),
+              Date().timeIntervalSince(lastFocusBalanceCheckAt) > 10 else { return }
+        lastFocusBalanceCheckAt = Date()
+        dlog("Credits: window focused with no answers left; asking for the balance again", tag: "CREDITS")
+        Task { @MainActor [weak self] in await self?.fetchCredits() }
+    }
 
     /// 4, 10, 20, then 40 seconds, then the five-minute refresh takes over.
     private func scheduleCreditsRetry() {
@@ -4795,12 +4933,20 @@ class MainViewModel {
     /// On the one-time free answers rather than a paid plan. A guest counts.
     var onFreeTrial: Bool {
         !session.isUnlimited &&
-        PlanFacts.isFreeTrial(plan: session.plan, signedIn: session.isLoggedIn && !session.isGuestSession)
+        PlanFacts.isFreeTrial(plan: session.plan, signedIn: session.isLoggedIn && !session.isGuestSession, trial: session.isTrial)
+    }
+
+    /// "Max plan", "Practice plan": the plan's name as people bought it. The trial is never a plan name ("Free trial").
+    var planName: String {
+        if onFreeTrial { return "Free trial" }
+        let p = session.plan.trimmingCharacters(in: .whitespaces)
+        if p.isEmpty { return "Your plan" }
+        return p.lowercased().hasSuffix("plan") ? p.capitalized : "\(p.capitalized) plan"
     }
 
     /// The hover text on the answers badge.
     var creditsTooltip: String {
-        if session.isUnlimited { return "Unlimited answers.\nClick for details." }
+        if session.isUnlimited { return "\(planName) is active.\nClick for details." }
         if !session.creditsKnown { return "Checking how many answers you have left.\nClick to try again." }
         return PlanFacts.tooltip(credits: session.credits, freeTrial: onFreeTrial,
                                  listeningLimitReached: audioMinutesRemaining == 0)
@@ -4842,11 +4988,14 @@ class MainViewModel {
             // No "Reconnecting" flash for a wait that is over in a moment (Windows item 43b): only once speech has
             // been down for a few seconds.
             waitingToRetry: (now < session.speechRetryAfter || session.speechKeyRetrying) && now.timeIntervalSince(speechDownSince ?? now) >= Self.reconnectNoticeAfter,
-            fatalNoMicrophone: micCaptureEnabled && micStatus == "NO MIC" && AVCaptureDevice.authorizationStatus(for: .audio) == .denied,
+            // Never a blocking problem (CHANNEL 2026-11-13 item 6): with no microphone, or none allowed, listening runs on the
+            // computer's sound alone. The engine's NO_MICROPHONE line shows the gentle notice instead (handleNoMicrophone).
+            fatalNoMicrophone: false,
             connectionStalled: stalled,
             noNetwork: !network.isUp,
             anotherDevice: engine.accountBusy,
-            poorConnection: network.isUp && engine.connectionIsPoor)
+            poorConnection: network.isUp && engine.connectionIsPoor,
+            providerFault: engine.providerAtFault)
         currentProblem = problem
         if let problem {
             showProblemOnce(problem)
@@ -4876,10 +5025,11 @@ class MainViewModel {
         let action: (label: String, run: () -> Void)?
         switch d.step {
         case .moreAnswers: action = ("Get more answers", { NSWorkspace.shared.open(PlanFacts.addAnswersURL) })
+        case .upgrade:     action = ("Upgrade now", { NSWorkspace.shared.open(PlanFacts.pricingURL) })
         case .seePlans:    action = ("See plans", { NSWorkspace.shared.open(PlanFacts.pricingURL) })
         case .none:        action = nil
         }
-        showAlert(title: d.title, body: d.body, actionLabel: action?.label ?? "", action: action?.run)
+        showAlert(title: d.title, body: d.body, actionLabel: action?.label ?? "", reportAs: ListeningProblems.reportKind(kind), action: action?.run)
     }
 
     /// Clicking the answers badge asks again at once. Someone who just upgraded or added
@@ -4930,11 +5080,49 @@ class MainViewModel {
     /// A free trial reads as the end of a trial (what Pro gives), a paid plan as answers
     /// that renew. The button opens the account page, where answers can be added without
     /// a subscription, and the plans are offered too.
+    /// A paid plan (not the free trial) that still has answers: no "N min left" badge, no auto-add of minutes.
+    var paidPlanWithAnswers: Bool {
+        !onFreeTrial
+            && session.creditsKnown && !PlanFacts.isEmpty(session.credits)
+    }
+
+    /// Invite a friend: copy the link, say so, and offer WhatsApp (Windows, 2026-10-21).
+    func inviteFriend() {
+        guard session.isLoggedIn, !session.isGuestSession else {
+            showAlert(title: "Sign in to invite friends", body: "Sign in first, then your invite link is one click away.")
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard let link = await NetworkClient.shared.fetchReferralLink() else {
+                self.showAlert(title: "Invite link not ready", body: "Try again in a moment, or open replysis.com/account to copy it there.",
+                               reportAs: "invite-link-not-ready")
+                return
+            }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(link, forType: .string)
+            dlog("INVITE: invite link copied", tag: "INVITE")
+            let share = "I use Replysis for interview practice and live help. Sign up with my link and we both get 5 free answers: " + link
+            self.showAlert(title: "Invite link copied",
+                           body: "Send it to a friend. When they sign up, you both get 5 free answers. \(link)",
+                           actionLabel: "Share on WhatsApp") {
+                var parts = URLComponents(string: "https://wa.me/")!
+                parts.queryItems = [URLQueryItem(name: "text", value: share)]
+                if let url = parts.url { NSWorkspace.shared.open(url) }
+            }
+        }
+    }
+
     func showOutOfAnswers() {
         let m = PlanFacts.outOfAnswers(freeTrial: onFreeTrial)
         aiAnswer = "\(m.title)\n\n\(m.body)"
-        showAlert(title: m.title, body: m.body, actionLabel: "Get more answers") {
-            NSWorkspace.shared.open(PlanFacts.addAnswersURL)
+        // Free answers or the free trial used up: "Upgrade now" to the plans (MAC_HANDOFF_2026-10-27). A paid plan
+        // out of answers keeps "Get more answers", where answers are added without changing plan.
+        dlog("OUT-OF-ANSWERS-BUTTON: \(onFreeTrial ? "Upgrade now" : "Get more answers")", tag: "CREDITS")
+        if onFreeTrial {
+            showAlert(title: m.title, body: m.body, actionLabel: "Upgrade now", reportAs: "alert-no-answers-minor") { NSWorkspace.shared.open(PlanFacts.pricingURL) }
+        } else {
+            showAlert(title: m.title, body: m.body, actionLabel: "Get more answers", reportAs: "alert-no-answers-minor") { NSWorkspace.shared.open(PlanFacts.addAnswersURL) }
         }
         dlog("Out of answers — told the user (free trial=\(onFreeTrial))", tag: "CREDITS")
     }
@@ -4950,18 +5138,20 @@ class MainViewModel {
             return
         }
         if isUnlimited {
-            // A retired unlimited account. Nobody can buy this now; it still has to read right.
-            creditsText = "Unlimited"
+            // A retired unlimited account. Nobody can buy this now; it still has to read right, and never as
+            // "unlimited" (owner's rule, MAC_HANDOFF_2026-10-27).
+            creditsText = planName
             creditsColor = Color(red: 167/255, green: 139/255, blue: 250/255)
-            creditsPlanText = "Unlimited"
+            creditsPlanText = planName
             return
         }
-        creditsText = MinutesBalance.badgeText(minutes: minutesBalance, fallback: PlanFacts.badgeText(credits))
-        let free = PlanFacts.isFreeTrial(plan: plan, signedIn: session.isLoggedIn && !session.isGuestSession)
+        let free = onFreeTrial
+        creditsText = MinutesBalance.badgeText(minutes: minutesBalance, fallback: PlanFacts.badgeText(credits),
+                                               paidWithAnswers: !free && !PlanFacts.isEmpty(credits))
         creditsPlanText = free ? "Free trial" : "\(plan.capitalized) plan"
         if PlanFacts.isEmpty(credits) {
             creditsColor = Color(red: 239/255, green: 68/255, blue: 68/255)
-            creditsPlanText = "Get more answers"
+            creditsPlanText = free ? "Upgrade now" : "Get more answers"
         } else if PlanFacts.isLow(credits) {
             creditsColor = Color(red: 245/255, green: 158/255, blue: 11/255)
         } else {
@@ -5063,19 +5253,10 @@ class MainViewModel {
         mainPanel?.makeKeyAndOrderFront(nil)
     }
 
-    // Pin on top: when ON the window floats above other apps (for the interview);
-    // when OFF it's a normal window that goes behind apps you switch to.
-    // Pin is an interview control, not a permanent desktop behaviour (owner, 2026-10-09, as on Windows: Topmost = interview started && pinned):
-    // on the Setup page the window is a normal one, and the pin button is only shown during an interview.
+    // The window floats above other apps during an interview and is a normal window on the Setup page (owner, 2026-10-09, as on
+    // Windows: Topmost = interview started). There is no Pin on top choice any more (CHANNEL 2026-11-13: Windows has none).
     func applyKeepOnTop() {
         mainPanel?.level = (appStep == .interview && isPinnedOnTop) ? .floating : .normal
-    }
-
-    func togglePin() {
-        isPinnedOnTop.toggle()
-        applyKeepOnTop()
-        saveSettings()
-        dlog("Pin-on-top \(isPinnedOnTop ? "ON" : "OFF")", tag: "WINDOW")
     }
 
     func setScreenKeysEverywhere(_ on: Bool) {
@@ -5087,7 +5268,52 @@ class MainViewModel {
 
     /// ⌃⌥R from any app. Raises whichever window is in use — the compact overlay when that is
     /// showing, so it does not pull the hidden main window over it (Windows fbca2c6).
+    // ── Answers on my phone only (Windows, 2026-10-24/25) ─────────────────────────────────────
+    // With the setting on, Start hides every Replysis window on this Mac; listening, answering and the phone relay carry on exactly
+    // as before. Nobody can press Space on a hidden window, so it switches to Auto (the phone's Answer button is the Space).
+    // ⌃⌥H hides or shows it at any time, and ⌃⌥R also brings it back.
+    var phoneOnly = false
+    private(set) var phoneOnlyHidden = false
+
+    func setPhoneOnly(_ on: Bool) {
+        phoneOnly = on
+        saveSettings()
+        dlog("PHONE_ONLY: answers on my phone only \(on ? "ON" : "OFF")", tag: "PHONE_ONLY")
+    }
+
+    func setPhoneOnlyHidden(_ hide: Bool, why: String) {
+        guard hide != phoneOnlyHidden else { return }
+        if hide {
+            phoneOnlyHidden = true
+            if showCameraOverlay, let overlay = AnswerOverlayWindow.shared { overlay.orderOut(nil) }
+            mainPanel?.orderOut(nil)
+            if !autoModeEnabled { setListeningMode(.auto) }
+        } else {
+            phoneOnlyHidden = false
+            showWindowsAgain()
+        }
+        dlog("PHONE_ONLY: \(hide ? "hidden on this Mac" : "shown again") (\(why))", tag: "PHONE_ONLY")
+    }
+
+    /// Stop pressed in the phone app: Finish, once any answer still being written is done, so the last turn is saved whole.
+    func stopFromPhone() {
+        Task { @MainActor [weak self] in
+            for _ in 0..<40 {
+                guard let self, self.isProcessing || self.isScreenAnalyzing else { break }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+            guard let self, self.appStep == .interview else { return }
+            dlog("COMPANION: finishing the interview: Stop pressed on the phone", tag: "COMPANION")
+            _ = await self.finishInterview()
+        }
+    }
+
     func bringToFront() {
+        if phoneOnlyHidden { phoneOnlyHidden = false; dlog("PHONE_ONLY: shown again (⌃⌥R)", tag: "PHONE_ONLY") }
+        showWindowsAgain()
+    }
+
+    private func showWindowsAgain() {
         dlog("⌃⌥R — bringing Replysis to the front", tag: "WINDOW")
         if showCameraOverlay, let overlay = AnswerOverlayWindow.shared {
             overlay.orderFrontRegardless()
@@ -5312,23 +5538,22 @@ class MainViewModel {
             // saved "concise" choice simply becomes Short.
             answerDetailed = (obj["answerLength"] as? String) == "detailed"
             PromptBuilder.shared.detailedAnswers = answerDetailed
-            // Default ON: system audio + the user's own voice, so Space captures both out
-            // of the box. Users who want to stay fully invisible in a real interview can
-            // switch to system-audio-only in Settings.
-            // Default for NEW installs is Interview (no microphone). Anyone who has saved a
-            // choice keeps it — the key is present in their settings file.
-            micCaptureEnabled = obj["micCaptureEnabled"] as? Bool ?? false
-            transcriptLanguage = obj["transcriptLanguage"] as? String ?? "en"
+            // ONE LISTENING MODE (Windows 1.0.45, CHANNEL 2026-11-13): the microphone and the computer's sound are always heard
+            // together, and who spoke is decided per turn by the engine (">>> SOURCE"). There is no switch: a saved
+            // "micCaptureEnabled": false from an older copy is ignored.
+            if obj["oneListeningMode"] == nil { movedToOneMode = true }
             cloudSyncEnabled = obj["cloudSyncEnabled"] as? Bool ?? true
             sarvamApiKey = obj["sarvamApiKey"] as? String ?? ""
+            // A saved Telugu (or other Sarvam language) with no key starts in English (Windows round 53).
+            transcriptLanguage = LanguageRules.engineLanguage(saved: obj["transcriptLanguage"] as? String, sarvamKey: sarvamApiKey)
             isWatchMode = obj["screenAnswers"] as? Bool ?? true
             listeningMode = ListeningMode.fromStored(obj["listeningMode"] as? String)
                 ?? ((obj["autoModeEnabled"] as? Bool ?? false) ? .auto : .manual)
             // Default ON: hidden from screen sharing/recording out of the box. Settings
             // can turn it off for anyone who wants the window visible in a recording.
             stealthModeEnabled = obj["stealthModeEnabled"] as? Bool ?? true
-            isPinnedOnTop = obj["keepOnTop"] as? Bool ?? true
             screenKeysEverywhere = obj["screenKeysEverywhere"] as? Bool ?? true
+            phoneOnly = obj["phoneOnly"] as? Bool ?? false
             applyKeepOnTop()
             hotkey?.setScreenKeysEverywhere(screenKeysEverywhere)
 
@@ -5342,6 +5567,11 @@ class MainViewModel {
                 opacityDefaultV2Applied = true
                 saveSettings()
             }
+            if movedToOneMode {
+                movedToOneMode = false
+                saveSettings()
+                dlog("SETTINGS: moved to one listening mode: the microphone is on (it can be turned off in Settings)", tag: "SETTINGS")
+            }
         }
     }
 
@@ -5349,9 +5579,14 @@ class MainViewModel {
 
     func saveSettings() {
         let path = engine.appDataFolder.appendingPathComponent("settings.json")
-        let obj: [String: Any] = ["mainOpacity": mainWindowOpacity,
+        // Starts from what is stored, as Windows now does (bug round 6: Save built a blank config and reset what the form
+        // did not carry). Every setting below is written from the window, and anything else in the file is kept.
+        var obj: [String: Any] = (try? Data(contentsOf: path))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        let current: [String: Any] = ["mainOpacity": mainWindowOpacity,
                                   "overlayOpacity": overlayOpacity, "answerLength": answerDetailed ? "detailed" : "short",
                                   "micCaptureEnabled": micCaptureEnabled,
+                                  "oneListeningMode": true,
                                   "transcriptLanguage": transcriptLanguage,
                                   "cloudSyncEnabled": cloudSyncEnabled,
                                   "sarvamApiKey": sarvamApiKey,
@@ -5360,7 +5595,9 @@ class MainViewModel {
                                   "stealthModeEnabled": stealthModeEnabled,
                                   "keepOnTop": isPinnedOnTop,
                                   "screenKeysEverywhere": screenKeysEverywhere,
+                                  "phoneOnly": phoneOnly,
                                   "opacityDefaultV2Applied": true]
+        obj.merge(current) { _, new in new }
         try? JSONSerialization.data(withJSONObject: obj).write(to: path)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
     }
@@ -5374,7 +5611,10 @@ class MainViewModel {
     /// Off = system-audio-only: only the interviewer is transcribed, the mic is NEVER
     /// opened, so there's no orange indicator — fully invisible, for users who want to
     /// stay hidden in a real interview with nothing to reveal if the mic icon is checked.
-    var micCaptureEnabled = false
+    /// Always on (one listening mode). Kept as a name so logs and reports still say "microphone on".
+    let micCaptureEnabled = true
+    /// Set while loading an older settings file: saved once with the one-mode marker.
+    private var movedToOneMode = false
 
     /// "Back up session history": mirrors questions and answers to the account, so they
     /// appear in Past Sessions on the other signed-in devices. On by default, as on
@@ -5393,24 +5633,16 @@ class MainViewModel {
     // The engine hears ONLY this language (--language), so it has to match the interview:
     // speech in another language comes back as garbled words in this one. Same list and
     // codes as Windows, so a transcript is the same on both. Telugu and the other Indian
-    // languages Speechmatics cannot do are routed by the engine to Sarvam AI, which needs
-    // a key in Settings; without one they stay unavailable and the picker says so.
-    static let interviewLanguages: [(name: String, code: String)] = [
-        ("English", "en"), ("Hindi", "hi"), ("Tamil", "ta"), ("Telugu (Sarvam AI)", "te"),
-        ("Bengali", "bn"), ("Marathi", "mr"), ("Urdu", "ur"), ("Spanish", "es"),
-        ("French", "fr"), ("German", "de"), ("Portuguese", "pt"), ("Italian", "it"),
-        ("Mandarin Chinese", "cmn"), ("Japanese", "ja"), ("Korean", "ko"),
-        ("Arabic", "ar"), ("Russian", "ru"),
-    ]
-    /// Codes the engine routes to Sarvam AI. Keep in sync with SARVAM_LANG_MAP in
-    /// speechmatics_engine.py and with Windows _sarvamLangs.
-    static let sarvamLanguages: Set<String> = ["te", "kn", "ml", "gu", "pa", "or", "as"]
+    // languages Speechmatics cannot do need a Sarvam AI key no customer has, so they are not
+    // offered (Windows round 53, LanguageRules); one kept from an older version with its own key still works.
+    static var interviewLanguages: [(name: String, code: String)] { LanguageRules.offered }
+    static var sarvamLanguages: Set<String> { LanguageRules.sarvamLanguages }
 
     var transcriptLanguage = "en"
     var sarvamApiKey = ""
 
     var interviewLanguageName: String {
-        Self.interviewLanguages.first { $0.code == transcriptLanguage }?.name ?? "English"
+        LanguageRules.pickerList(current: transcriptLanguage).first { $0.code == transcriptLanguage }?.name ?? "English"
     }
 
     func setInterviewLanguage(_ code: String) {
@@ -5448,16 +5680,62 @@ class MainViewModel {
         engine.start(smKey: session.speechmaticsKey)
     }
 
-    // ── Interview / Practice ──────────────────────────────────────────────────
-    //
-    // The same preference the Settings switch writes, so the two can never disagree.
-    // Practice means the microphone is open too. Ported from Windows (2026-09-20).
-    var practiceAudioOn: Bool { micCaptureEnabled }
-    private var audioSourceChangePending = false
-    private var interviewTipShown = false
-    private var practiceTipShown = false
     private var lastAudioSourceTipCheck = Date.distantPast
-    /// An alert that can carry one action, for the two tips below.
+    /// The update notice (Windows 1.0.46): "on its way" as soon as one is found, "ready" with Restart once staged. Its own line, so a
+    /// problem notice never hides it, and never shown while listening (an interview is never interrupted).
+    var updateState: AppUpdater.State = .none
+    /// Who said the last turn, from the engine's ">>> SOURCE" line: interviewer, candidate or unknown.
+    var lastTurnSource = "unknown"
+    private var lastInterviewerTurnAt = Date.distantPast
+    /// An interviewer has been heard in the last ten minutes: the candidate's own words are then never a question.
+    var interviewerPresent: Bool { Date().timeIntervalSince(lastInterviewerTurnAt) < 600 }
+
+    func noteTurnSource(_ who: String) {
+        lastTurnSource = who
+        if who == "interviewer" { lastInterviewerTurnAt = Date() }
+        if who == "candidate" { CompanionLink.shared.heard("") }   // the phone shows the interviewer only
+        dlog("AUTO: turn spoken by: \(who)\(who == "candidate" && interviewerPresent ? " (interviewer present, will not answer)" : "")", tag: "AUTO")
+    }
+
+    /// The setup page's "Screen share" row, from StealthSelfTest (Windows, 2026-10-22/23).
+    var screenShareState: ScreenShareState = .checking
+    private var stealthSelfTestRunning = false
+
+    /// Show a probe square with hiding applied and capture it like a screen share. At start and when Stealth is turned back on.
+    func runStealthSelfTest() {
+        guard stealthModeEnabled else { screenShareState = .off; return }
+        guard !stealthSelfTestRunning else { return }
+        #if DEBUG
+        guard !DeveloperOverrides.skipStealthSelfTest else { return }
+        #endif
+        stealthSelfTestRunning = true
+        screenShareState = .checking
+        Task { @MainActor [weak self] in
+            let result = await StealthSelfTest.run()
+            guard let self else { return }
+            self.stealthSelfTestRunning = false
+            guard self.stealthModeEnabled else { self.screenShareState = .off; return }
+            self.screenShareState = result
+            dlog("STEALTH: self-test: \(result.label) (stealth on)", tag: "STEALTH")
+            if result == .visible {
+                self.reportProblem("stealth-visible", "The hiding self-test square was seen by a screen capture")
+            }
+        }
+    }
+    var updateNoticeText: String {
+        guard !isListening, appStep != .interview else { return "" }   // never during an interview, listening or not
+        switch updateState {
+        case .none: return ""
+        case .onItsWay(let v): return "Replysis AI \(v) is on its way"
+        case .ready(let v): return "Replysis AI \(v) is ready"
+        }
+    }
+    var updateReady: Bool { if case .ready = updateState { return true } else { return false } }
+    func restartToUpdate() {
+        guard !isListening, !isProcessing else { return }
+        AppUpdater.shared.restartToUpdate()
+    }
+
     var alertTitle = ""
     var alertBody = ""
     var alertActionLabel = ""
@@ -5474,15 +5752,10 @@ class MainViewModel {
         dlog("NO MICROPHONE: the engine found no microphone (\(waiting ? "waiting for one" : "carrying on with the computer's sound"))", tag: "AUDIO")
         let title = waiting ? "No microphone found" : "No microphone on this Mac"
         let body = waiting
-            ? "Practice mode needs a microphone. Plug in earphones with a mic and Replysis starts listening by itself."
+            ? "Plug in earphones with a mic and Replysis starts listening by itself."
             : "Replysis is listening to the computer's sound only. Plug in earphones with a mic if you want to practise out loud."
         noMicrophoneAlertTitle = title
-        showAlert(title: title, body: body, actionLabel: waiting ? "Use Interview instead" : "", action: waiting ? { [weak self] in
-            guard let self else { return }
-            self.noMicrophoneAlertTitle = nil
-            self.dismissAlert()
-            self.setMicCaptureEnabled(false)      // Interview: the engine restarts hearing the computer's sound
-        } : nil)
+        showAlert(title: title, body: body, reportAs: "no-microphone-minor")
     }
 
     func handleMicrophoneConnected() {
@@ -5494,13 +5767,17 @@ class MainViewModel {
     /// Windows MAC_CATCHUP, 2026-10-19: every problem a person hits is reported to admin, once per kind per run, with the situation it
     /// happened in appended. See ClientErrorReporter for what is and is not sent.
     func reportProblem(_ kind: String, _ message: String) {
-        let situation = "[\(micCaptureEnabled ? "Practice" : "Interview"), \(autoModeEnabled ? "Auto" : "Manual"), \(appStep == .interview ? "in interview" : "setup")]"
+        let situation = "[microphone \(micCaptureEnabled ? "on" : "off"), \(autoModeEnabled ? "Auto" : "Manual"), \(appStep == .interview ? "in interview" : "setup")]"
         ClientErrorReporter.reportProblem(kind: kind, message: "\(message) \(situation)")
     }
 
-    func showAlert(title: String, body: String, actionLabel: String = "", action: (() -> Void)? = nil) {
+    /// - Parameter reportAs: the problem KIND sent to admin, or nil for a notice that is not a problem ("Nothing heard yet",
+    ///   "Your minutes are almost over", "Invite link copied"). Never the title (Windows MAC_CATCHUP 2026-11-07, rounds 17
+    ///   and 22): reported by title, a customer out of answers or with no microphone counted towards the owner's "apps are
+    ///   reporting errors" email. A customer's own state ends in "-minor".
+    func showAlert(title: String, body: String, actionLabel: String = "", reportAs: String? = nil, action: (() -> Void)? = nil) {
         dlog("ALERT: \(title) — \(body)", tag: "ALERT")
-        reportProblem("alert." + ClientErrorReporter.slug(title), "\(title). \(body)")
+        if let reportAs { reportProblem(reportAs, "\(title). \(body)") }
         alertTitle = title; alertBody = body
         alertActionLabel = action == nil ? "" : actionLabel
         alertAction = action
@@ -5516,115 +5793,16 @@ class MainViewModel {
         alertTitle = ""; alertBody = ""; alertActionLabel = ""; alertAction = nil
     }
 
-    /// Switches between hearing the meeting only and hearing the meeting plus the
-    /// microphone. The engine is told by restarting it, which takes about a second, so it
-    /// waits while a question is being listened to rather than cutting it off.
-    func selectAudioSource(practice: Bool) {
-        guard micCaptureEnabled != practice else { return }
-        if isListening || isProcessing {
-            micCaptureEnabled = practice          // the toolbar shows the new choice at once
-            saveSettings()
-            audioSourceChangePending = true
-            showListeningNotice(practice ? "PRACTICE STARTS AFTER THIS QUESTION"
-                                         : "INTERVIEW STARTS AFTER THIS QUESTION")
-            dlog("Audio source → \(practice ? "Practice" : "Interview") — waiting for this question to finish", tag: "AUDIO")
-            return
-        }
-        audioSourceChangePending = false
-        setMicCaptureEnabled(practice)
-        dlog(practice ? "Practice: hears the meeting and the microphone"
-                      : "Interview: hears the meeting only", tag: "AUDIO")
-    }
-
-    /// Applies a switch that was asked for mid-question, once it is over.
-    private func applyPendingAudioSourceChange() {
-        guard audioSourceChangePending, !isListening, !isProcessing else { return }
-        audioSourceChangePending = false
-        let wanted = micCaptureEnabled
-        micCaptureEnabled = !wanted          // so setMicCaptureEnabled sees a real change
-        setMicCaptureEnabled(wanted)
-        dlog("Audio source applied now the question is over → \(wanted ? "Practice" : "Interview")", tag: "AUDIO")
-    }
-
-    /// Says something only when the setting is about to cost the user an interview: the
-    /// microphone is open with a meeting app running, or the app has been listening to
-    /// silence for minutes with no meeting anywhere. Each tip at most once per launch.
+    /// Settings changes that wait for the current question: applied once it is over.
     private func checkAudioSourceTip() {
         let now = Date()
         guard now.timeIntervalSince(lastAudioSourceTipCheck) >= 20 else { return }
         lastAudioSourceTipCheck = now
-        applyPendingAudioSourceChange()
         if languageChangePending, !isListening, !isProcessing {
             languageChangePending = false
             restartEngineForSettingChange()
             dlog("Interview language applied now the question is over", tag: "SETTINGS")
         }
-        guard session.isLoggedIn, alertTitle.isEmpty else { return }
-
-        let practice = practiceAudioOn
-        let meeting = AudioSourceRules.meetingAppRunning()
-
-        if AudioSourceRules.shouldSuggestInterview(practiceOn: practice, meetingAppRunning: meeting,
-                                                   alreadySuggested: interviewTipShown) {
-            interviewTipShown = true
-            showAlert(title: "In a real interview?",
-                      body: "Replysis can hear your microphone, so your own answers can be taken as new questions. Interview hears the meeting only.",
-                      actionLabel: "Switch to Interview") { [weak self] in
-                self?.selectAudioSource(practice: false)
-            }
-            return
-        }
-
-        let quiet = heardAnythingThisSession ? now.timeIntervalSince(lastSpeechHeardAt) : 0
-        // "Listening" here has to include the standby the quiet itself causes. Measured:
-        // the mic stops after 3 minutes of silence (stopForIdle) at the same moment this
-        // rule's 3 minutes elapse, so a strict isListening meant the tip could never fire.
-        // Standby after a quiet stretch is the same evidence — the app is armed and
-        // nothing is being said to it.
-        let armed = isListening || (stoppedForIdle && autoModeEnabled)
-        if AudioSourceRules.shouldSuggestPractice(interviewOn: !practice, listening: armed,
-                                                  meetingAppRunning: meeting, quietFor: quiet,
-                                                  alreadySuggested: practiceTipShown) {
-            practiceTipShown = true
-            showAlert(title: "Practising on your own?",
-                      body: "Interview hears the meeting only, so nothing you say is picked up. Practice hears your microphone too.",
-                      actionLabel: "Switch to Practice") { [weak self] in
-                self?.selectAudioSource(practice: true)
-            }
-        }
-    }
-
-    /// Called from Settings when the user switches audio-capture mode. Applies immediately:
-    /// requests the native mic permission if needed, and restarts the engine so the change
-    /// takes effect without waiting for the next launch.
-    func setMicCaptureEnabled(_ enabled: Bool) {
-        guard micCaptureEnabled != enabled else { return }
-        micCaptureEnabled = enabled
-        saveSettings()
-        dlog("Audio capture mode changed → micCaptureEnabled=\(enabled)", tag: "SETTINGS")
-
-        if enabled && AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-            requestMicrophonePermission()   // native popup; engine restart below picks it up
-        } else if enabled && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized {
-            // BUG FIX: re-warm the mic hardware the moment the user switches BACK to
-            // "+ my voice". MicPrimer.stop() (below, other branch) tears down the AVAudioEngine
-            // that keeps the mic hardware warm — without a counterpart here, switching back on
-            // left the engine restart below to open the mic cold, paying the ~18-20s one-time
-            // OS hardware wake-up cost itself (see MicPrimer.swift) with nothing transcribed
-            // from the mic in the meantime. Looked exactly like "the mic is broken" until it
-            // silently recovered on its own a bit later.
-            primeMicIfPermitted()
-        } else if !enabled {
-            // BUG FIX: MicPrimer may already be running from earlier in this session (it
-            // starts as soon as mic is authorized, before the user ever touches Settings).
-            // Without this, switching to "System audio only" correctly changed what the
-            // Python engine does, but the already-warmed AVAudioEngine kept running — mic
-            // stayed open and the orange indicator stayed on regardless of the new setting.
-            MicPrimer.shared.stop()
-        }
-        guard session.isLoggedIn, engine.isRunning else { return }
-        engine.stop()
-        engine.start(smKey: session.speechmaticsKey)
     }
 
     // MARK: - Auto Mode
@@ -5645,11 +5823,6 @@ class MainViewModel {
         // sentence, heard through an open microphone. In a real call the interviewer comes
         // through computer sound, so turning the mic off removes it entirely — but people only
         // do that if they are told. Once per launch, and only with the mic on.
-        if mode == .auto, micCaptureEnabled, !micOffHintShown {
-            micOffHintShown = true
-            showMicOffHint = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.showMicOffHint = false }
-        }
         // Clear what the PREVIOUS mode produced. Leaving the old answer on screen made a
         // mode that had correctly stayed silent look like it had answered wrongly — the
         // user reads a stale reply and blames the new mode for it. Also drops any
@@ -5740,6 +5913,9 @@ class MainViewModel {
         mainPanel?.sharingType = type
         AnswerOverlayWindow.shared?.sharingType = type
         StealthWindows.setEnabled(stealthModeEnabled)
+        if !stealthModeEnabled { screenShareState = .off } else if screenShareState == .off { runStealthSelfTest() }
+        // First in every problem report: a copy with stealth off was invisible from admin (Windows, 2026-10-22).
+        ClientErrorReporter.stealthState = stealthModeEnabled ? "STEALTH: on" : "STEALTH: OFF in Settings"
     }
 
     /// Called from Settings when the user switches Stealth Mode. Applies immediately —
@@ -5927,21 +6103,8 @@ class MainViewModel {
     /// anyway, which reads as a dash rather than a list — so convert leading markers to a
     /// real bullet here regardless of what it produced. Dashes are NOT touched: nothing in
     /// this section is spoken, and a hyphen mid-line is usually a range or a compound word.
-    private func cleanDepth(_ text: String) -> String {
-        var out: [String] = []
-        for raw in text.components(separatedBy: "\n") {
-            var line = raw.trimmingCharacters(in: .whitespaces)
-            line = PromptBuilder.stripMarkdownPreservingCode(line)
-            if line.isEmpty { continue }
-            for marker in ["- ", "* ", "• ", "•", "- ", "– "] where line.hasPrefix(marker) {
-                line = String(line.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
-                break
-            }
-            if line.isEmpty { continue }
-            out.append("• " + line)
-        }
-        return out.joined(separator: "\n")
-    }
+    /// Lines inside a code fence keep their indentation and are never bulleted (Windows round 20); see AnswerLayout.depthBullets.
+    private func cleanDepth(_ text: String) -> String { AnswerLayout.depthBullets(text) }
 }
 
 // MARK: - Color hex helper

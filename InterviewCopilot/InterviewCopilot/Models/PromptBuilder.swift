@@ -326,7 +326,21 @@ class PromptBuilder {
         return out.joined(separator: "\n")
     }
 
+    /// The longest question sent to the model or kept in history (Windows MaxHistoryQuestionChars).
+    static let maxQuestionChars = 4_000
+
+    /// A question over the cap keeps its END. An interviewer who reads out a long brief asks the actual question last
+    /// ("...so design the backend for that"); cutting the end sent the brief and dropped the question (Windows bug round 47).
+    static func truncateKeepingEnd(_ value: String, _ maxChars: Int = maxQuestionChars) -> String {
+        guard value.count > maxChars else { return value }
+        var start = value.index(value.endIndex, offsetBy: -maxChars)
+        // Start on a word, so the first thing the model reads is not half of one.
+        if let space = value[start...].prefix(40).firstIndex(of: " ") { start = value.index(after: space) }
+        return "[earlier part cut]\n" + value[start...]
+    }
+
     func addToHistory(question: String, answer: String) {
+        let question = Self.truncateKeepingEnd(question)
         history.append((q: question, a: answer))
         if history.count > 80 { history.removeFirst() }
         trackCoveredContent(text: question + " " + answer)
@@ -1411,6 +1425,7 @@ class PromptBuilder {
                        qTypeHint: QuestionType? = nil, drillDownHint: Bool? = nil,
                        jobContext: String = "",
                        hints: String = "", screening: String = "") -> [[String: String]] {
+        let currentQuestion = Self.truncateKeepingEnd(currentQuestion)
         let qType = qTypeHint ?? detectType(currentQuestion)
         let drillDown = drillDownHint ?? isDrillDown(currentQuestion)
 

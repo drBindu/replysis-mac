@@ -17,13 +17,15 @@ enum MinutesBalance {
     static let askEvery: TimeInterval = 3 * 60
 
     /// What the badge says: the minutes while there are any, otherwise whatever it said before.
-    static func badgeText(minutes: Int, fallback: String) -> String {
-        minutes > 0 ? "\(minutes) min left" : fallback
+    /// A paid plan with answers left shows its answers: those are what it pays for (Windows bug sweep, 2026-10-22).
+    static func badgeText(minutes: Int, fallback: String, paidWithAnswers: Bool = false) -> String {
+        minutes > 0 && !paidWithAnswers ? "\(minutes) min left" : fallback
     }
 
-    /// A balance that is dropping to nothing, for someone who has (or just had) bought minutes. A person who never bought any is not asked.
-    static func shouldAskForMore(hadMinutes: Bool, balance: Int) -> Bool {
-        (hadMinutes || balance > 0) && balance <= autoAddWhenLeft
+    /// A balance that is dropping to nothing, for someone who has (or just had) bought minutes. A person who never bought any is not asked,
+    /// and neither is a paid plan with answers left: it would be charged for minutes it does not need.
+    static func shouldAskForMore(hadMinutes: Bool, balance: Int, paidWithAnswers: Bool = false) -> Bool {
+        !paidWithAnswers && (hadMinutes || balance > 0) && balance <= autoAddWhenLeft
     }
 
     static func mayAsk(now: Date, lastAskedAt: Date?) -> Bool {
@@ -53,5 +55,32 @@ enum MinutesBalance {
     static func balance(from object: [String: Any]) -> Int? {
         guard let value = object["minutesBalance"] as? Int else { return nil }
         return max(0, value)
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// A listening report (POST /api/v1/usage/listening) that failed (Windows 2026-11-07, round 55). Its minutes are kept for the
+// next report only when the server cannot have counted them: the connection never opened (or the name lookup failed), or
+// the server answered 401, 429, 502 or 503. A 504, a timeout or a reset after the request went out is not kept: the server
+// may have counted it already, and charging twice is worse than missing a minute. Kept seconds never pass an hour, and they
+// belong to the account they were heard under.
+// ══════════════════════════════════════════════════════════════════════════
+enum ListeningReport {
+    static let maxKeptSeconds: Double = 3600
+
+    static func keepFailedReport(status: Int?, error: URLError.Code?) -> Bool {
+        if let status, [401, 429, 502, 503].contains(status) { return true }
+        guard status == nil, let error else { return false }
+        return [.cannotFindHost, .dnsLookupFailed, .cannotConnectToHost, .notConnectedToInternet].contains(error)
+    }
+
+    /// Seconds put back into the meter, never more than an hour in all.
+    static func keptSeconds(unreported: Double, minutes: Int) -> Double {
+        min(maxKeptSeconds, unreported + Double(max(0, minutes)) * 60)
+    }
+
+    /// Unreported seconds count only for the account they were heard under; another account starts at zero.
+    static func secondsForOwner(_ seconds: Double, owner: String, current: String) -> Double {
+        owner == current ? seconds : 0
     }
 }

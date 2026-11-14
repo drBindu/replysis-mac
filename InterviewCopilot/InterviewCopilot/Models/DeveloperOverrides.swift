@@ -46,6 +46,15 @@ enum DeveloperOverrides {
     /// server is in use. REPLYSIS_SCREEN_TARGET names the window it stands for.
     static let screenImagePath: String? =
         backendURL == nil ? nil : ProcessInfo.processInfo.environment["REPLYSIS_SCREEN_IMAGE"]
+    /// A test copy does not flash the hiding self-test square on the owner's screen unless a test asks: REPLYSIS_SELFTEST=1.
+    static var skipStealthSelfTest: Bool {
+        #if DEBUG
+        return headless && ProcessInfo.processInfo.environment["REPLYSIS_SELFTEST"] != "1"
+        #else
+        return false
+        #endif
+    }
+
     /// REPLYSIS_HEADLESS=1  -> the window never shows (invisible, far off screen). Only against a fake server.
     static let headless: Bool =
         backendURL != nil && ProcessInfo.processInfo.environment["REPLYSIS_HEADLESS"] == "1"

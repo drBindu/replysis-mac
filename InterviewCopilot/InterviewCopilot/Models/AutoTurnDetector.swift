@@ -22,6 +22,12 @@ import AppKit      // NSSpellChecker — the system dictionary
 // ══════════════════════════════════════════════════════════════════════════
 
 struct AutoTurnDetector {
+    /// One listening mode (Windows 1.0.45): the candidate's own words (microphone only) are never a question while an interviewer
+    /// has been heard in the last ten minutes. Alone, practising, they are. Only with the microphone on.
+    static func ignoreCandidateTurn(micOn: Bool, source: String, lastInterviewerAt: Date, now: Date = Date()) -> Bool {
+        micOn && source == "candidate" && now.timeIntervalSince(lastInterviewerAt) < 600
+    }
+
 
     /// A repeat of the same question inside this window is the tail of the one already
     /// answered, not the interviewer asking twice.

@@ -4,8 +4,8 @@ import Foundation
 // The plan sizes as this app states them. Decided with the owner on 2026-09-29.
 //
 //   Free   25 credits     5 answers, ONCE (never refilled)
-//   Pro    2,500 credits  500 answers a month
-//   Max    7,500 credits  1,500 answers a month
+//   Pro    2,500 credits  500 answers a month (never shown as a number: MAC_HANDOFF_2026-10-27)
+//   Max    7,500 credits  1,500 answers a month (same)
 //   An answer or a screen read costs 5 credits.
 //
 // Ported from Windows PlanFacts.cs so the two apps say the same thing. These must equal
@@ -43,9 +43,18 @@ enum PlanFacts {
         }
     }
 
-    /// On the one-time free answers rather than a paid plan. A guest counts.
-    static func isFreeTrial(plan: String?, signedIn: Bool) -> Bool {
-        !signedIn || monthlyCredits(plan) == freeCredits
+    /// The plans people pay for. Practice ($14.99, Maya plus live answers) is paid although it is smaller than Pro
+    /// (MAC_HANDOFF_2026-10-27).
+    static func isPaid(_ plan: String?) -> Bool {
+        let p = (plan ?? "").lowercased()
+        return ["pro", "max", "lifetime", "team", "enterprise", "unlimited", "practice"].contains { p.contains($0) }
+    }
+
+    /// On free answers rather than a paid plan: a guest, the free plan, or the 3 day free trial. The trial is stored as
+    /// plan "pro" with planSource "trial", and the server's credits reply says `"trial": true` for it. Owner: "that's not
+    /// Pro, it's just the free tier" (MAC_HANDOFF_2026-10-27).
+    static func isFreeTrial(plan: String?, signedIn: Bool, trial: Bool = false) -> Bool {
+        !signedIn || trial || !isPaid(plan)
     }
 
     /// What a balance can actually buy: rounded DOWN, never overstated (12 credits is 2 answers).
@@ -70,16 +79,21 @@ enum PlanFacts {
         "\(answersShort(credits)) \(answers(credits) == 1 ? "answer" : "answers")"
     }
 
-    /// The allowance line: "5 answers, one time" or "500 answers each month".
-    static func allowanceText(plan: String?, signedIn: Bool) -> String {
+    /// The allowance line. Paid plans never show a number or "unlimited": people read a number as a small limit
+    /// (MAC_HANDOFF_2026-10-27). The free plan keeps its small number; the trial is "3 day free trial".
+    static func allowanceText(plan: String?, signedIn: Bool, trial: Bool = false) -> String {
+        if trial && signedIn { return "3 day free trial" }
         if isFreeTrial(plan: plan, signedIn: signedIn) { return "\(answers(freeCredits)) answers, one time" }
-        let n = NumberFormatter.localizedString(from: NSNumber(value: answers(monthlyCredits(plan))), number: .decimal)
-        return "\(n) answers each month"
+        let p = (plan ?? "").lowercased()
+        if p.contains("practice") { return "Practice interviews with Maya every month" }
+        if p.contains("max") || p.contains("lifetime") { return "Our largest monthly allowance, for interview heavy weeks" }
+        if p.contains("pro") { return "Answers for an active job search, refreshed every month" }
+        return "Live answers every month"
     }
 
     /// When the allowance comes back. Free answers never do, and must not be promised.
-    static func refreshText(plan: String?, signedIn: Bool) -> String {
-        isFreeTrial(plan: plan, signedIn: signedIn) ? "Not refreshed" : "Renews each month"
+    static func refreshText(plan: String?, signedIn: Bool, trial: Bool = false) -> String {
+        isFreeTrial(plan: plan, signedIn: signedIn, trial: trial) ? "Not refreshed" : "Renews each month"
     }
 
     /// The hover text on the badge. Never "this month" for the free answers: they do not refill.
@@ -119,9 +133,29 @@ enum PlanFacts {
     /// and refused until the next refresh (found by testing, 2026-10-01). Only a balance that is
     /// KNOWN to be empty stops a question here. Otherwise the server decides, and it is the one
     /// that has the real number.
-    static func mayAsk(balanceKnown: Bool, credits: Int, isUnlimited: Bool) -> Bool {
-        isUnlimited || !balanceKnown || !isEmpty(credits)
+    /// Bought minutes count too: while minutesBalance is above 0 the server charges minutes, not answers. A customer who
+    /// bought 45 minutes was told "You have 0 answers left" on Windows (2026-10-21).
+    static func mayAsk(balanceKnown: Bool, credits: Int, isUnlimited: Bool, minutes: Int = 0) -> Bool {
+        isUnlimited || !balanceKnown || !isEmpty(credits) || minutes > 0
     }
+
+    /// What the server writes into the answer stream when the charge finds no answers left (InterviewController
+    /// noAnswersLeftEvent). The /ask charge runs inside the stream, so this is the usual way running out arrives,
+    /// not a 402. It is out of answers, never an answer fault (Windows bug round 4, 2026-11-07).
+    nonisolated static let serverNoAnswersLeft = "You have no answers left."
+
+    nonisolated static func isServerNoAnswersLeft(_ said: String?) -> Bool {
+        (said ?? "").trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(serverNoAnswersLeft) == .orderedSame
+    }
+
+    /// The kind an answer failure is reported under. Running out of answers is a customer's own state, so it carries
+    /// "nocredits", which the server's alert rule (DiagnosticsController.isRealError) never counts. Same name as Windows.
+    static func answerProblemKind(noAnswersLeft: Bool, slug: String) -> String {
+        noAnswersLeft ? "answer-nocredits" : "answer." + slug
+    }
+
+    /// The longest an answer waits for an empty balance to be asked again before it is refused (Windows 2026-11-04).
+    static let balanceWaitCap: TimeInterval = 3
 
     /// What someone reads when an answer is refused for having none left. A free trial is
     /// the end of a trial, not a limit that renews, so it says what Pro gives. No numbers:

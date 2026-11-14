@@ -9,8 +9,8 @@ import Sparkle
 // the user trigger a check manually from Settings.
 //
 // Updates work the way the big apps do them (Chrome, VS Code, Slack, Discord, Zoom; owner, 2026-10-16):
-// the check starts with the app, before anyone has signed in, and repeats every four hours
-// (SUScheduledCheckInterval 14400, down from a day); a found update is downloaded in the
+// the check starts with the app, before anyone has signed in, and repeats every hour
+// (SUScheduledCheckInterval 3600, Sparkle's shortest; Windows checks every 10 minutes since 2026-10-21); a found update is downloaded in the
 // background and installed when the app is next quit (SUAutomaticallyUpdate), with no question
 // asked; and nothing is checked while an interview is running (setInterviewActive below).
 // Updates are verified against SUPublicEDKey before install, so a tampered
@@ -78,6 +78,52 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
 
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         dlog("AppUpdater: update available — \(item.displayVersionString) (build \(item.versionString))", tag: "UPDATE")
+        // Said the moment it is found, not after the download (Windows 1.0.46): people opened the app, saw nothing, and closed it.
+        state = .onItsWay(item.displayVersionString)
+    }
+
+    func updater(_ updater: SPUUpdater, didDownloadUpdate item: SUAppcastItem) {
+        dlog("AppUpdater: update \(item.displayVersionString) downloaded", tag: "UPDATE")
+    }
+
+    /// Downloaded and staged: it installs when the app is quit, or now from the notice's Restart button.
+    func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem, immediateInstallationBlock immediateInstallHandler: @escaping () -> Void) -> Bool {
+        dlog("AppUpdater: update \(item.displayVersionString) is ready; it installs on quit or from Restart", tag: "UPDATE")
+        installNow = immediateInstallHandler
+        state = .ready(item.displayVersionString)
+        return true   // Sparkle still installs on quit; this keeps the handler for the Restart button
+    }
+
+    // ── The top bar notice ─────────────────────────────────────────────────────────────────
+    typealias State = UpdateNoticeRules.Notice
+    /// Read by the view model, which shows it only while not listening (never during an interview).
+    var state: State = .none { didSet { onStateChange?(state) } }
+    var onStateChange: ((State) -> Void)?
+    private var installNow: (() -> Void)?
+
+    /// The notice's Restart button: install the staged update and relaunch.
+    func restartToUpdate() {
+        guard let installNow else { return }
+        dlog("AppUpdater: Restart to update pressed", tag: "UPDATE")
+        installNow()
+    }
+
+    /// The download failed: the notice must not keep saying it is on its way (Windows bug round 8). Reported as minor.
+    func updater(_ updater: SPUUpdater, failedToDownloadUpdate item: SUAppcastItem, error: Error) {
+        dlog("AppUpdater: download of \(item.displayVersionString) FAILED — \(error.localizedDescription) (code \((error as NSError).code))", tag: "UPDATE")
+        ClientErrorReporter.reportProblem(kind: UpdateNoticeRules.downloadFailedKind,
+                                          message: "Update \(item.displayVersionString) download failed (code \((error as NSError).code))")
+        state = UpdateNoticeRules.afterCheckEnds(state)
+    }
+
+    /// Every check ends here, whatever happened. "On its way" with nothing staged comes down; the next check that finds the
+    /// update says it again.
+    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+        let next = UpdateNoticeRules.afterCheckEnds(state)
+        if next != state {
+            dlog("AppUpdater: the check ended with nothing ready; the on its way notice is taken down", tag: "UPDATE")
+            state = next
+        }
     }
 
     func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
