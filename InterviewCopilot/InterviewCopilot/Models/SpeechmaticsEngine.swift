@@ -473,7 +473,14 @@ class SpeechmaticsEngine {
         let dg = UserSession.shared.deepgramToken
         if !dg.isEmpty {
             env["DG_TOKEN"] = dg
-            dlog("SM: Deepgram token passed to the engine — Deepgram first, Speechmatics fallback", tag: "SM")
+            // As Windows (MainWindow 7549, 7553): Flux, Deepgram's conversation model, sends the words every 0.24 s instead
+            // of once a second and decides itself when the speaker finished, and English stays on Deepgram (the owner does
+            // not want the slower Speechmatics handover). Environment variables, so an engine that does not know them carries
+            // on as before. The engine falls back to nova-3 by itself if Flux keeps failing. Owner 2026-11-14: "in windows
+            // its 0.3 sec fast".
+            env["REPLYSIS_DEEPGRAM_MODEL"] = "flux"
+            env["REPLYSIS_DEEPGRAM_ONLY"] = "1"
+            dlog("SM: Deepgram token passed to the engine — Deepgram Flux, as Windows", tag: "SM")
         } else {
             env.removeValue(forKey: "DG_TOKEN")   // never inherit one from the launching shell
         }

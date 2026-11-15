@@ -108,3 +108,7 @@ if [ -n "$BADCALLS" ]; then echo "DIARY CHECK FAILED: a diary event may carry te
 grep -q 'nonisolated(unsafe) static var sendingEnabled = true' "$SRC/ActivityLog.swift" || { echo "DIARY CHECK FAILED: sending is not on"; exit 1; }
 grep -q 'posixPermissions: 0o600' "$SRC/ActivityLogSend.swift" || { echo "DIARY CHECK FAILED: the diary file is not 0600"; exit 1; }
 echo "DIARY CHECK: $(echo "$CALLS" | grep -c .) call sites, none carries text; sending on (owner approved); the queue file is 0600"
+
+# Speech model as Windows (owner 2026-11-14): Flux, and English stays on Deepgram.
+grep -q 'env\["REPLYSIS_DEEPGRAM_MODEL"\] = "flux"' "$SRC/SpeechmaticsEngine.swift" && grep -q 'env\["REPLYSIS_DEEPGRAM_ONLY"\] = "1"' "$SRC/SpeechmaticsEngine.swift" || { echo "FLUX CHECK FAILED: the Mac does not ask for Flux like Windows"; exit 1; }
+echo "FLUX CHECK: Deepgram Flux, as Windows"
