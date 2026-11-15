@@ -112,3 +112,7 @@ echo "DIARY CHECK: $(echo "$CALLS" | grep -c .) call sites, none carries text; s
 # Speech model as Windows (owner 2026-11-14): Flux, and English stays on Deepgram.
 grep -q 'env\["REPLYSIS_DEEPGRAM_MODEL"\] = "flux"' "$SRC/SpeechmaticsEngine.swift" && grep -q 'env\["REPLYSIS_DEEPGRAM_ONLY"\] = "1"' "$SRC/SpeechmaticsEngine.swift" || { echo "FLUX CHECK FAILED: the Mac does not ask for Flux like Windows"; exit 1; }
 echo "FLUX CHECK: Deepgram Flux, as Windows"
+
+# The compact bar window is handed the view model (ModePill reads it from the environment; without it Compact crashed the app).
+grep -q 'AnswerOverlayView(vm: vm).environment(vm)' "$ROOT/InterviewCopilot/InterviewCopilot/Views/CameraOverlayView.swift" || { echo "COMPACT CHECK FAILED: the compact bar window has no view model in its environment"; exit 1; }
+echo "COMPACT CHECK: the compact bar gets the view model"

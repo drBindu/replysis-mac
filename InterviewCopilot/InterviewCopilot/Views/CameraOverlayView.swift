@@ -37,7 +37,9 @@ class AnswerOverlayWindow: NSPanel {
             panel.hasShadow          = true
             panel.hidesOnDeactivate  = false
 
-            let hosting = NSHostingView(rootView: AnswerOverlayView(vm: vm))
+            // The compact bar is its own window: it must be handed the view model, or ModePill (@Environment(MainViewModel.self))
+            // crashes the app the moment Compact opens (found 2026-11-14 recording the marketing video; in 1.0.256 and 1.0.257).
+            let hosting = NSHostingView(rootView: AnswerOverlayView(vm: vm).environment(vm))
             hosting.sizingOptions = [.preferredContentSize]   // window follows content height
             panel.contentView = hosting
             panel.contentView?.clearLayerBackgrounds()

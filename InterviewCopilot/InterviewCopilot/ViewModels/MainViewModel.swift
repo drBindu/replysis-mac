@@ -1689,6 +1689,7 @@ class MainViewModel {
         case "live":     returnToLive()
         #if DEBUG
         case "quitapp":   NSApp.terminate(nil)
+        case "compact":   toggleCamera(via: "shortcut")   // tests: opens and closes the compact bar (it crashed on open, 2026-11-14)
         // The token as it is after a long sleep (old), or one the server refuses (looks fine, is not): for the leave message tests.
         case "agetoken":  session.debugAgeToken(rejected: false)
         case "staletoken": session.debugAgeToken(rejected: true)
